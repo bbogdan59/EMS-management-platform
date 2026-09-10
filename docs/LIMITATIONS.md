@@ -173,3 +173,50 @@ sau inlocuite cu importuri reale inainte de activarea live.
 Corectiile nu reprezinta certificarea modului live: validarea capabilitatilor,
 provenienta/freshness completa a intrarilor, limitele energetice si bugetele
 EFC istorice necesita in continuare lucrarile de follow-up din GitHub.
+
+## 14. Enrollment automat al dispozitivelor (issue #16) -- domeniu si asumtii
+
+- **Alocarea e restransa la `platform_admin`.** Inventarul de device-uri
+  neasociate (`/admin/devices/pending`) si actiunea de alocare nu sunt
+  expuse administratorilor de organizatie: un `installation_uuid` e doar o
+  identitate declarata de dispozitiv, fara nicio afiliere de organizatie in
+  acel moment, iar expunerea globala a inventarului catre orice admin de
+  organizatie ar permite unei organizatii sa vada/revendice un device
+  destinat altei organizatii. Corelarea "acest installation_uuid e al
+  clientului X" ramane, ca si la codul de asociere clasic, o comunicare
+  in afara platformei (instalator -> administrator).
+- **Fara sweep automat de expirare.** Un enrollment expirat (implicit 72h)
+  ramane in tabela `devices` cu `enrollment_expires_at` in trecut -- e
+  filtrat/marcat explicit in UI si respins explicit la alocare, dar nu
+  exista inca un task periodic care sa-l revoce/curete automat. Un operator
+  poate revoca manual din UI. Un task Celery dedicat ramane de adaugat.
+- **Fereastra scurta de expunere a `pending_credential_secret`.** Intre
+  momentul alocarii si prima cerere autentificata reusita a dispozitivului
+  cu noua credentiala, secretul e pastrat in clar (nu doar hash-uit) in
+  `devices.pending_credential_secret`, EXPLICIT ca sa poata fi recuperat
+  idempotent daca raspunsul de alocare se pierde in retea. Fereastra se
+  inchide automat la prima autentificare reusita. Un compromis al bazei de
+  date exact in acest interval ar expune acea credentiala in clar -- acceptat
+  deliberat, documentat, nu ascuns.
+- **Fara sesiune criptografica de tip challenge-response.** Dovada de
+  posesie e un secret static transmis o data (ca parola), verificat prin
+  hash Argon2 la fiecare reincercare -- nu o schema cu chei asimetrice/HMAC
+  per-cerere. E suficient pentru amenintarea principala vizata (impiedicarea
+  insusirii unui `installation_uuid` cunoscut), dar nu protejeaza impotriva
+  unui atacator care a interceptat deja `provisioning_secret`-ul o data
+  (ex. la primul enrollment, printr-un TLS compromis) -- acelasi model de
+  amenintare ca `DeviceCredential` existent.
+- **Agentul real (`EMS-device-code`) nu implementeaza inca acest flux.**
+  v0.1 al agentului foloseste exclusiv codul de asociere clasic (sectiunea 1
+  din docs/API.md); enrollment-ul automat descris aici e contractul
+  SERVER-SIDE pe care viitorul `EMS-device-code#3` il va consuma. Nu am
+  putut deci valida acest API impotriva unui agent real -- doar impotriva
+  testelor de integrare proprii (Postgres real, inclusiv un test de cursa
+  concurenta reala la nivel de baza de date) si a exemplelor din docs/API.md.
+- **Suprapunere de fisiere cu issue #10.** Issue-ul #16 a necesitat atingeri
+  minime, aditive, in fisiere nominal detinute de #10
+  (`app/api/v1/router.py` -- o linie de inregistrare a noului router;
+  `app/api/v1/device_deps.py` -- stergerea `pending_credential_secret` la
+  prima autentificare reusita). Fluxul clasic cu cod de asociere
+  (`app/api/v1/devices.py::claim_device`, `device_service.claim_device`) nu
+  a fost atins.

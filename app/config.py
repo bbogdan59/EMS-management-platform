@@ -71,6 +71,11 @@ class Settings(BaseSettings):
     device_telemetry_batch_max_items: int = 500
     device_api_rate_limit_per_minute: int = 120
     device_max_payload_bytes: int = 262_144  # 256 KiB
+    # Cat ramane un enrollment automat (issue #16) in starea "pending" fara
+    # sa fie alocat de un admin, inainte de a deveni expirat si a necesita
+    # reenrollment. Separat de device_claim_code_ttl_minutes (codul clasic,
+    # generat de operator).
+    device_enrollment_ttl_hours: int = 72
 
     # --- OPCOM ---
     opcom_base_url: str = "https://www.opcom.ro/rapoarte-pzu-raportPIP-export-csv"

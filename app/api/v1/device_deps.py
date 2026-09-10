@@ -18,6 +18,7 @@ from app.core.security import utcnow, verify_password
 from app.database import get_db
 from app.models.device import Device, DeviceCredential
 from app.models.enums import DeviceStatus
+from app.services import device_service
 
 settings = get_settings()
 
@@ -84,6 +85,16 @@ def get_authenticated_device(
 
     matched.last_used_at = utcnow()
     db.add(matched)
+
+    # Issue #16: la prima cerere autentificata reusita cu o credentiala emisa
+    # prin alocare de enrollment automat, stergem copia in clar pastrata
+    # temporar pentru recuperare idempotenta (vezi device_service.
+    # mark_bootstrap_credential_delivered si comentariul de pe
+    # Device.pending_credential_secret) -- fereastra de expunere se inchide
+    # imediat ce dispozitivul a demonstrat ca a primit-o.
+    if device.pending_credential_secret is not None:
+        device_service.mark_bootstrap_credential_delivered(db, device)
+
     db.flush()
 
     request.state.device_credential_id = matched.id

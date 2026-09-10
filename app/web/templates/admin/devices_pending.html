@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block title %}Device-uri neasociate - {{ app_name }}{% endblock %}
+{% block content %}
+<div class="space-y-6">
+  <h1 class="text-xl font-semibold">Device-uri neasociate</h1>
+  {% include "admin/_tabs.html" %}
+
+  {% if request.query_params.get("error") %}
+  <div class="rounded border border-red-300 bg-red-50 p-3 text-sm text-red-800 dark:border-red-800 dark:bg-red-950 dark:text-red-200">
+    Alocarea a esuat (enrollment expirat, deja alocat sau revocat). Vezi jurnalul de audit pentru detalii.
+  </div>
+  {% endif %}
+
+  <div class="card">
+    <p class="mb-4 text-sm text-gray-500">
+      Enrollment automat (issue #16): un dispozitiv se prezinta singur cu propria identitate
+      (<code>installation_uuid</code>), fara sa aleaga nicio statie. Aloca-l manual dupa ce ai confirmat,
+      printr-un canal separat de comunicare cu instalatorul, ca acest <code>installation_uuid</code>
+      corespunde intr-adevar statiei alese -- identitatea declarata de dispozitiv NU e o dovada de
+      apartenenta la o organizatie.
+    </p>
+    <table class="w-full text-sm">
+      <thead class="text-left text-gray-500">
+        <tr>
+          <th class="py-1">Installation UUID</th>
+          <th>Hardware</th>
+          <th>Enrollat</th>
+          <th>Expira</th>
+          <th>Aloca</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for d in pending_devices %}
+        <tr class="border-t border-gray-100 dark:border-gray-800">
+          <td class="py-1 font-mono text-xs">{{ d.installation_uuid }}</td>
+          <td class="text-xs">{{ d.capabilities | tojson }}</td>
+          <td>{{ d.enrolled_at.strftime("%d.%m.%Y %H:%M") if d.enrolled_at else "-" }}</td>
+          <td>
+            {% if d.enrollment_expires_at and d.enrollment_expires_at < now %}
+              <span class="badge-error">expirat</span>
+            {% else %}
+              {{ d.enrollment_expires_at.strftime("%d.%m.%Y %H:%M") if d.enrollment_expires_at else "-" }}
+            {% endif %}
+          </td>
+          <td>
+            <form method="post" action="/admin/devices/{{ d.id }}/allocate" class="flex items-center gap-2">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}" />
+              <select class="input" name="station_id" required>
+                <option value="">Selecteaza statia...</option>
+                {% for s in stations %}<option value="{{ s.id }}">{{ s.name }}</option>{% endfor %}
+              </select>
+              <button type="submit" class="btn-primary">Aloca</button>
+            </form>
+          </td>
+          <td>
+            <form method="post" action="/admin/devices/{{ d.id }}/revoke-enrollment" onsubmit="return confirm('Revoci acest enrollment?');">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}" />
+              <button type="submit" class="btn-danger">Revoca</button>
+            </form>
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="6" class="py-4 text-center text-gray-500">Niciun device neasociat.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

@@ -5,6 +5,7 @@ from datetime import timedelta
 
 from sqlalchemy import select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
@@ -15,6 +16,7 @@ from app.core.security import (
     hash_password,
     hash_token,
     utcnow,
+    verify_password,
 )
 from app.models.command import Command, CommandEvent
 from app.models.device import ClaimCode, Device, DeviceCredential
@@ -338,3 +340,127 @@ def report_command_result(
     )
     db.flush()
     return command
+
+
+# --- Enrollment automat (issue #16) -------------------------------------
+#
+# Flux distinct de ClaimCode (mai sus): dispozitivul se prezinta singur, cu
+# o identitate PROPRIE (installation_uuid + provisioning_secret, generate si
+# pastrate local de el, nu de server), fara sa aleaga nicio statie. Serverul
+# creeaza un Device `pending_claim` FARA statie; doar un admin poate aloca
+# explicit statia (vezi `allocate_device`). Fiindca dovada de posesie e
+# secretul propriu al dispozitivului (nu un cod emis o singura data de
+# server), `enroll_device` e sigur de reincercat oricand cu aceeasi
+# identitate -- rezolva exact problema semnalata in issue: "timeout dupa
+# claim nu lasa device-ul fara metoda sigura de recuperare".
+
+
+def _enrollment_status_payload(device: Device) -> dict:
+    if device.status == DeviceStatus.revoked.value:
+        return {"status": "revoked", "device_id": None, "station_id": None, "credential_secret": None, "enrollment_expires_at": None}
+    if device.status == DeviceStatus.active.value and device.station_id is not None:
+        return {
+            "status": "assigned",
+            "device_id": device.id,
+            "station_id": device.station_id,
+            "credential_secret": device.pending_credential_secret,
+            "enrollment_expires_at": None,
+        }
+    return {
+        "status": "pending",
+        "device_id": None,
+        "station_id": None,
+        "credential_secret": None,
+        "enrollment_expires_at": device.enrollment_expires_at,
+    }
+
+
+def enroll_device(db: Session, installation_uuid: str, provisioning_secret: str, hardware_info: dict) -> dict:
+    """Idempotenta: un `installation_uuid` necunoscut creeaza un device nou
+    `pending_claim` fara statie; unul cunoscut verifica secretul de
+    provisioning si intoarce starea CURENTA (pending/assigned/revoked), fara
+    sa creeze un al doilea device sau sa retrimita o identitate noua.
+
+    Anti-insusire: daca `installation_uuid` exista deja dar secretul nu se
+    potriveste, cererea e respinsa explicit -- o serie/UUID declarat de
+    altcineva nu poate "prelua" un enrollment existent."""
+    existing = db.scalar(select(Device).where(Device.installation_uuid == installation_uuid))
+    if existing is not None:
+        if not existing.provisioning_secret_hash or not verify_password(provisioning_secret, existing.provisioning_secret_hash):
+            raise DeviceServiceError("Identitate de enrollment invalida pentru acest installation_uuid.")
+        return _enrollment_status_payload(existing)
+
+    settings = get_settings()
+    device = Device(
+        station_id=None,
+        name=f"Device neasociat {installation_uuid[:8]}",
+        status=DeviceStatus.pending_claim.value,
+        capabilities=hardware_info or {},
+        installation_uuid=installation_uuid,
+        provisioning_secret_hash=hash_password(provisioning_secret),
+        enrolled_at=utcnow(),
+        enrollment_expires_at=expires_in(hours=settings.device_enrollment_ttl_hours),
+    )
+    db.add(device)
+    try:
+        db.flush()
+    except IntegrityError:
+        # Cursa concurenta reala: alta cerere cu acelasi installation_uuid a
+        # castigat intre SELECT-ul de mai sus si acest INSERT (constrangerea
+        # unica de pe coloana o garanteaza). Nu e o eroare pentru apelant --
+        # verificam identitatea impotriva castigatorului si raspundem la fel
+        # ca la o reincercare normala.
+        db.rollback()
+        winner = db.scalar(select(Device).where(Device.installation_uuid == installation_uuid))
+        if winner is None or not winner.provisioning_secret_hash or not verify_password(provisioning_secret, winner.provisioning_secret_hash):
+            raise DeviceServiceError("Identitate de enrollment invalida pentru acest installation_uuid.") from None
+        return _enrollment_status_payload(winner)
+
+    return _enrollment_status_payload(device)
+
+
+def list_pending_devices(db: Session) -> list[Device]:
+    """Inventar pentru admin: enrollment-uri fara statie inca, indiferent
+    daca au expirat deja (UI-ul marcheaza starea, alocarea unuia expirat e
+    respinsa explicit de `allocate_device`)."""
+    return db.scalars(
+        select(Device)
+        .where(Device.station_id.is_(None), Device.status == DeviceStatus.pending_claim.value)
+        .order_by(Device.enrolled_at.desc())
+    ).all()
+
+
+def allocate_device(db: Session, device: Device, station: Station, admin_user: User) -> str:
+    """Aloca un device enrollat-dar-neasociat unei statii. Doar apelabil de
+    un administrator autorizat (verificat la nivel de ruta) -- niciodata
+    derivat din identitatea declarata de dispozitiv insusi."""
+    if device.station_id is not None:
+        raise DeviceServiceError("Device-ul este deja alocat unei statii.")
+    if device.status == DeviceStatus.revoked.value:
+        raise DeviceServiceError("Device-ul a fost revocat si nu mai poate fi alocat.")
+    if device.enrollment_expires_at is not None and device.enrollment_expires_at < utcnow():
+        raise DeviceServiceError("Enrollment-ul a expirat; dispozitivul trebuie sa refaca /devices/enroll inainte de alocare.")
+
+    raw_secret = generate_opaque_token(32)
+    device.station_id = station.id
+    device.status = DeviceStatus.active.value
+    device.allocated_at = utcnow()
+    device.allocated_by_user_id = admin_user.id
+    device.pending_credential_secret = raw_secret
+    db.add(device)
+
+    credential = DeviceCredential(device_id=device.id, secret_hash=hash_password(raw_secret))
+    db.add(credential)
+    db.flush()
+    return raw_secret
+
+
+def mark_bootstrap_credential_delivered(db: Session, device: Device) -> None:
+    """Sterge secretul de credentiala pastrat temporar in clar, odata ce
+    dispozitivul a demonstrat ca l-a primit (prima cerere autentificata
+    reusita cu noua credentiala). Fereastra de expunere ramane deliberat
+    scurta -- vezi comentariul de pe `Device.pending_credential_secret`."""
+    if device.pending_credential_secret is not None:
+        device.pending_credential_secret = None
+        db.add(device)
+        db.flush()
