@@ -1,9 +1,9 @@
 """Regression tests for authorization at the command dispatch boundary."""
 
+import uuid
 from datetime import timedelta
 from types import SimpleNamespace
 from unittest.mock import MagicMock
-import uuid
 
 import pytest
 

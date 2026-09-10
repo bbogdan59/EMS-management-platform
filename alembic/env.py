@@ -4,14 +4,15 @@ import sys
 from logging.config import fileConfig
 from pathlib import Path
 
-from alembic import context
 from sqlalchemy import engine_from_config, pool
+
+from alembic import context
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from app.config import get_settings  # noqa: E402
-from app.database import Base  # noqa: E402
-import app.models  # noqa: E402,F401  -- inregistreaza toate modelele in Base.metadata
+import app.models  # noqa: F401  -- inregistreaza toate modelele in Base.metadata
+from app.config import get_settings
+from app.database import Base
 
 config = context.config
 

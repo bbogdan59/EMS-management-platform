@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import timedelta, timezone
+from datetime import UTC, timedelta
 from decimal import Decimal
 
 from sqlalchemy import select
@@ -35,12 +35,12 @@ def _add_forecasts(db, station, hours=40):
     issued = utcnow()
     for h in range(hours):
         t = start + timedelta(hours=h)
-        hour = t.astimezone(timezone.utc).hour
+        hour = t.astimezone(UTC).hour
         pv_kw = max(0.0, 4.0 * (1 - abs(hour - 13) / 7)) if 6 <= hour <= 20 else 0.0
         db.add(PvForecast(station_id=station.id, issued_at=issued, interval_start=t, interval_end=t + timedelta(hours=1), source="test", predicted_power_kw=Decimal(str(round(pv_kw, 3))), scenario="expected"))
     for q in range(hours * 4):
         t = start + timedelta(minutes=15 * q)
-        load = 0.5 if t.astimezone(timezone.utc).hour < 6 else 1.2
+        load = 0.5 if t.astimezone(UTC).hour < 6 else 1.2
         db.add(ConsumptionForecast(station_id=station.id, issued_at=issued, interval_start=t, interval_end=t + timedelta(minutes=15), source="test", base_load_kw=Decimal(str(load)), ev_component_kw=Decimal("0"), flexible_component_kw=Decimal("0"), is_cold_start=True))
     db.flush()
 
@@ -133,7 +133,20 @@ def test_optimization_infeasible_constraints_trigger_fallback(db):
     assert all(float(pi.battery_power_target_kw) == 0 for pi in intervals), "planul de fallback trebuie sa fie de asteptare (baterie in hold)"
 
 
-def test_optimization_fallback_when_no_forecasts_available(db):
+def test_optimization_fallback_when_no_forecasts_available(db, monkeypatch):
+    from app.services import weather_service
+    from app.services.weather_service import WeatherUnavailableError
+
+    # Fortam explicit absenta ambelor prognoze (PV si consum), in loc sa ne
+    # bazam pe indisponibilitatea retelei din mediul de test: PV forecast
+    # depinde la randul lui de existenta unor randuri WeatherForecast, deci
+    # daca refresh-ul meteo ar reusi (ex. intr-un mediu CI cu acces real la
+    # retea), testul ar deveni nedeterminist -- a picat exact asa in CI.
+    def _always_unavailable(*args, **kwargs):
+        raise WeatherUnavailableError("simulat indisponibil pentru test")
+
+    monkeypatch.setattr(weather_service, "refresh_weather_for_station", _always_unavailable)
+
     user = make_user(db, email="opt4@test.local")
     org = make_org(db, "Opt Org 4")
     station = make_station(db, org, user, name="Opt Station 4")

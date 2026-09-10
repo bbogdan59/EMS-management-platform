@@ -67,23 +67,23 @@ def aggregate_interval_15m(db: Session, station_id: uuid.UUID, period_start: dat
     else:
         quality = "measured"
 
-    values = dict(
-        id=uuid.uuid4(),
-        station_id=station_id,
-        period_type="interval_15m",
-        period_start=period_start,
-        period_end=period_end,
-        pv_energy_kwh=round(pv_kwh, 6),
-        load_energy_kwh=round(load_kwh, 6),
-        battery_charge_energy_kwh=round(batt_charge_kwh, 6),
-        battery_discharge_energy_kwh=round(batt_discharge_kwh, 6),
-        grid_import_energy_kwh=round(grid_import_kwh, 6),
-        grid_export_energy_kwh=round(grid_export_kwh, 6),
-        ev_energy_kwh=round(ev_kwh, 6),
-        avg_battery_soc_percent=round(avg_soc, 2) if avg_soc else None,
-        sample_count=n,
-        data_quality=quality,
-    )
+    values = {
+        "id": uuid.uuid4(),
+        "station_id": station_id,
+        "period_type": "interval_15m",
+        "period_start": period_start,
+        "period_end": period_end,
+        "pv_energy_kwh": round(pv_kwh, 6),
+        "load_energy_kwh": round(load_kwh, 6),
+        "battery_charge_energy_kwh": round(batt_charge_kwh, 6),
+        "battery_discharge_energy_kwh": round(batt_discharge_kwh, 6),
+        "grid_import_energy_kwh": round(grid_import_kwh, 6),
+        "grid_export_energy_kwh": round(grid_export_kwh, 6),
+        "ev_energy_kwh": round(ev_kwh, 6),
+        "avg_battery_soc_percent": round(avg_soc, 2) if avg_soc else None,
+        "sample_count": n,
+        "data_quality": quality,
+    }
     _upsert_aggregate(db, values)
     return values
 
@@ -106,23 +106,23 @@ def _rollup(db: Session, station_id: uuid.UUID, source_period_type: str, target_
     total_samples = sum(r.sample_count for r in rows)
     weighted_soc = sum(float(r.avg_battery_soc_percent or 0) * r.sample_count for r in rows)
 
-    values = dict(
-        id=uuid.uuid4(),
-        station_id=station_id,
-        period_type=target_period_type,
-        period_start=period_start,
-        period_end=period_end,
-        pv_energy_kwh=round(total("pv_energy_kwh"), 6),
-        load_energy_kwh=round(total("load_energy_kwh"), 6),
-        battery_charge_energy_kwh=round(total("battery_charge_energy_kwh"), 6),
-        battery_discharge_energy_kwh=round(total("battery_discharge_energy_kwh"), 6),
-        grid_import_energy_kwh=round(total("grid_import_energy_kwh"), 6),
-        grid_export_energy_kwh=round(total("grid_export_energy_kwh"), 6),
-        ev_energy_kwh=round(total("ev_energy_kwh"), 6),
-        avg_battery_soc_percent=round(weighted_soc / total_samples, 2) if total_samples else None,
-        sample_count=total_samples,
-        data_quality=_worst_quality([r.data_quality for r in rows]),
-    )
+    values = {
+        "id": uuid.uuid4(),
+        "station_id": station_id,
+        "period_type": target_period_type,
+        "period_start": period_start,
+        "period_end": period_end,
+        "pv_energy_kwh": round(total("pv_energy_kwh"), 6),
+        "load_energy_kwh": round(total("load_energy_kwh"), 6),
+        "battery_charge_energy_kwh": round(total("battery_charge_energy_kwh"), 6),
+        "battery_discharge_energy_kwh": round(total("battery_discharge_energy_kwh"), 6),
+        "grid_import_energy_kwh": round(total("grid_import_energy_kwh"), 6),
+        "grid_export_energy_kwh": round(total("grid_export_energy_kwh"), 6),
+        "ev_energy_kwh": round(total("ev_energy_kwh"), 6),
+        "avg_battery_soc_percent": round(weighted_soc / total_samples, 2) if total_samples else None,
+        "sample_count": total_samples,
+        "data_quality": _worst_quality([r.data_quality for r in rows]),
+    }
     _upsert_aggregate(db, values)
     return values
 

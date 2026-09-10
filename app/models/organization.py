@@ -16,10 +16,10 @@ class Organization(Entity):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     is_demo: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
-    memberships: Mapped[list["Membership"]] = relationship(
+    memberships: Mapped[list[Membership]] = relationship(
         back_populates="organization", cascade="all, delete-orphan"
     )
-    stations: Mapped[list["Station"]] = relationship(back_populates="organization")  # noqa: F821
+    stations: Mapped[list[Station]] = relationship(back_populates="organization")  # noqa: F821
 
 
 class Membership(Entity):
@@ -34,5 +34,5 @@ class Membership(Entity):
     )
     role: Mapped[str] = mapped_column(String(32), nullable=False)
 
-    user: Mapped["User"] = relationship(back_populates="memberships")  # noqa: F821
-    organization: Mapped["Organization"] = relationship(back_populates="memberships")
+    user: Mapped[User] = relationship(back_populates="memberships")  # noqa: F821
+    organization: Mapped[Organization] = relationship(back_populates="memberships")

@@ -12,21 +12,22 @@ from __future__ import annotations
 import json
 import os
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from app.config import get_settings  # noqa: E402
-from app.core.security import hash_password  # noqa: E402
-from app.database import SessionLocal  # noqa: E402
-from app.models.organization import Organization  # noqa: E402
-from app.models.station import Station  # noqa: E402
-from app.models.tariff import Tariff, TariffVersion  # noqa: E402
-from app.models.user import User  # noqa: E402
-from app.services import device_service, station_service  # noqa: E402
-from sqlalchemy import select  # noqa: E402
+from sqlalchemy import select
+
+from app.config import get_settings
+from app.core.security import hash_password
+from app.database import SessionLocal
+from app.models.organization import Organization
+from app.models.station import Station
+from app.models.tariff import Tariff, TariffVersion
+from app.models.user import User
+from app.services import device_service, station_service
 
 settings = get_settings()
 
@@ -110,7 +111,7 @@ def main() -> None:
                 db.flush()
                 db.add(
                     TariffVersion(
-                        tariff_id=tariff.id, valid_from=datetime.now(timezone.utc) - timedelta(days=1),
+                        tariff_id=tariff.id, valid_from=datetime.now(UTC) - timedelta(days=1),
                         fixed_price_lei_per_kwh=Decimal(price), fixed_monthly_fee_lei=Decimal("0"),
                         variable_component_lei_per_kwh=Decimal("0"),
                     )
@@ -126,7 +127,7 @@ def main() -> None:
 
         raw_code = None
         if not has_active_device:
-            claim, raw_code = device_service.create_claim_code(db, station, admin)
+            _claim, raw_code = device_service.create_claim_code(db, station, admin)
             db.commit()
 
         seed_entries.append(

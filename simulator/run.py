@@ -20,7 +20,7 @@ import os
 import random
 import threading
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from simulator.api_client import DeviceApiClient
 from simulator.physics import StationProfile, simulate_tick
@@ -125,7 +125,7 @@ def live_loop(client: DeviceApiClient, profile: StationProfile, soc_kwh: float, 
     pending_late: list[dict] = []
 
     while not stop_event.is_set():
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         if rng.random() < scenarios["offline_probability"]:
             logger.info("%s: simulare OFFLINE pentru acest tick (nu se trimite nimic)", profile.label)
@@ -186,7 +186,7 @@ def live_loop(client: DeviceApiClient, profile: StationProfile, soc_kwh: float, 
             pending_late.append(item)
             logger.info("%s: telemetrie INTARZIATA intentionat (retinuta pentru urmatorul tick)", profile.label)
         else:
-            to_send = pending_late + [item]
+            to_send = [*pending_late, item]
             pending_late = []
             try:
                 result = client.send_telemetry(to_send)
@@ -210,7 +210,7 @@ def run_station(entry: dict, api_base_url: str, state_dir: str, backfill_days: i
     soc_kwh = profile.battery_capacity_kwh * 0.5
 
     if not saved.get("backfilled"):
-        soc_kwh = run_backfill(client, profile, backfill_days, datetime.now(timezone.utc) - timedelta(minutes=15))
+        soc_kwh = run_backfill(client, profile, backfill_days, datetime.now(UTC) - timedelta(minutes=15))
         saved["backfilled"] = True
         state.save(entry["station_key"], saved)
 

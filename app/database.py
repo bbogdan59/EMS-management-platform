@@ -10,10 +10,10 @@ from app.config import get_settings
 
 settings = get_settings()
 
-_engine_kwargs = dict(
-    pool_pre_ping=True,
-    echo=settings.sql_echo,
-)
+_engine_kwargs = {
+    "pool_pre_ping": True,
+    "echo": settings.sql_echo,
+}
 if not settings.database_url.startswith("sqlite"):
     _engine_kwargs["pool_size"] = settings.database_pool_size
     _engine_kwargs["max_overflow"] = settings.database_max_overflow

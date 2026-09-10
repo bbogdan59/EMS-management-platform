@@ -29,8 +29,8 @@ class Tariff(Entity):
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     is_active: Mapped[bool] = mapped_column(default=True, nullable=False)
 
-    station: Mapped["Station"] = relationship()  # noqa: F821
-    versions: Mapped[list["TariffVersion"]] = relationship(
+    station: Mapped[Station] = relationship()  # noqa: F821
+    versions: Mapped[list[TariffVersion]] = relationship(
         back_populates="tariff", cascade="all, delete-orphan", order_by="TariffVersion.valid_from"
     )
 
@@ -65,4 +65,4 @@ class TariffVersion(Entity):
     economic_calculation_disabled: Mapped[bool] = mapped_column(default=False, nullable=False)
     limitation_note: Mapped[str | None] = mapped_column(String(1000), nullable=True)
 
-    tariff: Mapped["Tariff"] = relationship(back_populates="versions")
+    tariff: Mapped[Tariff] = relationship(back_populates="versions")

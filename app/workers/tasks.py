@@ -5,7 +5,7 @@ anterioara intarzie peste intervalul de planificare)."""
 from __future__ import annotations
 
 import contextlib
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timedelta
 
 import structlog
 from sqlalchemy import select
@@ -19,8 +19,18 @@ from app.models.alert import Alert
 from app.models.device import Device
 from app.models.enums import AlertSeverity, AlertStatus
 from app.models.station import Station
-from app.services import aggregation_service, command_dispatch_service, opcom_service, optimization_service, pv_forecast_service, weather_service
-from app.services.consumption_forecast_service import ConsumptionForecastError, generate_consumption_forecast
+from app.services import (
+    aggregation_service,
+    command_dispatch_service,
+    opcom_service,
+    optimization_service,
+    pv_forecast_service,
+    weather_service,
+)
+from app.services.consumption_forecast_service import (
+    ConsumptionForecastError,
+    generate_consumption_forecast,
+)
 from app.services.optimization_service import OptimizationLockedError
 
 logger = structlog.get_logger(__name__)

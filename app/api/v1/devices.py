@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.v1.device_deps import get_authenticated_device
 from app.core.audit import record_audit
+from app.core.security import utcnow
 from app.database import get_db
+from app.models.command import Command
+from app.models.enums import CommandStatus, PlanStatus
+from app.models.optimization import Plan
 from app.schemas.device_api import (
     ClaimRequest,
     ClaimResponse,
@@ -14,11 +19,6 @@ from app.schemas.device_api import (
     RotateCredentialResponse,
 )
 from app.services import device_service
-from app.core.security import utcnow
-from app.models.command import Command
-from app.models.enums import CommandStatus, PlanStatus
-from app.models.optimization import Plan
-from sqlalchemy import select
 
 router = APIRouter()
 
@@ -32,7 +32,7 @@ def claim_device(payload: ClaimRequest, db: Session = Depends(get_db)):
         device, secret = device_service.claim_device(db, payload.claim_code, payload.device_name, payload.hardware_info)
     except device_service.DeviceServiceError as exc:
         db.rollback()
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc))
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
     record_audit(
         db, action="device_claimed", resource_type="device", resource_id=str(device.id),

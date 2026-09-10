@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 
 from fastapi import APIRouter, Depends, Form, Request
@@ -269,7 +269,7 @@ def tariffs_submit(
     tariff_service.add_tariff_version(
         db,
         tariff,
-        valid_from=datetime.now(timezone.utc),
+        valid_from=datetime.now(UTC),
         fixed_price_lei_per_kwh=_dec(fixed_price_lei_per_kwh),
         opcom_margin_lei_per_kwh=_dec(opcom_margin_lei_per_kwh),
         fixed_monthly_fee_lei=_dec(fixed_monthly_fee_lei, Decimal("0")),
