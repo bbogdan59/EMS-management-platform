@@ -1,0 +1,275 @@
+/* global echarts, emsConnectSSE */
+
+function emsChartTheme() {
+  return document.documentElement.classList.contains("dark") ? "dark" : undefined;
+}
+
+function emsInitDashboard(stationId) {
+  const $ = (id) => document.getElementById(id);
+
+  function fmt(v, digits = 2) {
+    return v === null || v === undefined ? "-" : Number(v).toFixed(digits);
+  }
+
+  function setKpis(s) {
+    $("kpi-pv").textContent = s.pv_power_kw !== null ? fmt(s.pv_power_kw) + " kW" : "-";
+    $("kpi-load").textContent = s.load_power_kw !== null ? fmt(s.load_power_kw) + " kW" : "-";
+    const grid = s.grid_power_kw;
+    if (grid === null || grid === undefined) {
+      $("kpi-grid").textContent = "-";
+    } else {
+      $("kpi-grid").textContent = (grid >= 0 ? "Import " : "Export ") + fmt(Math.abs(grid)) + " kW";
+    }
+    $("kpi-soc").textContent = s.battery_soc_percent !== null ? fmt(s.battery_soc_percent, 1) + " %" : "-";
+    const batt = s.battery_power_kw;
+    $("kpi-battery").textContent = batt === null || batt === undefined ? "-" : (batt >= 0 ? "Incarcare " : "Descarcare ") + fmt(Math.abs(batt)) + " kW";
+    $("kpi-ev").textContent = s.ev_connected === null || s.ev_connected === undefined ? "necunoscut" : (s.ev_connected ? ("conectat" + (s.ev_power_kw ? ", " + fmt(s.ev_power_kw) + " kW" : "")) : "neconectat");
+    $("kpi-price-buy").textContent = s.price_buy_lei_kwh !== null ? fmt(s.price_buy_lei_kwh, 4) + " lei/kWh" : "indisponibil";
+    $("kpi-price-sell").textContent = s.price_sell_lei_kwh !== null ? fmt(s.price_sell_lei_kwh, 4) + " lei/kWh" : "indisponibil";
+    $("kpi-automation").textContent = s.execution_mode === "shadow" ? "Mod shadow (informativ)" : (s.has_active_plan ? "Activa" : "Fara plan activ");
+    $("kpi-last-update").textContent = s.last_update ? new Date(s.last_update).toLocaleString("ro-RO") : "niciodata";
+
+    const qualityBadge = $("kpi-quality");
+    qualityBadge.className = "badge-" + ({ measured: "ok", estimated: "warn", simulated: "warn", stale: "error", missing: "muted" }[s.data_quality] || "muted");
+    qualityBadge.textContent = { measured: "masurat", estimated: "estimat", simulated: "simulat", stale: "invechit", missing: "lipsa" }[s.data_quality] || s.data_quality;
+
+    updateFlowDiagram(s);
+  }
+
+  function updateFlowDiagram(s) {
+    const flows = {
+      "flow-pv-home": s.pv_power_kw && s.pv_power_kw > 0.05,
+      "flow-battery-home": s.battery_power_kw && s.battery_power_kw < -0.05,
+      "flow-home-battery": s.battery_power_kw && s.battery_power_kw > 0.05,
+      "flow-grid-home": s.grid_power_kw && s.grid_power_kw > 0.05,
+      "flow-home-grid": s.grid_power_kw && s.grid_power_kw < -0.05,
+      "flow-home-ev": s.ev_power_kw && s.ev_power_kw > 0.05,
+    };
+    for (const [id, active] of Object.entries(flows)) {
+      const el = document.getElementById(id);
+      if (el) el.style.opacity = active ? "1" : "0.12";
+    }
+  }
+
+  async function fetchJson(url) {
+    const res = await fetch(url, { headers: { Accept: "application/json" } });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    return res.json();
+  }
+
+  function lineChart(el, series, opts = {}) {
+    const chart = echarts.init(el, emsChartTheme());
+    chart.setOption({
+      grid: { left: 48, right: 16, top: 24, bottom: 32 },
+      tooltip: { trigger: "axis" },
+      legend: opts.legend !== false ? {} : undefined,
+      xAxis: { type: "time" },
+      yAxis: { type: "value", name: opts.yName || "" },
+      series: series,
+    });
+    return chart;
+  }
+
+  async function loadPowerChart(range) {
+    const el = $("chart-power");
+    if (!el) return;
+    try {
+      const data = await fetchJson(`/stations/${stationId}/data/timeseries?range=${range}`);
+      if (!data.length) { el.closest(".card").querySelector(".empty-state").hidden = false; return; }
+      el.closest(".card").querySelector(".empty-state").hidden = true;
+      const mk = (key, name) => ({ name, type: "line", showSymbol: false, data: data.map((d) => [d.t, d[key]]) });
+      lineChart(el, [mk("pv_kw", "PV"), mk("load_kw", "Consum"), mk("battery_kw", "Baterie"), mk("grid_kw", "Retea")], { yName: "kW" });
+    } catch (e) { console.error(e); }
+  }
+
+  async function loadSocChart(range) {
+    const el = $("chart-soc");
+    if (!el) return;
+    try {
+      const data = await fetchJson(`/stations/${stationId}/data/timeseries?range=${range}`);
+      lineChart(el, [{ name: "SOC", type: "line", showSymbol: false, areaStyle: {}, data: data.map((d) => [d.t, d.soc_pct]) }], { yName: "%", legend: false });
+    } catch (e) { console.error(e); }
+  }
+
+  async function loadPricesChart() {
+    const el = $("chart-prices");
+    if (!el) return;
+    try {
+      const [today, tomorrow] = await Promise.all([
+        fetchJson(`/stations/${stationId}/data/prices?day=today`),
+        fetchJson(`/stations/${stationId}/data/prices?day=tomorrow`),
+      ]);
+      const chart = echarts.init(el, emsChartTheme());
+      const mkBar = (payload, name) => ({
+        name,
+        type: "bar",
+        data: payload.intervals.map((i) => [i.t, i.price_lei_kwh]),
+      });
+      chart.setOption({
+        grid: { left: 48, right: 16, top: 32, bottom: 32 },
+        tooltip: { trigger: "axis" },
+        legend: {},
+        xAxis: { type: "time" },
+        yAxis: { type: "value", name: "lei/kWh" },
+        series: [mkBar(today, "Azi"), mkBar(tomorrow, "Maine")],
+      });
+      $("prices-tomorrow-status").textContent = tomorrow.published ? "" : "Preturile de maine nu au fost inca publicate.";
+    } catch (e) { console.error(e); }
+  }
+
+  async function loadPlanChart() {
+    const el = $("chart-plan");
+    if (!el) return;
+    try {
+      const data = await fetchJson(`/stations/${stationId}/data/plan`);
+      const empty = el.closest(".card").querySelector(".empty-state");
+      if (!data.plan) { empty.hidden = false; return; }
+      empty.hidden = true;
+      $("plan-status-badge").textContent = `${data.plan.status} (${data.plan.execution_mode})`;
+      const chart = echarts.init(el, emsChartTheme());
+      chart.setOption({
+        grid: { left: 48, right: 16, top: 24, bottom: 32 },
+        tooltip: { trigger: "axis" },
+        legend: {},
+        xAxis: { type: "time" },
+        yAxis: { type: "value", name: "kW / %" },
+        series: [
+          { name: "Baterie (plan)", type: "bar", data: data.intervals.map((i) => [i.t, i.battery_kw]) },
+          { name: "Retea (plan)", type: "bar", data: data.intervals.map((i) => [i.t, i.grid_kw]) },
+          { name: "SOC tinta", type: "line", yAxisIndex: 0, data: data.intervals.map((i) => [i.t, i.soc_target_pct]) },
+        ],
+      });
+    } catch (e) { console.error(e); }
+  }
+
+  async function loadForecastChart(metric) {
+    const el = $("chart-forecast-" + metric);
+    if (!el) return;
+    try {
+      const data = await fetchJson(`/stations/${stationId}/data/forecast-vs-actual?metric=${metric}&range=24h`);
+      const empty = el.closest(".card").querySelector(".empty-state");
+      if (!data.length) { empty.hidden = false; return; }
+      empty.hidden = true;
+      lineChart(el, [
+        { name: "Prognoza", type: "line", showSymbol: false, data: data.map((d) => [d.t, d.forecast_kw]) },
+        { name: "Realizat", type: "line", showSymbol: false, data: data.map((d) => [d.t, d.actual_kw]) },
+      ], { yName: "kW" });
+    } catch (e) { console.error(e); }
+  }
+
+  async function loadHeatmap() {
+    const el = $("chart-heatmap");
+    if (!el) return;
+    try {
+      const data = await fetchJson(`/stations/${stationId}/data/heatmap`);
+      const empty = el.closest(".card").querySelector(".empty-state");
+      if (!data.length) { empty.hidden = false; return; }
+      empty.hidden = true;
+      const days = ["Luni", "Marti", "Miercuri", "Joi", "Vineri", "Sambata", "Duminica"];
+      const chart = echarts.init(el, emsChartTheme());
+      const values = data.map((d) => [d.hour, d.weekday, Number(d.avg_load_kwh.toFixed(3))]);
+      const max = Math.max(...values.map((v) => v[2]), 0.1);
+      chart.setOption({
+        tooltip: { position: "top" },
+        grid: { left: 60, right: 16, top: 16, bottom: 32 },
+        xAxis: { type: "category", data: [...Array(24).keys()], name: "Ora" },
+        yAxis: { type: "category", data: days },
+        visualMap: { min: 0, max, calculable: true, orient: "horizontal", left: "center", bottom: 0 },
+        series: [{ type: "heatmap", data: values, label: { show: false } }],
+      });
+    } catch (e) { console.error(e); }
+  }
+
+  async function loadEnergyTotals() {
+    const el = $("chart-energy-daily");
+    const elMonthly = $("chart-energy-monthly");
+    try {
+      const daily = await fetchJson(`/stations/${stationId}/data/energy-totals?granularity=day&periods=30`);
+      if (el) {
+        if (!daily.length) { el.closest(".card").querySelector(".empty-state").hidden = false; }
+        else {
+          el.closest(".card").querySelector(".empty-state").hidden = true;
+          const chart = echarts.init(el, emsChartTheme());
+          chart.setOption({
+            grid: { left: 48, right: 16, top: 24, bottom: 48 },
+            tooltip: { trigger: "axis" },
+            legend: {},
+            xAxis: { type: "category", data: daily.map((d) => d.period_start.slice(0, 10)), axisLabel: { rotate: 45 } },
+            yAxis: { type: "value", name: "kWh" },
+            series: [
+              { name: "PV", type: "bar", stack: "e", data: daily.map((d) => d.pv_kwh) },
+              { name: "Import", type: "bar", stack: "i", data: daily.map((d) => d.grid_import_kwh) },
+              { name: "Export", type: "bar", stack: "x", data: daily.map((d) => -d.grid_export_kwh) },
+            ],
+          });
+        }
+      }
+      const monthly = await fetchJson(`/stations/${stationId}/data/energy-totals?granularity=month&periods=12`);
+      if (elMonthly) {
+        if (!monthly.length) { elMonthly.closest(".card").querySelector(".empty-state").hidden = false; }
+        else {
+          elMonthly.closest(".card").querySelector(".empty-state").hidden = true;
+          const chart = echarts.init(elMonthly, emsChartTheme());
+          chart.setOption({
+            grid: { left: 48, right: 16, top: 24, bottom: 48 },
+            tooltip: { trigger: "axis" },
+            legend: {},
+            xAxis: { type: "category", data: monthly.map((d) => d.period_start.slice(0, 7)) },
+            yAxis: { type: "value", name: "kWh" },
+            series: [
+              { name: "PV", type: "bar", data: monthly.map((d) => d.pv_kwh) },
+              { name: "Consum", type: "bar", data: monthly.map((d) => d.load_kwh) },
+            ],
+          });
+        }
+      }
+    } catch (e) { console.error(e); }
+  }
+
+  async function loadEfcAndSavings() {
+    try {
+      const efc = await fetchJson(`/stations/${stationId}/data/efc?range=30d`);
+      $("kpi-efc").textContent = efc.efc_used !== null && efc.efc_used !== undefined ? fmt(efc.efc_used, 2) + " cicluri (30 zile)" : "indisponibil";
+    } catch (e) { console.error(e); }
+    try {
+      const savings = await fetchJson(`/stations/${stationId}/data/savings?range=30d`);
+      if (savings.available) {
+        $("kpi-savings").textContent = fmt(savings.estimated_savings_lei) + " lei (30 zile)";
+        $("kpi-savings-note").textContent = savings.baseline_description;
+      } else {
+        $("kpi-savings").textContent = "indisponibil";
+        $("kpi-savings-note").textContent = savings.reason || "";
+      }
+    } catch (e) { console.error(e); }
+  }
+
+  function initSSE() {
+    emsConnectSSE(`/stations/${stationId}/sse`, {
+      events: {
+        summary: (ev) => setKpis(JSON.parse(ev.data)),
+      },
+    });
+  }
+
+  // Bootstrap initial
+  loadPowerChart("24h");
+  loadSocChart("24h");
+  loadPricesChart();
+  loadPlanChart();
+  loadForecastChart("pv");
+  loadForecastChart("load");
+  loadHeatmap();
+  loadEnergyTotals();
+  loadEfcAndSavings();
+  initSSE();
+
+  const rangeSelect = $("range-select");
+  if (rangeSelect) {
+    rangeSelect.addEventListener("change", () => {
+      loadPowerChart(rangeSelect.value);
+      loadSocChart(rangeSelect.value);
+      const exportLink = $("export-link");
+      if (exportLink) exportLink.href = `/stations/${stationId}/export.csv?range=${rangeSelect.value}`;
+    });
+  }
+}

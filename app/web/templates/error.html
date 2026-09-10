@@ -1,0 +1,9 @@
+{% extends "base_public.html" %}
+{% block title %}Eroare {{ status_code }} - {{ app_name }}{% endblock %}
+{% block content %}
+<div class="card text-center">
+  <p class="text-3xl font-bold text-gray-400">{{ status_code }}</p>
+  <p class="mt-2 text-sm text-gray-600 dark:text-gray-400">{{ detail }}</p>
+  <a href="/" class="btn-secondary mt-4 inline-block">Inapoi la pagina principala</a>
+</div>
+{% endblock %}

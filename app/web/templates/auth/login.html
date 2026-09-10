@@ -1,0 +1,27 @@
+{% extends "base_public.html" %}
+{% block title %}Autentificare - {{ app_name }}{% endblock %}
+{% block content %}
+<div class="card">
+  <h1 class="mb-4 text-xl font-semibold">Autentificare</h1>
+  {% if error %}
+  <p class="mb-4 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-900/30 dark:text-red-300">{{ error }}</p>
+  {% endif %}
+  <form method="post" action="/login" class="space-y-4">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}" />
+    <input type="hidden" name="next" value="{{ next }}" />
+    <div>
+      <label class="label" for="email">Email</label>
+      <input class="input" type="email" id="email" name="email" required autofocus autocomplete="username" />
+    </div>
+    <div>
+      <label class="label" for="password">Parola</label>
+      <input class="input" type="password" id="password" name="password" required autocomplete="current-password" />
+    </div>
+    <button type="submit" class="btn-primary w-full">Autentificare</button>
+  </form>
+  <div class="mt-4 flex justify-between text-sm">
+    <a class="text-brand-700 hover:underline dark:text-brand-300" href="/request-password-reset">Am uitat parola</a>
+    <a class="text-brand-700 hover:underline dark:text-brand-300" href="/bootstrap-admin">Primul administrator</a>
+  </div>
+</div>
+{% endblock %}

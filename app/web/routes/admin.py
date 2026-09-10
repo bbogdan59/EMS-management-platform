@@ -1,0 +1,180 @@
+from __future__ import annotations
+
+import uuid
+from datetime import timedelta
+
+from fastapi import APIRouter, Depends, Form, Query, Request
+from fastapi.responses import RedirectResponse
+from sqlalchemy import func, select
+from sqlalchemy.orm import Session
+
+from app.api.deps import get_current_user, require_platform_admin
+from app.core.audit import record_audit
+from app.core.csrf import verify_csrf
+from app.core.security import utcnow
+from app.database import get_db
+from app.models.alert import Alert
+from app.models.audit import AuditLog
+from app.models.command import Command
+from app.models.device import Device
+from app.models.enums import AlertStatus
+from app.models.market import ImportRun
+from app.models.optimization import OptimizationRun
+from app.models.organization import Membership, Organization
+from app.models.station import Station
+from app.models.user import User
+from app.services import station_service
+from app.web.context import build_nav_context
+from app.web.templating import templates
+
+router = APIRouter(dependencies=[Depends(require_platform_admin)])
+
+
+@router.get("")
+def overview(request: Request, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    now = utcnow()
+    stations = db.scalars(select(Station)).all()
+    devices = db.scalars(select(Device)).all()
+    online_devices = sum(1 for d in devices if d.last_heartbeat_at and (now - d.last_heartbeat_at) < timedelta(minutes=5))
+
+    counts = {
+        "organizations": db.scalar(select(func.count(Organization.id))),
+        "users": db.scalar(select(func.count(User.id))),
+        "stations": len(stations),
+        "devices": len(devices),
+        "devices_online": online_devices,
+        "devices_offline": len(devices) - online_devices,
+    }
+
+    active_alerts = db.scalars(
+        select(Alert).where(Alert.status == AlertStatus.open.value).order_by(Alert.created_at.desc()).limit(20)
+    ).all()
+
+    last_opcom = db.scalar(select(ImportRun).order_by(ImportRun.created_at.desc()).limit(1))
+    last_optimization = db.scalar(select(OptimizationRun).order_by(OptimizationRun.created_at.desc()).limit(1))
+
+    context = {
+        "counts": counts,
+        "active_alerts": active_alerts,
+        "last_opcom": last_opcom,
+        "last_optimization": last_optimization,
+        **build_nav_context(db, user),
+    }
+    return templates.TemplateResponse(request, "admin/overview.html", context)
+
+
+@router.get("/organizations")
+def organizations_list(request: Request, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    orgs = db.scalars(select(Organization).order_by(Organization.name)).all()
+    context = {"organizations": orgs, **build_nav_context(db, user)}
+    return templates.TemplateResponse(request, "admin/organizations.html", context)
+
+
+@router.post("/organizations", dependencies=[Depends(verify_csrf)])
+def create_organization(
+    request: Request,
+    name: str = Form(...),
+    is_demo: str | None = Form(None),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    org = station_service.create_organization(db, name, user, is_demo=bool(is_demo))
+    record_audit(
+        db, action="organization_created", resource_type="organization", resource_id=str(org.id),
+        actor_user_id=user.id, actor_label=user.email, organization_id=org.id,
+    )
+    db.commit()
+    return RedirectResponse("/admin/organizations", status_code=303)
+
+
+@router.get("/users")
+def users_list(request: Request, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    users = db.scalars(select(User).order_by(User.email)).all()
+    org_map = {o.id: o.name for o in db.scalars(select(Organization)).all()}
+    rows = []
+    for u in users:
+        memberships = db.scalars(select(Membership).where(Membership.user_id == u.id)).all()
+        rows.append(
+            {
+                "user": u,
+                "memberships": [{"org": org_map.get(m.organization_id, "?"), "role": m.role} for m in memberships],
+            }
+        )
+    context = {"rows": rows, **build_nav_context(db, user)}
+    return templates.TemplateResponse(request, "admin/users.html", context)
+
+
+@router.get("/operations")
+def operations(request: Request, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    import_runs = db.scalars(select(ImportRun).order_by(ImportRun.created_at.desc()).limit(20)).all()
+    optimization_runs = db.scalars(select(OptimizationRun).order_by(OptimizationRun.created_at.desc()).limit(20)).all()
+    devices = db.scalars(select(Device).order_by(Device.created_at.desc()).limit(50)).all()
+    commands = db.scalars(select(Command).order_by(Command.created_at.desc()).limit(30)).all()
+    stations = db.scalars(select(Station).order_by(Station.name)).all()
+
+    context = {
+        "import_runs": import_runs,
+        "optimization_runs": optimization_runs,
+        "devices": devices,
+        "commands": commands,
+        "stations": stations,
+        **build_nav_context(db, user),
+    }
+    return templates.TemplateResponse(request, "admin/operations.html", context)
+
+
+@router.post("/operations/import-opcom", dependencies=[Depends(verify_csrf)])
+def trigger_opcom_import(
+    request: Request,
+    delivery_date: str = Form(...),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    from datetime import date as date_cls
+
+    from app.services.opcom_service import import_opcom_day
+
+    d = date_cls.fromisoformat(delivery_date)
+    run = import_opcom_day(db, d, triggered_by_user_id=user.id)
+    record_audit(
+        db, action="opcom_import_triggered", resource_type="import_run", resource_id=str(run.id),
+        actor_user_id=user.id, actor_label=user.email, metadata={"delivery_date": delivery_date, "status": run.status},
+    )
+    db.commit()
+    return RedirectResponse("/admin/operations", status_code=303)
+
+
+@router.post("/operations/optimize/{station_id}", dependencies=[Depends(verify_csrf)])
+def trigger_optimization(
+    request: Request,
+    station_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    from app.services.optimization_service import run_optimization_for_station
+
+    run = run_optimization_for_station(db, station_id, triggered_by="user", triggered_by_user_id=user.id)
+    record_audit(
+        db, action="optimization_triggered", resource_type="optimization_run", resource_id=str(run.id),
+        actor_user_id=user.id, actor_label=user.email, station_id=station_id, metadata={"status": run.status},
+    )
+    db.commit()
+    return RedirectResponse("/admin/operations", status_code=303)
+
+
+@router.get("/audit")
+def audit_log(
+    request: Request,
+    action: str | None = Query(default=None),
+    actor: str | None = Query(default=None),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    stmt = select(AuditLog).order_by(AuditLog.occurred_at.desc()).limit(200)
+    if action:
+        stmt = stmt.where(AuditLog.action.ilike(f"%{action}%"))
+    if actor:
+        stmt = stmt.where(AuditLog.actor_label.ilike(f"%{actor}%"))
+    entries = db.scalars(stmt).all()
+    context = {"entries": entries, "filter_action": action or "", "filter_actor": actor or "", **build_nav_context(db, user)}
+    return templates.TemplateResponse(request, "admin/audit.html", context)

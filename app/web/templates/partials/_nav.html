@@ -1,0 +1,50 @@
+<header class="border-b border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-900">
+  <div class="mx-auto flex max-w-7xl flex-wrap items-center gap-3 px-4 py-3">
+    <a href="/" class="flex items-center gap-2 text-base font-semibold text-brand-700 dark:text-brand-300">
+      <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M13 2 3 14h7l-1 8 10-12h-7l1-8z" />
+      </svg>
+      <span class="hidden sm:inline">{{ app_name }}</span>
+    </a>
+
+    {% if current_user %}
+    <form method="get" action="/" class="ml-1">
+      <select name="station_id" class="input" onchange="this.form.submit()">
+        <option value="">Selecteaza statia...</option>
+        {% for s in nav_stations %}
+        <option value="{{ s.id }}" {% if current_station and current_station.id == s.id %}selected{% endif %}>
+          {{ s.organization_name }} / {{ s.name }}{% if s.is_demo %} (demo){% endif %}
+        </option>
+        {% endfor %}
+      </select>
+    </form>
+
+    <nav class="ml-2 flex flex-wrap items-center gap-1">
+      {% if current_station %}
+      <a class="nav-link" href="/stations/{{ current_station.id }}/config">Configurare</a>
+      <a class="nav-link" href="/stations/{{ current_station.id }}/preferences">Preferinte</a>
+      <a class="nav-link" href="/stations/{{ current_station.id }}/tariffs">Tarife</a>
+      <a class="nav-link" href="/stations/{{ current_station.id }}/devices">Dispozitive</a>
+      {% endif %}
+      {% if current_user.is_platform_admin %}
+      <a class="nav-link" href="/admin">Administrare</a>
+      {% endif %}
+    </nav>
+
+    <div class="ml-auto flex items-center gap-2">
+      <button type="button" onclick="emsToggleTheme()" class="nav-link" title="Comuta tema" aria-label="Comuta tema">
+        <span class="dark:hidden">🌙</span><span class="hidden dark:inline">☀️</span>
+      </button>
+      <span class="hidden text-sm text-gray-500 sm:inline dark:text-gray-400">{{ current_user.full_name }}</span>
+      <form method="post" action="/logout">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}" />
+        <button type="submit" class="btn-secondary">Iesire</button>
+      </form>
+    </div>
+    {% else %}
+    <div class="ml-auto">
+      <a class="btn-secondary" href="/login">Autentificare</a>
+    </div>
+    {% endif %}
+  </div>
+</header>

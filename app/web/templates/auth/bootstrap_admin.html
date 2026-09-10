@@ -1,0 +1,35 @@
+{% extends "base_public.html" %}
+{% block title %}Primul administrator - {{ app_name }}{% endblock %}
+{% block content %}
+<div class="card">
+  <h1 class="mb-2 text-xl font-semibold">Configurare initiala</h1>
+  <p class="mb-4 text-sm text-gray-600 dark:text-gray-400">
+    Acest formular functioneaza o singura data, doar daca variabila de mediu
+    <code class="rounded bg-gray-100 px-1 dark:bg-gray-800">BOOTSTRAP_ADMIN_TOKEN</code>
+    este configurata si nu exista deja un platform_admin.
+  </p>
+  {% if error %}
+  <p class="mb-4 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-900/30 dark:text-red-300">{{ error }}</p>
+  {% endif %}
+  <form method="post" action="/bootstrap-admin" class="space-y-4">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}" />
+    <div>
+      <label class="label" for="bootstrap_token">Token de bootstrap</label>
+      <input class="input" type="password" id="bootstrap_token" name="bootstrap_token" required />
+    </div>
+    <div>
+      <label class="label" for="full_name">Nume complet</label>
+      <input class="input" type="text" id="full_name" name="full_name" required />
+    </div>
+    <div>
+      <label class="label" for="email">Email</label>
+      <input class="input" type="email" id="email" name="email" required />
+    </div>
+    <div>
+      <label class="label" for="password">Parola</label>
+      <input class="input" type="password" id="password" name="password" required minlength="10" />
+    </div>
+    <button type="submit" class="btn-primary w-full">Creeaza platform_admin</button>
+  </form>
+</div>
+{% endblock %}

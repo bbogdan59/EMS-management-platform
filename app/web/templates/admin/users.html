@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Utilizatori - {{ app_name }}{% endblock %}
+{% block content %}
+<div class="space-y-6">
+  <h1 class="text-xl font-semibold">Utilizatori</h1>
+  {% include "admin/_tabs.html" %}
+  <div class="card">
+    <table class="w-full text-sm">
+      <thead class="text-left text-gray-500"><tr><th class="py-1">Email</th><th>Nume</th><th>Platform admin</th><th>Membru in</th><th>Ultima autentificare</th></tr></thead>
+      <tbody>
+        {% for row in rows %}
+        <tr class="border-t border-gray-100 dark:border-gray-800">
+          <td class="py-1">{{ row.user.email }}</td>
+          <td>{{ row.user.full_name }}</td>
+          <td>{% if row.user.is_platform_admin %}<span class="badge-ok">da</span>{% else %}-{% endif %}</td>
+          <td>
+            {% for m in row.memberships %}<span class="badge-muted">{{ m.org }}: {{ m.role }}</span>{% endfor %}
+          </td>
+          <td>{{ row.user.last_login_at.strftime("%d.%m.%Y %H:%M") if row.user.last_login_at else "niciodata" }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

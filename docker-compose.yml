@@ -1,0 +1,137 @@
+x-app-env: &app-env
+  ENVIRONMENT: ${ENVIRONMENT:-development}
+  DEBUG: ${DEBUG:-false}
+  SECRET_KEY: ${SECRET_KEY:?Seteaza SECRET_KEY in .env}
+  BASE_URL: ${BASE_URL:-http://localhost:8000}
+  DATABASE_URL: postgresql+psycopg://ems:${POSTGRES_PASSWORD:-ems}@postgres:5432/ems
+  REDIS_URL: redis://redis:6379/0
+  SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-false}
+  BOOTSTRAP_ADMIN_TOKEN: ${BOOTSTRAP_ADMIN_TOKEN:-}
+  DEMO_MODE_ENABLED: ${DEMO_MODE_ENABLED:-false}
+  EMAIL_BACKEND: ${EMAIL_BACKEND:-console}
+  OPCOM_USE_SYNTHETIC_FIXTURE_ON_FAILURE: ${OPCOM_USE_SYNTHETIC_FIXTURE_ON_FAILURE:-true}
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ems
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ems}
+      POSTGRES_DB: ems
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ems -d ems"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  migrate:
+    build: .
+    command: ["migrate"]
+    environment: *app-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  web:
+    build: .
+    command: ["web"]
+    environment:
+      <<: *app-env
+      PORT: 8000
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+
+  worker:
+    build: .
+    command: ["worker"]
+    environment: *app-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  scheduler:
+    build: .
+    command: ["scheduler"]
+    environment: *app-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    # IMPORTANT: o singura instanta de scheduler per mediu (nu scala acest serviciu).
+
+  seed-demo:
+    build: .
+    command: ["seed-demo"]
+    profiles: ["demo"]
+    environment:
+      <<: *app-env
+      DEMO_MODE_ENABLED: "true"
+      SIMULATOR_SEED_FILE: /data/simulator_seed.json
+    volumes:
+      - simulator_data:/data
+    depends_on:
+      web:
+        condition: service_healthy
+    restart: "no"
+
+  simulator:
+    build: .
+    command: ["simulator"]
+    profiles: ["demo"]
+    environment:
+      SIMULATOR_API_BASE_URL: http://web:8000/api/v1
+      SIMULATOR_SEED_FILE: /data/simulator_seed.json
+      SIMULATOR_STATE_DIR: /data/simulator_state
+      SIMULATOR_BACKFILL_DAYS: ${SIMULATOR_BACKFILL_DAYS:-14}
+      SIMULATOR_TICK_SECONDS: ${SIMULATOR_TICK_SECONDS:-20}
+    volumes:
+      - simulator_data:/data
+    depends_on:
+      seed-demo:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:
+  simulator_data:

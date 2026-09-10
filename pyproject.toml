@@ -1,0 +1,68 @@
+[project]
+name = "ems-platform"
+version = "0.1.0"
+description = "Platforma web de monitorizare si optimizare energetica pentru instalatii fotovoltaice cu invertoare Deye si baterii"
+requires-python = ">=3.11,<3.13"
+readme = "README.md"
+license = { text = "Proprietary" }
+
+dependencies = [
+    "fastapi==0.141.1",
+    "uvicorn[standard]==0.52.4",
+    "gunicorn==23.0.0",
+    "pydantic==2.13.5",
+    "pydantic-settings==2.15.0",
+    "email-validator==2.3.0",
+    "SQLAlchemy==2.0.52",
+    "alembic==1.19.2",
+    "psycopg[binary]==3.3.5",
+    "asyncpg==0.30.0",
+    "greenlet==3.5.5",
+    "celery[redis]==5.6.3",
+    "redis==5.3.1",
+    "argon2-cffi==25.1.0",
+    "itsdangerous==2.2.0",
+    "python-multipart==0.0.32",
+    "python-dotenv==1.2.3",
+    "httpx==0.28.1",
+    "tenacity==9.1.4",
+    "Jinja2==3.1.6",
+    "pyomo==6.10.1",
+    "highspy==1.15.1",
+    "pvlib==0.15.2",
+    "numpy==2.2.6",
+    "pandas==2.3.3",
+    "orjson==3.11.3",
+    "structlog==25.4.0",
+    "sse-starlette==3.4.11",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest==8.4.2",
+    "pytest-asyncio==1.4.0",
+    "pytest-cov==7.0.0",
+    "playwright==1.62.0",
+    "pytest-playwright==0.7.1",
+    "factory-boy==3.3.3",
+    "freezegun==1.5.5",
+    "ruff==0.14.5",
+    "mypy==1.19.1",
+    "types-redis==4.6.0.20241004",
+    "respx==0.22.0",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+py-modules = []

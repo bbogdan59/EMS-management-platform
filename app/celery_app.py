@@ -1,0 +1,65 @@
+"""Aplicatia Celery, comuna pentru procesele worker si beat (aceeasi baza de
+cod ca web-ul, procese separate). Vezi docker-compose.yml / Dockerfile pentru
+comenzile de pornire distincte.
+
+IMPORTANT: ruleaza o SINGURA instanta Celery Beat per mediu -- planificarea
+duplicata ar dubla importurile/optimizarile. In docker-compose si Railway,
+serviciul `scheduler` este singurul care porneste `celery beat`."""
+from __future__ import annotations
+
+from celery import Celery
+from celery.schedules import crontab
+
+from app.config import get_settings
+
+settings = get_settings()
+
+celery_app = Celery(
+    "ems_platform",
+    broker=settings.celery_broker,
+    backend=settings.celery_backend,
+    include=["app.workers.tasks"],
+)
+
+celery_app.conf.update(
+    task_serializer="json",
+    accept_content=["json"],
+    result_serializer="json",
+    timezone="UTC",
+    enable_utc=True,
+    task_track_started=True,
+    task_acks_late=True,
+    worker_prefetch_multiplier=1,
+    broker_connection_retry_on_startup=True,
+)
+
+celery_app.conf.beat_schedule = {
+    "aggregate-telemetry-every-15-min": {
+        "task": "app.workers.tasks.run_aggregation_task",
+        "schedule": crontab(minute="*/15"),
+    },
+    "opcom-import-hourly": {
+        "task": "app.workers.tasks.opcom_import_daily_task",
+        "schedule": crontab(minute=5),
+    },
+    "weather-and-forecasts-every-30-min": {
+        "task": "app.workers.tasks.weather_and_forecast_task",
+        "schedule": crontab(minute="*/30"),
+    },
+    "optimization-every-15-min": {
+        "task": "app.workers.tasks.optimization_all_stations_task",
+        "schedule": crontab(minute="*/15"),
+    },
+    "dispatch-commands-every-2-min": {
+        "task": "app.workers.tasks.command_dispatch_task",
+        "schedule": crontab(minute="*/2"),
+    },
+    "alerts-every-5-min": {
+        "task": "app.workers.tasks.alerts_task",
+        "schedule": crontab(minute="*/5"),
+    },
+    "retention-daily": {
+        "task": "app.workers.tasks.retention_task",
+        "schedule": crontab(hour=3, minute=0),
+    },
+}

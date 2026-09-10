@@ -1,0 +1,123 @@
+{% extends "base.html" %}
+{% block title %}{{ organization.name }} - {{ app_name }}{% endblock %}
+{% block content %}
+<div class="space-y-6">
+  <div>
+    <h1 class="text-xl font-semibold">{{ organization.name }}</h1>
+    <p class="text-sm text-gray-500 dark:text-gray-400">Rolul tau: <span class="badge-muted">{{ my_role }}</span></p>
+  </div>
+
+  <div class="grid gap-6 lg:grid-cols-2">
+    <div class="card">
+      <h2 class="mb-3 font-medium">Statii</h2>
+      <ul class="divide-y divide-gray-100 dark:divide-gray-800">
+        {% for s in stations %}
+        <li class="flex items-center justify-between py-2">
+          <a href="/?station_id={{ s.id }}" class="text-brand-700 hover:underline dark:text-brand-300">{{ s.name }}</a>
+          <a href="/stations/{{ s.id }}/config" class="text-xs text-gray-500 hover:underline">configurare</a>
+        </li>
+        {% else %}
+        <li class="py-2 text-sm text-gray-500">Nicio statie inca.</li>
+        {% endfor %}
+      </ul>
+
+      {% if can_manage %}
+      <details class="mt-4">
+        <summary class="cursor-pointer text-sm font-medium text-brand-700 dark:text-brand-300">+ Adauga statie</summary>
+        <form method="post" action="/organizations/{{ organization.id }}/stations" class="mt-3 space-y-3">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}" />
+          <div>
+            <label class="label">Nume statie</label>
+            <input class="input" name="name" required />
+          </div>
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="label">Fus orar</label>
+              <input class="input" name="timezone" value="Europe/Bucharest" required />
+            </div>
+            <div>
+              <label class="label">Putere PV instalata (kW)</label>
+              <input class="input" type="number" step="0.01" name="pv_installed_power_kw" required />
+            </div>
+          </div>
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="label">Putere invertor (kW)</label>
+              <input class="input" type="number" step="0.01" name="inverter_power_kw" required />
+            </div>
+            <div>
+              <label class="label">Capacitate baterie referinta (kWh)</label>
+              <input class="input" type="number" step="0.01" name="battery_reference_capacity_kwh" />
+            </div>
+          </div>
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="label">Putere max. incarcare baterie (kW)</label>
+              <input class="input" type="number" step="0.01" name="battery_max_charge_power_kw" />
+            </div>
+            <div>
+              <label class="label">Putere max. descarcare baterie (kW)</label>
+              <input class="input" type="number" step="0.01" name="battery_max_discharge_power_kw" />
+            </div>
+          </div>
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="label">Limita import retea (kW)</label>
+              <input class="input" type="number" step="0.01" name="grid_import_limit_kw" />
+            </div>
+            <div>
+              <label class="label">Limita export retea (kW)</label>
+              <input class="input" type="number" step="0.01" name="grid_export_limit_kw" />
+            </div>
+          </div>
+          <label class="flex items-center gap-2 text-sm">
+            <input type="checkbox" name="ev_enabled" value="true" /> Statie de incarcare EV prezenta
+          </label>
+          <button type="submit" class="btn-primary">Creeaza statia</button>
+        </form>
+      </details>
+      {% endif %}
+    </div>
+
+    <div class="card">
+      <h2 class="mb-3 font-medium">Membri</h2>
+      <ul class="divide-y divide-gray-100 dark:divide-gray-800">
+        {% for m in memberships %}
+        <li class="flex items-center justify-between py-2 text-sm">
+          <span>{{ m.email }}</span>
+          <span class="badge-muted">{{ m.role }}</span>
+        </li>
+        {% endfor %}
+      </ul>
+
+      {% if can_manage %}
+      <details class="mt-4">
+        <summary class="cursor-pointer text-sm font-medium text-brand-700 dark:text-brand-300">+ Invita membru</summary>
+        <form method="post" action="/organizations/{{ organization.id }}/invitations" class="mt-3 space-y-3">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}" />
+          <div>
+            <label class="label">Email</label>
+            <input class="input" type="email" name="email" required />
+          </div>
+          <div>
+            <label class="label">Rol</label>
+            <select class="input" name="role">
+              <option value="viewer">viewer</option>
+              <option value="operator">operator</option>
+              <option value="organization_admin">organization_admin</option>
+            </select>
+          </div>
+          <button type="submit" class="btn-primary">Trimite invitatie</button>
+        </form>
+      </details>
+      {% if invite_link %}
+      <p class="mt-3 rounded-lg bg-brand-50 p-3 text-xs text-brand-800 dark:bg-brand-900/30 dark:text-brand-200">
+        Invitatie creata. Link (mod demo/console email): <br />
+        <code class="break-all">{{ invite_link }}</code>
+      </p>
+      {% endif %}
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% endblock %}

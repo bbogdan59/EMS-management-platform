@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+{% block title %}Preferinte {{ station.name }} - {{ app_name }}{% endblock %}
+{% block content %}
+<div class="space-y-6">
+  <h1 class="text-xl font-semibold">Preferinte - {{ station.name }}</h1>
+  {% if preference %}
+  <p class="text-sm text-gray-500 dark:text-gray-400">Versiune curenta: v{{ preference.version }}</p>
+  {% if preference.conflict_warnings %}
+  <div class="rounded-lg bg-amber-50 p-3 text-sm text-amber-800 dark:bg-amber-900/30 dark:text-amber-200">
+    <p class="mb-1 font-medium">Conflicte detectate la ultima salvare:</p>
+    <ul class="list-inside list-disc">
+      {% for w in preference.conflict_warnings %}<li>{{ w }}</li>{% endfor %}
+    </ul>
+  </div>
+  {% endif %}
+  {% endif %}
+
+  <form method="post" action="/stations/{{ station.id }}/preferences" class="card space-y-4 {% if not can_edit %}pointer-events-none opacity-60{% endif %}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}" />
+
+    <fieldset class="rounded-lg border border-gray-200 p-3 dark:border-gray-800">
+      <legend class="px-1 text-sm font-medium">Constrangeri obligatorii</legend>
+      <div class="grid gap-4 sm:grid-cols-2">
+        <div>
+          <label class="label">SOC minim de rezerva (%)</label>
+          <input class="input" type="number" step="0.1" name="min_reserve_soc_percent" value="{{ preference.min_reserve_soc_percent if preference else 15 }}" required {% if not can_edit %}disabled{% endif %} />
+        </div>
+        <div>
+          <label class="label">SOC maxim normal (%)</label>
+          <input class="input" type="number" step="0.1" name="max_normal_soc_percent" value="{{ preference.max_normal_soc_percent if preference else 95 }}" required {% if not can_edit %}disabled{% endif %} />
+        </div>
+        <div>
+          <label class="label">Energie maxima autorizata pentru optimizare (kWh)</label>
+          <input class="input" type="number" step="0.01" name="max_optimization_energy_kwh" value="{{ preference.max_optimization_energy_kwh if preference }}" {% if not can_edit %}disabled{% endif %} />
+        </div>
+        <div>
+          <label class="label">Prioritate</label>
+          <select class="input" name="priority" {% if not can_edit %}disabled{% endif %}>
+            {% for p in ["cost", "autonomy", "battery_protection"] %}
+            <option value="{{ p }}" {% if preference and preference.priority == p %}selected{% endif %}>{{ p }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div>
+          <label class="label">Max. cicluri echivalente (EFC) / zi</label>
+          <input class="input" type="number" step="0.01" name="max_efc_per_day" value="{{ preference.max_efc_per_day if preference }}" {% if not can_edit %}disabled{% endif %} />
+        </div>
+        <div>
+          <label class="label">Max. cicluri echivalente (EFC) / luna</label>
+          <input class="input" type="number" step="0.01" name="max_efc_per_month" value="{{ preference.max_efc_per_month if preference }}" {% if not can_edit %}disabled{% endif %} />
+        </div>
+      </div>
+      <div class="mt-3 flex gap-6 text-sm">
+        <label class="flex items-center gap-2"><input type="checkbox" name="allow_grid_charge" value="true" {% if preference and preference.allow_grid_charge %}checked{% endif %} {% if not can_edit %}disabled{% endif %} /> Permite incarcare din retea</label>
+        <label class="flex items-center gap-2"><input type="checkbox" name="allow_battery_export" value="true" {% if preference and preference.allow_battery_export %}checked{% endif %} {% if not can_edit %}disabled{% endif %} /> Permite export din baterie</label>
+      </div>
+    </fieldset>
+
+    <fieldset class="rounded-lg border border-gray-200 p-3 dark:border-gray-800">
+      <legend class="px-1 text-sm font-medium">Preferinte flexibile</legend>
+      <div class="grid gap-4 sm:grid-cols-2">
+        <div>
+          <label class="label">Energie necesara EV (kWh)</label>
+          <input class="input" type="number" step="0.01" name="ev_required_energy_kwh" value="{{ preference.ev_required_energy_kwh if preference }}" {% if not can_edit %}disabled{% endif %} />
+        </div>
+        <div>
+          <label class="label">Ora plecare EV</label>
+          <input class="input" type="time" name="ev_departure_time" value="{{ preference.ev_departure_time.strftime('%H:%M') if preference and preference.ev_departure_time }}" {% if not can_edit %}disabled{% endif %} />
+        </div>
+        <div>
+          <label class="label">Prag beneficiu economic arbitraj (lei/kWh)</label>
+          <input class="input" type="number" step="0.0001" name="arbitrage_min_benefit_lei" value="{{ preference.arbitrage_min_benefit_lei if preference else 0 }}" {% if not can_edit %}disabled{% endif %} />
+        </div>
+      </div>
+      <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">
+        Tintele SOC recurente se configureaza din panoul dispozitivului dupa integrarea completa; structura de date este pregatita (JSON versionat).
+      </p>
+    </fieldset>
+
+    {% if can_edit %}<button type="submit" class="btn-primary">Salveaza (creeaza versiune noua)</button>{% endif %}
+  </form>
+</div>
+{% endblock %}
