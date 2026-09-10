@@ -5,7 +5,7 @@ anterioara intarzie peste intervalul de planificare)."""
 from __future__ import annotations
 
 import contextlib
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 
 import structlog
 from sqlalchemy import select
@@ -71,7 +71,7 @@ def opcom_import_daily_task() -> dict:
         results = {}
         with session_scope() as db:
             for offset in (0, 1):
-                d = datetime.now(timezone.utc).date() + timedelta(days=offset)
+                d = datetime.now(opcom_service.BUCHAREST).date() + timedelta(days=offset)
                 if opcom_service.has_successful_real_import(db, d):
                     results[d.isoformat()] = "already_succeeded"
                     continue

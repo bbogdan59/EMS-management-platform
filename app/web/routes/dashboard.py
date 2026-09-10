@@ -79,7 +79,10 @@ def data_prices(
     station, _role = station_role
     from app.web.context import build_nav_context  # noqa
 
-    target_date = date.today() if day == "today" else date.today() + timedelta(days=1)
+    from app.services.opcom_service import BUCHAREST
+
+    market_today = utcnow().astimezone(BUCHAREST).date()
+    target_date = market_today if day == "today" else market_today + timedelta(days=1)
     data = dashboard_service.get_prices(db, station, target_date)
     return JSONResponse({"day": day, "date": target_date.isoformat(), "intervals": data, "published": len(data) > 0})
 

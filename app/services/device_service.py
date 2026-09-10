@@ -226,6 +226,8 @@ def accept_plan(db: Session, device: Device, version: int) -> Plan:
 
 
 def list_pending_commands(db: Session, device: Device) -> list[Command]:
+    from app.services.command_dispatch_service import command_allows_delivery
+
     now = utcnow()
     expired = db.scalars(
         select(Command).where(
@@ -252,7 +254,14 @@ def list_pending_commands(db: Session, device: Device) -> list[Command]:
         .order_by(Command.valid_from)
     ).all()
 
+    deliverable = []
     for cmd in pending:
+        if not command_allows_delivery(db, cmd, device, now):
+            cmd.status = CommandStatus.superseded.value
+            db.add(cmd)
+            db.add(CommandEvent(command_id=cmd.id, event_type="superseded", source="system", message="Planul nu mai autorizeaza livrarea comenzii."))
+            continue
+        deliverable.append(cmd)
         if cmd.status == CommandStatus.created.value:
             cmd.status = CommandStatus.delivered.value
             cmd.delivered_at = now
@@ -261,15 +270,21 @@ def list_pending_commands(db: Session, device: Device) -> list[Command]:
     if pending:
         db.flush()
 
-    return pending
+    return deliverable
 
 
 def acknowledge_command(db: Session, device: Device, command_id: uuid.UUID, status_value: str, reason: str | None) -> Command:
+    from app.services.command_dispatch_service import command_allows_delivery
+
     command = db.get(Command, command_id)
     if command is None or command.device_id != device.id:
         raise DeviceServiceError("Comanda nu exista pentru acest dispozitiv.")
     if command.status not in (CommandStatus.delivered.value, CommandStatus.created.value):
         raise DeviceServiceError(f"Comanda este in starea '{command.status}', nu poate fi confirmata/respinsa acum.")
+    if command.valid_from > utcnow():
+        raise DeviceServiceError("Comanda nu este inca valabila.")
+    if status_value == "accepted" and not command_allows_delivery(db, command, device, utcnow()):
+        raise DeviceServiceError("Planul nu mai autorizeaza acceptarea comenzii.")
     if command.expires_at < utcnow():
         command.status = CommandStatus.expired.value
         db.add(command)
