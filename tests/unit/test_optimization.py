@@ -133,7 +133,20 @@ def test_optimization_infeasible_constraints_trigger_fallback(db):
     assert all(float(pi.battery_power_target_kw) == 0 for pi in intervals), "planul de fallback trebuie sa fie de asteptare (baterie in hold)"
 
 
-def test_optimization_fallback_when_no_forecasts_available(db):
+def test_optimization_fallback_when_no_forecasts_available(db, monkeypatch):
+    from app.services import weather_service
+    from app.services.weather_service import WeatherUnavailableError
+
+    # Fortam explicit absenta ambelor prognoze (PV si consum), in loc sa ne
+    # bazam pe indisponibilitatea retelei din mediul de test: PV forecast
+    # depinde la randul lui de existenta unor randuri WeatherForecast, deci
+    # daca refresh-ul meteo ar reusi (ex. intr-un mediu CI cu acces real la
+    # retea), testul ar deveni nedeterminist -- a picat exact asa in CI.
+    def _always_unavailable(*args, **kwargs):
+        raise WeatherUnavailableError("simulat indisponibil pentru test")
+
+    monkeypatch.setattr(weather_service, "refresh_weather_for_station", _always_unavailable)
+
     user = make_user(db, email="opt4@test.local")
     org = make_org(db, "Opt Org 4")
     station = make_station(db, org, user, name="Opt Station 4")

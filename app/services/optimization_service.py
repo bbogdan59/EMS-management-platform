@@ -98,7 +98,7 @@ def _build_pv_series(db: Session, station_id: uuid.UUID, horizon: list[datetime]
         .limit(1)
     )
     if latest_issued is None:
-        return {}
+        return dict.fromkeys(horizon)
     rows = db.scalars(
         select(PvForecast).where(
             PvForecast.station_id == station_id, PvForecast.issued_at == latest_issued, PvForecast.scenario == "expected"
@@ -119,7 +119,7 @@ def _build_load_series(db: Session, station_id: uuid.UUID, horizon: list[datetim
         .limit(1)
     )
     if latest_issued is None:
-        return {}
+        return dict.fromkeys(horizon)
     rows = db.scalars(
         select(ConsumptionForecast).where(
             ConsumptionForecast.station_id == station_id, ConsumptionForecast.issued_at == latest_issued

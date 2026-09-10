@@ -38,7 +38,11 @@ jobs:
       REDIS_URL: redis://localhost:6379/1
       SECRET_KEY: ci-secret-key-not-for-production
       ENVIRONMENT: test
-      BOOTSTRAP_ADMIN_TOKEN: ci-bootstrap-token
+      # Must match the literal token tests/unit/test_auth_and_rbac.py hardcodes
+      # (same value tests/conftest.py's os.environ.setdefault falls back to
+      # for local runs) -- CI sets the env var unconditionally, which
+      # bypasses that setdefault, so the two must be kept in sync.
+      BOOTSTRAP_ADMIN_TOKEN: test-bootstrap-token
       OPCOM_USE_SYNTHETIC_FIXTURE_ON_FAILURE: "true"
 
     steps:
