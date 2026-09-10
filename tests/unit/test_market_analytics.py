@@ -23,6 +23,7 @@ def test_get_daily_averages_aggregates_correctly(db):
 def test_get_daily_averages_excludes_superseded_revisions(db):
     make_market_day(db, date(2025, 6, 1), [100.0], revision=1)
     from sqlalchemy import select
+
     from app.models.market import MarketPriceInterval
 
     # marcheaza revizia 1 ca nemaifiind curenta si adauga o revizie 2

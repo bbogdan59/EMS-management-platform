@@ -34,12 +34,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from sqlalchemy import create_engine  # noqa: E402
-from sqlalchemy.orm import sessionmaker  # noqa: E402
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
 
-from app.config import get_settings  # noqa: E402
-from app.models.enums import ImportRunStatus  # noqa: E402
-from app.services import opcom_service  # noqa: E402
+from app.config import get_settings
+from app.models.enums import ImportRunStatus
+from app.services import opcom_service
 
 # Motor SQLAlchemy DEDICAT acestui script, dimensionat dupa --concurrency, in
 # loc sa refolosim engine-ul global al aplicatiei (dimensionat pentru
@@ -116,10 +116,8 @@ def main() -> None:
 
     with ThreadPoolExecutor(max_workers=args.concurrency) as executor:
         futures = {executor.submit(_import_one_day, d): d for d in pending_days}
-        done_count = 0
-        for future in as_completed(futures):
+        for done_count, future in enumerate(as_completed(futures), start=1):
             d, status, is_synthetic, error = future.result()
-            done_count += 1
 
             if status == ImportRunStatus.succeeded.value and not is_synthetic:
                 results["succeeded"] += 1

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
 from app.core.security import hash_password
@@ -75,7 +75,7 @@ def make_market_day(
     db.add(run)
     db.flush()
 
-    start = datetime(delivery_date.year, delivery_date.month, delivery_date.day, tzinfo=timezone.utc)
+    start = datetime(delivery_date.year, delivery_date.month, delivery_date.day, tzinfo=UTC)
     interval_minutes = 24 * 60 // len(prices_lei_mwh)
     for i, price in enumerate(prices_lei_mwh):
         interval_start = start + timedelta(minutes=interval_minutes * i)
