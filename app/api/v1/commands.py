@@ -46,7 +46,7 @@ def acknowledge_command(
         command = device_service.acknowledge_command(db, device, command_id, payload.status, payload.reason)
     except device_service.DeviceServiceError as exc:
         db.rollback()
-        raise HTTPException(status.HTTP_409_CONFLICT, detail=str(exc))
+        raise HTTPException(status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     db.commit()
     return {"command_id": command.id, "status": command.status}
 
@@ -66,6 +66,6 @@ def report_command_result(
         )
     except device_service.DeviceServiceError as exc:
         db.rollback()
-        raise HTTPException(status.HTTP_409_CONFLICT, detail=str(exc))
+        raise HTTPException(status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     db.commit()
     return {"command_id": command.id, "status": command.status}

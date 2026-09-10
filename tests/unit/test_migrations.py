@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from sqlalchemy import inspect
 
-from app.database import Base
 import app.models  # noqa: F401
+from app.database import Base
 
 
 def test_all_model_tables_exist_after_migration(engine):

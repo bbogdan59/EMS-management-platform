@@ -19,7 +19,6 @@ cand construieste grila de 15 minute.
 """
 from __future__ import annotations
 
-
 import pandas as pd
 import pvlib
 from sqlalchemy import select
@@ -99,7 +98,7 @@ def generate_pv_forecast(db: Session, station: Station) -> list[PvForecast]:
 
     created = []
     forecast_issued_at = utcnow()
-    for i, ts in enumerate(times):
+    for i, _ts in enumerate(times):
         w = weather_rows[i]
         pv = PvForecast(
             station_id=station.id,

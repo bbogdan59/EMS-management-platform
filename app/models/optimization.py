@@ -4,7 +4,17 @@ import uuid
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Integer,
+    Numeric,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Entity
@@ -53,7 +63,7 @@ class OptimizationRun(Entity):
 
     explanation_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
 
-    plan: Mapped["Plan | None"] = relationship(back_populates="optimization_run", uselist=False)
+    plan: Mapped[Plan | None] = relationship(back_populates="optimization_run", uselist=False)
 
 
 class Plan(Entity):
@@ -77,8 +87,8 @@ class Plan(Entity):
 
     __table_args__ = (UniqueConstraint("station_id", "version", name="uq_plan_station_version"),)
 
-    optimization_run: Mapped["OptimizationRun"] = relationship(back_populates="plan")
-    intervals: Mapped[list["PlanInterval"]] = relationship(
+    optimization_run: Mapped[OptimizationRun] = relationship(back_populates="plan")
+    intervals: Mapped[list[PlanInterval]] = relationship(
         back_populates="plan", cascade="all, delete-orphan", order_by="PlanInterval.interval_start"
     )
 
@@ -110,4 +120,4 @@ class PlanInterval(Entity):
     observed_soc_percent: Mapped[Decimal | None] = mapped_column(Numeric(5, 2), nullable=True)
     deviation_notes: Mapped[str | None] = mapped_column(String(500), nullable=True)
 
-    plan: Mapped["Plan"] = relationship(back_populates="intervals")
+    plan: Mapped[Plan] = relationship(back_populates="intervals")

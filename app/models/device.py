@@ -30,7 +30,7 @@ class ClaimCode(Entity):
         ForeignKey("devices.id"), nullable=True
     )
 
-    station: Mapped["Station"] = relationship()  # noqa: F821
+    station: Mapped[Station] = relationship()  # noqa: F821
 
 
 class Device(Entity):
@@ -48,8 +48,8 @@ class Device(Entity):
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     revoked_reason: Mapped[str | None] = mapped_column(String(500), nullable=True)
 
-    station: Mapped["Station"] = relationship()  # noqa: F821
-    credentials: Mapped[list["DeviceCredential"]] = relationship(
+    station: Mapped[Station] = relationship()  # noqa: F821
+    credentials: Mapped[list[DeviceCredential]] = relationship(
         back_populates="device", cascade="all, delete-orphan"
     )
 
@@ -69,4 +69,4 @@ class DeviceCredential(Entity):
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
-    device: Mapped["Device"] = relationship(back_populates="credentials")
+    device: Mapped[Device] = relationship(back_populates="credentials")

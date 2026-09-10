@@ -6,11 +6,10 @@ from __future__ import annotations
 import hashlib
 import hmac
 import secrets
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from argon2 import PasswordHasher
-from argon2.exceptions import VerifyMismatchError, VerificationError, InvalidHashError
-
+from argon2.exceptions import InvalidHashError, VerificationError, VerifyMismatchError
 
 _ph = PasswordHasher()
 
@@ -45,7 +44,7 @@ def constant_time_eq(a: str, b: str) -> bool:
 
 
 def utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def expires_in(minutes: int = 0, hours: int = 0, days: int = 0) -> datetime:

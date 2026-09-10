@@ -145,26 +145,38 @@ def detect_preference_conflicts(
             "bateria nu ar avea nicio marja de operare intre cele doua limite."
         )
 
-    if config is not None and config.battery_available_capacity_kwh:
-        if preference.max_optimization_energy_kwh and preference.max_optimization_energy_kwh > config.battery_available_capacity_kwh:
-            warnings.append(
-                "Energia maxima autorizata pentru optimizare depaseste capacitatea disponibila a bateriei "
-                f"({config.battery_available_capacity_kwh} kWh) -- obiectiv imposibil de atins integral."
-            )
+    if (
+        config is not None
+        and config.battery_available_capacity_kwh is not None
+        and preference.max_optimization_energy_kwh is not None
+        and preference.max_optimization_energy_kwh > config.battery_available_capacity_kwh
+    ):
+        warnings.append(
+            "Energia maxima autorizata pentru optimizare depaseste capacitatea disponibila a bateriei "
+            f"({config.battery_available_capacity_kwh} kWh) -- obiectiv imposibil de atins integral."
+        )
 
-    if config is not None and config.ev_enabled and preference.ev_required_energy_kwh and config.ev_battery_capacity_kwh:
-        if preference.ev_required_energy_kwh > config.ev_battery_capacity_kwh:
-            warnings.append(
-                "Energia necesara pentru EV depaseste capacitatea bateriei EV configurate -- "
-                "tinta de plecare nu poate fi atinsa integral."
-            )
+    if (
+        config is not None
+        and config.ev_enabled
+        and preference.ev_required_energy_kwh is not None
+        and config.ev_battery_capacity_kwh is not None
+        and preference.ev_required_energy_kwh > config.ev_battery_capacity_kwh
+    ):
+        warnings.append(
+            "Energia necesara pentru EV depaseste capacitatea bateriei EV configurate -- "
+            "tinta de plecare nu poate fi atinsa integral."
+        )
 
-    if preference.max_efc_per_day and preference.max_efc_per_month:
-        if preference.max_efc_per_day * 28 > preference.max_efc_per_month:
-            warnings.append(
-                "Bugetul zilnic de cicluri echivalente (EFC), inmultit cu numarul minim de zile "
-                "dintr-o luna, depaseste bugetul lunar -- constrangerile EFC pot intra in conflict."
-            )
+    if (
+        preference.max_efc_per_day is not None
+        and preference.max_efc_per_month is not None
+        and preference.max_efc_per_day * 28 > preference.max_efc_per_month
+    ):
+        warnings.append(
+            "Bugetul zilnic de cicluri echivalente (EFC), inmultit cu numarul minim de zile "
+            "dintr-o luna, depaseste bugetul lunar -- constrangerile EFC pot intra in conflict."
+        )
 
     if not preference.allow_grid_charge and preference.soc_targets:
         warnings.append(

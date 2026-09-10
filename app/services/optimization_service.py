@@ -19,6 +19,7 @@ retea pass-through), cu motivul documentat in `fallback_reason`.
 """
 from __future__ import annotations
 
+import contextlib
 import uuid
 from datetime import datetime, timedelta
 from decimal import Decimal
@@ -39,7 +40,12 @@ from app.models.optimization import OptimizationRun, Plan, PlanInterval
 from app.models.preference import PreferenceVersion
 from app.models.station import Station, StationConfigVersion
 from app.models.telemetry import TelemetryRaw
-from app.services import consumption_forecast_service, pv_forecast_service, tariff_service, weather_service
+from app.services import (
+    consumption_forecast_service,
+    pv_forecast_service,
+    tariff_service,
+    weather_service,
+)
 from app.services.dashboard_service import get_efc_used
 
 logger = structlog.get_logger(__name__)
@@ -202,10 +208,8 @@ def run_optimization_for_station(db: Session, station_id: uuid.UUID, triggered_b
     try:
         return _run_locked(db, station_id, triggered_by, triggered_by_user_id)
     finally:
-        try:
+        with contextlib.suppress(Exception):
             lock.release()
-        except Exception:
-            pass
 
 
 def _run_locked(db: Session, station_id: uuid.UUID, triggered_by: str, triggered_by_user_id) -> OptimizationRun:

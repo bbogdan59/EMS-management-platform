@@ -4,8 +4,9 @@ EMAIL_BACKEND=smtp."""
 from __future__ import annotations
 
 import smtplib
-import structlog
 from email.message import EmailMessage
+
+import structlog
 
 from app.config import get_settings
 
