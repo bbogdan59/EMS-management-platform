@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+{% block title %}Operatiuni - {{ app_name }}{% endblock %}
+{% block content %}
+<div class="space-y-6">
+  <h1 class="text-xl font-semibold">Operatiuni</h1>
+  {% include "admin/_tabs.html" %}
+
+  <div class="grid gap-4 lg:grid-cols-2">
+    <div class="card">
+      <h2 class="mb-2 font-medium">Reexecutare import OPCOM</h2>
+      <form method="post" action="/admin/operations/import-opcom" class="flex items-end gap-3">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}" />
+        <div>
+          <label class="label">Data de livrare</label>
+          <input class="input" type="date" name="delivery_date" required />
+        </div>
+        <button type="submit" class="btn-primary">Importa</button>
+      </form>
+      <table class="mt-4 w-full text-sm">
+        <thead class="text-left text-gray-500"><tr><th class="py-1">Data</th><th>Rev.</th><th>Status</th><th>Intervale</th></tr></thead>
+        <tbody>
+          {% for r in import_runs %}
+          <tr class="border-t border-gray-100 dark:border-gray-800">
+            <td class="py-1">{{ r.delivery_date }}</td>
+            <td>v{{ r.revision }}</td>
+            <td>
+              {% if r.status == "succeeded" %}<span class="badge-ok">succes</span>
+              {% elif r.status == "unpublished" %}<span class="badge-warn">nepublicat</span>
+              {% else %}<span class="badge-error">{{ r.status }}</span>{% endif %}
+              {% if r.is_synthetic_fixture %}<span class="badge-warn">sintetic</span>{% endif %}
+            </td>
+            <td>{{ r.interval_count or "-" }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <div class="card">
+      <h2 class="mb-2 font-medium">Reexecutare optimizare</h2>
+      <form method="post" action="" id="optimize-form" class="flex items-end gap-3">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}" />
+        <div>
+          <label class="label">Statie</label>
+          <select class="input" name="station_id" onchange="document.getElementById('optimize-form').action = '/admin/operations/optimize/' + this.value">
+            <option value="">Selecteaza...</option>
+            {% for s in stations %}<option value="{{ s.id }}">{{ s.name }}</option>{% endfor %}
+          </select>
+        </div>
+        <button type="submit" class="btn-primary">Ruleaza</button>
+      </form>
+      <table class="mt-4 w-full text-sm">
+        <thead class="text-left text-gray-500"><tr><th class="py-1">Data</th><th>Status</th><th>Cost (lei)</th></tr></thead>
+        <tbody>
+          {% for r in optimization_runs %}
+          <tr class="border-t border-gray-100 dark:border-gray-800">
+            <td class="py-1">{{ r.created_at.strftime("%d.%m %H:%M") }}</td>
+            <td>
+              {% if r.status == "succeeded" %}<span class="badge-ok">succes</span>
+              {% elif r.status in ("infeasible", "failed") %}<span class="badge-error">{{ r.status }}</span>
+              {% else %}<span class="badge-warn">{{ r.status }}</span>{% endif %}
+              {% if r.is_fallback %}<span class="badge-warn" title="{{ r.fallback_reason }}">fallback</span>{% endif %}
+            </td>
+            <td>{{ r.objective_value_lei | lei if r.objective_value_lei is not none else "-" }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <div class="card">
+      <h2 class="mb-2 font-medium">Dispozitive (toate statiile)</h2>
+      <table class="w-full text-sm">
+        <thead class="text-left text-gray-500"><tr><th class="py-1">Nume</th><th>Status</th><th>Ultimul heartbeat</th></tr></thead>
+        <tbody>
+          {% for d in devices %}
+          <tr class="border-t border-gray-100 dark:border-gray-800">
+            <td class="py-1">{{ d.name }}</td>
+            <td>{{ d.status }}</td>
+            <td>{{ d.last_heartbeat_at.strftime("%d.%m %H:%M") if d.last_heartbeat_at else "-" }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <div class="card">
+      <h2 class="mb-2 font-medium">Comenzi recente</h2>
+      <table class="w-full text-sm">
+        <thead class="text-left text-gray-500"><tr><th class="py-1">Tip</th><th>Status</th><th>Autor</th><th>Creata</th></tr></thead>
+        <tbody>
+          {% for c in commands %}
+          <tr class="border-t border-gray-100 dark:border-gray-800">
+            <td class="py-1">{{ c.type }}</td>
+            <td>{{ c.status }}</td>
+            <td>{{ c.author }}</td>
+            <td>{{ c.created_at.strftime("%d.%m %H:%M") }}</td>
+          </tr>
+          {% else %}
+          <tr><td colspan="4" class="py-2 text-gray-500">Nicio comanda inca.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}{{ app_name }}{% endblock %}
+{% block content %}
+<div class="card mx-auto max-w-lg text-center">
+  {% if nav_stations %}
+  <p class="text-sm text-gray-600 dark:text-gray-400">Selecteaza o statie din meniul de sus pentru a vedea dashboard-ul.</p>
+  {% else %}
+  <p class="text-sm text-gray-600 dark:text-gray-400">Nu ai acces la nicio statie inca.</p>
+  {% if current_user.is_platform_admin %}
+  <a class="btn-primary mt-4 inline-block" href="/admin/organizations">Mergi la panoul de administrare</a>
+  {% endif %}
+  {% endif %}
+</div>
+{% endblock %}

@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}Jurnal de audit - {{ app_name }}{% endblock %}
+{% block content %}
+<div class="space-y-6">
+  <h1 class="text-xl font-semibold">Jurnal de audit</h1>
+  {% include "admin/_tabs.html" %}
+
+  <form method="get" action="/admin/audit" class="card flex flex-wrap items-end gap-3">
+    <div>
+      <label class="label">Actiune contine</label>
+      <input class="input" name="action" value="{{ filter_action }}" />
+    </div>
+    <div>
+      <label class="label">Actor contine</label>
+      <input class="input" name="actor" value="{{ filter_actor }}" />
+    </div>
+    <button type="submit" class="btn-secondary">Filtreaza</button>
+  </form>
+
+  <div class="card overflow-x-auto">
+    <table class="w-full text-sm">
+      <thead class="text-left text-gray-500"><tr><th class="py-1">Data</th><th>Actor</th><th>Actiune</th><th>Resursa</th><th>Rezultat</th></tr></thead>
+      <tbody>
+        {% for e in entries %}
+        <tr class="border-t border-gray-100 dark:border-gray-800">
+          <td class="py-1 whitespace-nowrap">{{ e.occurred_at.strftime("%d.%m.%Y %H:%M:%S") }}</td>
+          <td>{{ e.actor_label }}</td>
+          <td>{{ e.action }}</td>
+          <td>{{ e.resource_type }}{% if e.resource_id %} #{{ e.resource_id[:8] }}{% endif %}</td>
+          <td>{% if e.outcome == "success" %}<span class="badge-ok">ok</span>{% else %}<span class="badge-error">{{ e.outcome }}</span>{% endif %}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="5" class="py-2 text-gray-500">Nicio inregistrare.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

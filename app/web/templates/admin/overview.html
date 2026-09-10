@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block title %}Administrare - {{ app_name }}{% endblock %}
+{% block content %}
+<div class="space-y-6">
+  <h1 class="text-xl font-semibold">Panou de administrare</h1>
+  {% include "admin/_tabs.html" %}
+
+  <div class="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+    <div class="card"><p class="label !mb-1">Organizatii</p><p class="text-2xl font-semibold">{{ counts.organizations }}</p></div>
+    <div class="card"><p class="label !mb-1">Utilizatori</p><p class="text-2xl font-semibold">{{ counts.users }}</p></div>
+    <div class="card"><p class="label !mb-1">Statii</p><p class="text-2xl font-semibold">{{ counts.stations }}</p></div>
+    <div class="card"><p class="label !mb-1">Dispozitive</p><p class="text-2xl font-semibold">{{ counts.devices }}</p></div>
+    <div class="card"><p class="label !mb-1">Online</p><p class="text-2xl font-semibold text-green-600">{{ counts.devices_online }}</p></div>
+    <div class="card"><p class="label !mb-1">Offline</p><p class="text-2xl font-semibold text-red-600">{{ counts.devices_offline }}</p></div>
+  </div>
+
+  <div class="grid gap-4 lg:grid-cols-2">
+    <div class="card">
+      <h2 class="mb-2 font-medium">Ultimul import OPCOM</h2>
+      {% if last_opcom %}
+      <p class="text-sm">Data livrare: {{ last_opcom.delivery_date }} &middot; status:
+        {% if last_opcom.status == "succeeded" %}<span class="badge-ok">succes</span>
+        {% elif last_opcom.status == "unpublished" %}<span class="badge-warn">nepublicat</span>
+        {% else %}<span class="badge-error">{{ last_opcom.status }}</span>{% endif %}
+        {% if last_opcom.is_synthetic_fixture %}<span class="badge-warn">date sintetice</span>{% endif %}
+      </p>
+      <p class="mt-1 text-xs text-gray-500">{{ last_opcom.created_at.strftime("%d.%m.%Y %H:%M") }}</p>
+      {% else %}<p class="text-sm text-gray-500">Niciun import inca.</p>{% endif %}
+    </div>
+    <div class="card">
+      <h2 class="mb-2 font-medium">Ultima optimizare</h2>
+      {% if last_optimization %}
+      <p class="text-sm">Status: <span class="badge-{{ 'ok' if last_optimization.status == 'succeeded' else 'warn' }}">{{ last_optimization.status }}</span></p>
+      <p class="mt-1 text-xs text-gray-500">{{ last_optimization.created_at.strftime("%d.%m.%Y %H:%M") }}</p>
+      {% else %}<p class="text-sm text-gray-500">Nicio optimizare inca.</p>{% endif %}
+    </div>
+  </div>
+
+  <div class="card">
+    <h2 class="mb-2 font-medium">Alerte active</h2>
+    <table class="w-full text-sm">
+      <thead class="text-left text-gray-500"><tr><th class="py-1">Titlu</th><th>Categorie</th><th>Severitate</th><th>Data</th></tr></thead>
+      <tbody>
+        {% for a in active_alerts %}
+        <tr class="border-t border-gray-100 dark:border-gray-800">
+          <td class="py-1">{{ a.title }}</td>
+          <td>{{ a.category }}</td>
+          <td>
+            {% if a.severity == "critical" %}<span class="badge-error">critic</span>
+            {% elif a.severity == "warning" %}<span class="badge-warn">atentie</span>
+            {% else %}<span class="badge-muted">info</span>{% endif %}
+          </td>
+          <td>{{ a.created_at.strftime("%d.%m.%Y %H:%M") }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="4" class="py-2 text-gray-500">Nicio alerta activa.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

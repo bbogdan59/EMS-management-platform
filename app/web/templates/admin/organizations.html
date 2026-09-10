@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}Organizatii - {{ app_name }}{% endblock %}
+{% block content %}
+<div class="space-y-6">
+  <h1 class="text-xl font-semibold">Organizatii</h1>
+  {% include "admin/_tabs.html" %}
+
+  <div class="card">
+    <table class="w-full text-sm">
+      <thead class="text-left text-gray-500"><tr><th class="py-1">Nume</th><th>Slug</th><th>Statii</th><th></th></tr></thead>
+      <tbody>
+        {% for o in organizations %}
+        <tr class="border-t border-gray-100 dark:border-gray-800">
+          <td class="py-1">{{ o.name }}{% if o.is_demo %} <span class="badge-warn">demo</span>{% endif %}</td>
+          <td>{{ o.slug }}</td>
+          <td>{{ o.stations | length }}</td>
+          <td><a class="text-brand-700 hover:underline dark:text-brand-300" href="/organizations/{{ o.id }}">deschide</a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="card max-w-md">
+    <h2 class="mb-3 font-medium">Organizatie noua</h2>
+    <form method="post" action="/admin/organizations" class="space-y-3">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}" />
+      <div>
+        <label class="label">Nume</label>
+        <input class="input" name="name" required />
+      </div>
+      <label class="flex items-center gap-2 text-sm">
+        <input type="checkbox" name="is_demo" value="true" /> Organizatie demonstrativa (date izolate/marcate)
+      </label>
+      <button type="submit" class="btn-primary">Creeaza</button>
+    </form>
+  </div>
+</div>
+{% endblock %}

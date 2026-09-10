@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block title %}Dispozitive {{ station.name }} - {{ app_name }}{% endblock %}
+{% block content %}
+<div class="space-y-6">
+  <h1 class="text-xl font-semibold">Dispozitive - {{ station.name }}</h1>
+
+  {% if new_claim_code %}
+  <div class="card border-brand-300 bg-brand-50 dark:bg-brand-900/20">
+    <p class="text-sm font-medium">Cod de asociere generat (afisat o singura data):</p>
+    <p class="mt-1 font-mono text-lg">{{ new_claim_code }}</p>
+    <p class="mt-1 text-xs text-gray-600 dark:text-gray-400">Transmite-l instalatorului prin canal separat. Expira in scurt timp.</p>
+  </div>
+  {% endif %}
+
+  <div class="card">
+    <h2 class="mb-3 font-medium">Dispozitive asociate</h2>
+    <table class="w-full text-sm">
+      <thead class="text-left text-gray-500"><tr><th class="py-1">Nume</th><th>Status</th><th>Ultimul heartbeat</th><th>Firmware</th><th></th></tr></thead>
+      <tbody>
+        {% for d in devices %}
+        <tr class="border-t border-gray-100 dark:border-gray-800">
+          <td class="py-1">{{ d.name }}</td>
+          <td>
+            {% if d.status == "active" %}<span class="badge-ok">activ</span>
+            {% elif d.status == "revoked" %}<span class="badge-error">revocat</span>
+            {% else %}<span class="badge-muted">{{ d.status }}</span>{% endif %}
+          </td>
+          <td>{{ d.last_heartbeat_at.strftime("%d.%m.%Y %H:%M") if d.last_heartbeat_at else "niciodata" }}</td>
+          <td>{{ d.firmware_version or "-" }}</td>
+          <td>
+            {% if can_edit and d.status == "active" %}
+            <form method="post" action="/stations/{{ station.id }}/devices/{{ d.id }}/revoke">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}" />
+              <button type="submit" class="btn-danger">Revoca</button>
+            </form>
+            {% endif %}
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="5" class="py-2 text-gray-500">Niciun dispozitiv asociat inca.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  {% if can_edit %}
+  <div class="card">
+    <h2 class="mb-2 font-medium">Genereaza cod de asociere</h2>
+    <p class="mb-3 text-sm text-gray-500 dark:text-gray-400">Codul e valabil o perioada limitata si poate fi folosit o singura data de dispozitiv (sau simulator) pentru a se asocia acestei statii.</p>
+    <form method="post" action="/stations/{{ station.id }}/claim-codes">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}" />
+      <button type="submit" class="btn-primary">Genereaza cod nou</button>
+    </form>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

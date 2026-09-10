@@ -1,0 +1,604 @@
+"""Motorul de optimizare: orizont 24-48h, intervale de 15 minute, Pyomo + HiGHS.
+
+Separarea ceruta de specificatie:
+  OptimizationRun (scenariul calculat, cu input_snapshot pt. reproductibilitate)
+    -> Plan (planul publicat, daca run-ul a reusit) -- status/executie separate
+        -> acceptarea de catre dispozitiv, comenzile si confirmarile de executie
+           se gestioneaza in alta parte (device_service / API v1)
+        -> efectul observat se completeaza ulterior dintr-un job de reconciliere
+           (PlanInterval.observed_*), comparand cu telemetria reala.
+
+Modul shadow (implicit): planul e calculat si afisat, dar `execution_mode`
+ramane "shadow" -- nu autorizeaza executia fizica. Comutarea la "live" e o
+actiune administrativa explicita asupra statiei.
+
+Strategie de fallback conservatoare: daca lipsesc complet prognozele (PV si
+consum) sau solverul esueaza/timeout/infezabil, NU se publica un plan bazat pe
+presupuneri riscante -- se publica un plan de asteptare (baterie in hold,
+retea pass-through), cu motivul documentat in `fallback_reason`.
+"""
+from __future__ import annotations
+
+import uuid
+from datetime import datetime, timedelta
+from decimal import Decimal
+from zoneinfo import ZoneInfo
+
+import pyomo.environ as pyo
+import structlog
+from pyomo.opt import TerminationCondition
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app.config import get_settings
+from app.core.rate_limit import get_redis
+from app.core.security import utcnow
+from app.models.enums import OptimizationRunStatus, PlanStatus
+from app.models.forecast import ConsumptionForecast, PvForecast
+from app.models.optimization import OptimizationRun, Plan, PlanInterval
+from app.models.preference import PreferenceVersion
+from app.models.station import Station, StationConfigVersion
+from app.models.telemetry import TelemetryRaw
+from app.services import consumption_forecast_service, pv_forecast_service, tariff_service, weather_service
+from app.services.dashboard_service import get_efc_used
+
+logger = structlog.get_logger(__name__)
+settings = get_settings()
+
+DEFAULT_BATTERY_WEAR_COST_LEI_PER_KWH = Decimal("0.05")
+SOC_TARGET_PENALTY_LEI_PER_KWH = 2.0
+EV_SHORTFALL_PENALTY_LEI_PER_KWH = 5.0
+PRIORITY_WEIGHTS = {
+    "cost": {"soc_target": 1.0, "ev": 1.0, "wear": 1.0, "terminal_value": 1.0},
+    "autonomy": {"soc_target": 1.5, "ev": 1.3, "wear": 0.8, "terminal_value": 2.0},
+    "battery_protection": {"soc_target": 0.8, "ev": 0.8, "wear": 2.5, "terminal_value": 1.0},
+}
+
+
+class OptimizationLockedError(Exception):
+    pass
+
+
+def _acquire_lock(station_id: uuid.UUID):
+    r = get_redis()
+    lock = r.lock(f"optimization_lock:{station_id}", timeout=120, blocking_timeout=1)
+    if not lock.acquire(blocking=True):
+        raise OptimizationLockedError("Exista deja o optimizare in curs pentru aceasta statie.")
+    return lock
+
+
+def _round_to_interval(dt: datetime, minutes: int) -> datetime:
+    discard = timedelta(minutes=dt.minute % minutes, seconds=dt.second, microseconds=dt.microsecond)
+    return dt - discard
+
+
+def _current_soc_kwh(db: Session, station: Station, available_capacity_kwh: Decimal) -> float:
+    latest = db.scalar(
+        select(TelemetryRaw)
+        .where(TelemetryRaw.station_id == station.id, TelemetryRaw.battery_soc_percent.isnot(None))
+        .order_by(TelemetryRaw.measured_at.desc())
+        .limit(1)
+    )
+    if latest is not None:
+        return float(latest.battery_soc_percent) / 100.0 * float(available_capacity_kwh)
+    return 0.5 * float(available_capacity_kwh)
+
+
+def _build_pv_series(db: Session, station_id: uuid.UUID, horizon: list[datetime]) -> dict[datetime, float]:
+    latest_issued = db.scalar(
+        select(PvForecast.issued_at)
+        .where(PvForecast.station_id == station_id, PvForecast.scenario == "expected")
+        .order_by(PvForecast.issued_at.desc())
+        .limit(1)
+    )
+    if latest_issued is None:
+        return {}
+    rows = db.scalars(
+        select(PvForecast).where(
+            PvForecast.station_id == station_id, PvForecast.issued_at == latest_issued, PvForecast.scenario == "expected"
+        )
+    ).all()
+    series = {}
+    for t in horizon:
+        match = next((r for r in rows if r.interval_start <= t < r.interval_end), None)
+        series[t] = float(match.predicted_power_kw) if match else None
+    return series
+
+
+def _build_load_series(db: Session, station_id: uuid.UUID, horizon: list[datetime]) -> dict[datetime, float]:
+    latest_issued = db.scalar(
+        select(ConsumptionForecast.issued_at)
+        .where(ConsumptionForecast.station_id == station_id)
+        .order_by(ConsumptionForecast.issued_at.desc())
+        .limit(1)
+    )
+    if latest_issued is None:
+        return {}
+    rows = db.scalars(
+        select(ConsumptionForecast).where(
+            ConsumptionForecast.station_id == station_id, ConsumptionForecast.issued_at == latest_issued
+        )
+    ).all()
+    by_start = {r.interval_start: float(r.base_load_kw + r.ev_component_kw + r.flexible_component_kw) for r in rows}
+    return {t: by_start.get(t) for t in horizon}
+
+
+def _fill_gaps(series: dict[datetime, float | None], fallback: float) -> dict[datetime, float]:
+    out = {}
+    last = None
+    for t, v in series.items():
+        if v is not None:
+            last = v
+            out[t] = v
+        else:
+            out[t] = last if last is not None else fallback
+    return out
+
+
+def _ensure_forecasts(db: Session, station: Station) -> None:
+    """Best-effort: reimprospateaza meteo/PV/consum. Esecurile sunt tolerate --
+    optimizatorul foloseste orice date existente deja in baza, iar lipsa totala
+    declanseaza fallback-ul conservator mai jos."""
+    try:
+        weather_service.refresh_weather_for_station(db, station)
+        db.flush()
+    except Exception as exc:
+        logger.info("optimization.weather_refresh_skipped", station_id=str(station.id), reason=str(exc))
+
+    try:
+        pv_forecast_service.generate_pv_forecast(db, station)
+        db.flush()
+    except Exception as exc:
+        logger.info("optimization.pv_forecast_skipped", station_id=str(station.id), reason=str(exc))
+
+    now = utcnow()
+    try:
+        consumption_forecast_service.generate_consumption_forecast(
+            db, station, now, now + timedelta(hours=settings.optimization_horizon_hours + 1)
+        )
+        db.flush()
+    except Exception as exc:
+        logger.info("optimization.consumption_forecast_skipped", station_id=str(station.id), reason=str(exc))
+
+
+def _explain_interval(pi_data: dict, priority: str) -> str:
+    batt = pi_data["battery_power_target_kw"]
+    grid = pi_data["grid_power_target_kw"]
+    price = pi_data.get("price_import_lei_kwh")
+
+    if abs(batt) < 0.01 and abs(grid) < 0.01:
+        return "Sistem in echilibru: productia PV acopera consumul, fara actiune asupra bateriei sau retelei."
+    parts = []
+    if batt > 0.01:
+        parts.append(f"Se incarca bateria cu {batt:.2f} kW")
+        if grid > 0.01:
+            parts.append(f"folosind si import din retea ({grid:.2f} kW)")
+        else:
+            parts.append("din surplusul de productie PV")
+    elif batt < -0.01:
+        parts.append(f"Se descarca bateria cu {abs(batt):.2f} kW pentru a acoperi consumul")
+        if grid > 0.01:
+            parts.append(f"si se importa suplimentar {grid:.2f} kW")
+
+    if abs(batt) < 0.01 and grid > 0.01:
+        parts.append(f"Se importa {grid:.2f} kW din retea (productia PV si bateria nu acopera consumul)")
+    elif abs(batt) < 0.01 and grid < -0.01:
+        parts.append(f"Se exporta {abs(grid):.2f} kW in retea (surplus PV peste consum si limitele bateriei)")
+
+    if price is not None and grid > 0.01:
+        parts.append(f"la un pret de import de {price:.4f} lei/kWh")
+
+    sentence = " ".join(parts) if parts else "Actiune neutra."
+    priority_note = {
+        "autonomy": " (prioritate: autonomie fata de retea)",
+        "battery_protection": " (prioritate: protejarea bateriei)",
+        "cost": "",
+    }.get(priority, "")
+    return sentence.strip() + priority_note + "."
+
+
+def run_optimization_for_station(db: Session, station_id: uuid.UUID, triggered_by: str, triggered_by_user_id=None) -> OptimizationRun:
+    lock = _acquire_lock(station_id)
+    try:
+        return _run_locked(db, station_id, triggered_by, triggered_by_user_id)
+    finally:
+        try:
+            lock.release()
+        except Exception:
+            pass
+
+
+def _run_locked(db: Session, station_id: uuid.UUID, triggered_by: str, triggered_by_user_id) -> OptimizationRun:
+    station = db.get(Station, station_id)
+    if station is None:
+        raise ValueError("Statia nu exista.")
+
+    config = db.scalar(
+        select(StationConfigVersion)
+        .where(StationConfigVersion.station_id == station_id)
+        .order_by(StationConfigVersion.version.desc())
+        .limit(1)
+    )
+    preference = db.scalar(
+        select(PreferenceVersion)
+        .where(PreferenceVersion.station_id == station_id)
+        .order_by(PreferenceVersion.version.desc())
+        .limit(1)
+    )
+
+    interval_minutes = settings.optimization_interval_minutes
+    start = _round_to_interval(utcnow(), interval_minutes) + timedelta(minutes=interval_minutes)
+    horizon_hours = settings.optimization_horizon_hours
+    n_intervals = int(horizon_hours * 60 / interval_minutes)
+    horizon = [start + timedelta(minutes=interval_minutes * i) for i in range(n_intervals)]
+    end = horizon[-1] + timedelta(minutes=interval_minutes)
+
+    run = OptimizationRun(
+        station_id=station_id,
+        status=OptimizationRunStatus.running.value,
+        horizon_start=start,
+        horizon_end=end,
+        interval_minutes=interval_minutes,
+        station_config_version_id=config.id if config else None,
+        preference_version_id=preference.id if preference else None,
+        solver_timeout_seconds=settings.optimization_solver_timeout_seconds,
+        triggered_by=triggered_by,
+        triggered_by_user_id=triggered_by_user_id,
+        started_at=utcnow(),
+    )
+    db.add(run)
+    db.flush()
+
+    if config is None or preference is None:
+        return _fallback(db, run, station, horizon, interval_minutes, "Statia nu are configuratie sau preferinte publicate.")
+
+    _ensure_forecasts(db, station)
+
+    pv_series_raw = _build_pv_series(db, station_id, horizon)
+    load_series_raw = _build_load_series(db, station_id, horizon)
+
+    if not any(v is not None for v in pv_series_raw.values()) and not any(v is not None for v in load_series_raw.values()):
+        return _fallback(db, run, station, horizon, interval_minutes, "Prognoze PV si de consum indisponibile pentru orizontul cerut.")
+
+    pv_series = _fill_gaps(pv_series_raw, fallback=0.0)
+    load_series = _fill_gaps(load_series_raw, fallback=max([v for v in load_series_raw.values() if v], default=0.5))
+
+    price_buy, price_sell = {}, {}
+    for t in horizon:
+        imp = tariff_service.get_current_tariff_version(db, station_id, "import", t)
+        exp = tariff_service.get_current_tariff_version(db, station_id, "export", t)
+        from app.models.market import MarketPriceInterval
+
+        market = db.scalar(
+            select(MarketPriceInterval).where(
+                MarketPriceInterval.is_current.is_(True),
+                MarketPriceInterval.interval_start <= t,
+                MarketPriceInterval.interval_end > t,
+            )
+        )
+        price_buy[t] = _resolve_price(imp, market)
+        price_sell[t] = _resolve_price(exp, market)
+
+    if all(v is None for v in price_buy.values()):
+        return _fallback(db, run, station, horizon, interval_minutes, "Niciun tarif de import valid pentru orizontul cerut.")
+
+    fallback_price = next((v for v in price_buy.values() if v is not None), 0.8)
+    price_buy = {t: (v if v is not None else fallback_price) for t, v in price_buy.items()}
+    price_sell = {t: (v if v is not None else 0.0) for t, v in price_sell.items()}
+
+    try:
+        result = _solve(
+            station=station, config=config, preference=preference, horizon=horizon,
+            interval_minutes=interval_minutes, pv_series=pv_series, load_series=load_series,
+            price_buy=price_buy, price_sell=price_sell, current_soc_kwh=_current_soc_kwh(db, station, config.battery_available_capacity_kwh or Decimal(0)),
+            db=db,
+        )
+    except Exception as exc:
+        logger.error("optimization.solve_error", station_id=str(station_id), error=str(exc))
+        return _fallback(db, run, station, horizon, interval_minutes, f"Eroare in timpul rezolvarii: {exc}")
+
+    if result["termination"] not in ("optimal", "feasible"):
+        reason = {
+            "infeasible": "Modelul este infezabil cu constrangerile obligatorii curente (verifica SOC min/max, limite de putere si bugete EFC).",
+            "timeout": f"Solverul a depasit limita de timp ({settings.optimization_solver_timeout_seconds}s).",
+        }.get(result["termination"], f"Solver terminat cu status neasteptat: {result['termination']}")
+        run.status = (
+            OptimizationRunStatus.infeasible.value if result["termination"] == "infeasible" else OptimizationRunStatus.solver_timeout.value
+        )
+        return _fallback(db, run, station, horizon, interval_minutes, reason)
+
+    run.status = OptimizationRunStatus.succeeded.value
+    run.objective_value_lei = Decimal(str(round(result["objective"], 4)))
+    run.finished_at = utcnow()
+    run.input_snapshot = {
+        "pv_coverage": sum(1 for v in pv_series_raw.values() if v is not None),
+        "load_coverage": sum(1 for v in load_series_raw.values() if v is not None),
+        "n_intervals": len(horizon),
+    }
+    run.explanation_summary = (
+        f"Cost net estimat pe orizont: {result['objective']:.2f} lei. "
+        f"Prioritate: {preference.priority}. Interval optimizat: {start:%d.%m %H:%M} - {end:%d.%m %H:%M}."
+    )
+    db.add(run)
+    db.flush()
+
+    _publish_plan(db, run, station, result["intervals"], price_buy, preference.priority)
+    return run
+
+
+def _resolve_price(tariff_version, market) -> float | None:
+    if tariff_version is None or tariff_version.economic_calculation_disabled:
+        return None
+    if tariff_version.fixed_price_lei_per_kwh is not None:
+        base = float(tariff_version.fixed_price_lei_per_kwh)
+    elif tariff_version.opcom_margin_lei_per_kwh is not None and market is not None:
+        base = float(market.price_lei_per_kwh) + float(tariff_version.opcom_margin_lei_per_kwh)
+    else:
+        return None
+    return base + float(tariff_version.variable_component_lei_per_kwh)
+
+
+def _solve(*, station, config, preference, horizon, interval_minutes, pv_series, load_series, price_buy, price_sell, current_soc_kwh, db):
+    dt_h = interval_minutes / 60.0
+    T = list(range(len(horizon)))
+
+    ref_capacity = float(config.battery_reference_capacity_kwh or 0) or 1.0
+    avail_capacity = float(config.battery_available_capacity_kwh or config.battery_reference_capacity_kwh or 1.0)
+    max_charge_kw = float(config.battery_max_charge_power_kw or avail_capacity)
+    max_discharge_kw = float(config.battery_max_discharge_power_kw or avail_capacity)
+    eff_c = float(config.battery_charge_efficiency or 0.95)
+    eff_d = float(config.battery_discharge_efficiency or 0.95)
+    import_limit = float(config.grid_import_limit_kw) if config.grid_import_limit_kw else 1e6
+    export_limit = float(config.grid_export_limit_kw) if config.grid_export_limit_kw else 1e6
+
+    soc_min = float(preference.min_reserve_soc_percent) / 100.0 * avail_capacity
+    soc_max = float(preference.max_normal_soc_percent) / 100.0 * avail_capacity
+    current_soc_kwh = min(max(current_soc_kwh, soc_min), soc_max)
+
+    weights = PRIORITY_WEIGHTS.get(preference.priority, PRIORITY_WEIGHTS["cost"])
+
+    m = pyo.ConcreteModel()
+    m.T = pyo.Set(initialize=T, ordered=True)
+    big_m = max(import_limit, export_limit, max_charge_kw, max_discharge_kw) * 2 + 1
+
+    m.grid_import = pyo.Var(m.T, domain=pyo.NonNegativeReals, bounds=(0, import_limit))
+    m.grid_export = pyo.Var(m.T, domain=pyo.NonNegativeReals, bounds=(0, export_limit))
+    m.batt_charge = pyo.Var(m.T, domain=pyo.NonNegativeReals, bounds=(0, max_charge_kw))
+    m.batt_discharge = pyo.Var(m.T, domain=pyo.NonNegativeReals, bounds=(0, max_discharge_kw))
+    m.soc = pyo.Var(m.T, domain=pyo.NonNegativeReals, bounds=(soc_min, soc_max))
+    m.z_batt = pyo.Var(m.T, domain=pyo.Binary)
+    m.z_grid = pyo.Var(m.T, domain=pyo.Binary)
+
+    ev_enabled = bool(config.ev_enabled and preference.ev_required_energy_kwh)
+    ev_max_kw = float(config.ev_max_charge_power_kw or 0) if ev_enabled else 0.0
+    m.ev_charge = pyo.Var(m.T, domain=pyo.NonNegativeReals, bounds=(0, ev_max_kw))
+
+    m.soc_dev_pos = pyo.Var(m.T, domain=pyo.NonNegativeReals)
+    m.soc_dev_neg = pyo.Var(m.T, domain=pyo.NonNegativeReals)
+    m.ev_shortfall = pyo.Var(domain=pyo.NonNegativeReals)
+
+    soc_targets_kwh = _resolve_soc_targets(preference, horizon, avail_capacity, station.timezone)
+
+    def balance_rule(m, t):
+        tm = horizon[t]
+        return (
+            pv_series[tm] + m.batt_discharge[t] + m.grid_import[t]
+            == load_series[tm] + m.batt_charge[t] + m.grid_export[t] + m.ev_charge[t]
+        )
+
+    m.balance = pyo.Constraint(m.T, rule=balance_rule)
+
+    def soc_dynamics_rule(m, t):
+        prev = current_soc_kwh if t == 0 else m.soc[t - 1]
+        return m.soc[t] == prev + (m.batt_charge[t] * eff_c - m.batt_discharge[t] / eff_d) * dt_h
+
+    m.soc_dynamics = pyo.Constraint(m.T, rule=soc_dynamics_rule)
+
+    m.no_simultaneous_batt_charge = pyo.Constraint(m.T, rule=lambda m, t: m.batt_charge[t] <= big_m * m.z_batt[t])
+    m.no_simultaneous_batt_discharge = pyo.Constraint(m.T, rule=lambda m, t: m.batt_discharge[t] <= big_m * (1 - m.z_batt[t]))
+    m.no_simultaneous_grid_import = pyo.Constraint(m.T, rule=lambda m, t: m.grid_import[t] <= big_m * m.z_grid[t])
+    m.no_simultaneous_grid_export = pyo.Constraint(m.T, rule=lambda m, t: m.grid_export[t] <= big_m * (1 - m.z_grid[t]))
+
+    if not preference.allow_grid_charge:
+        m.no_grid_charge = pyo.Constraint(m.T, rule=lambda m, t: m.batt_charge[t] <= pv_series[horizon[t]])
+    if not preference.allow_battery_export:
+        m.no_battery_export = pyo.Constraint(
+            m.T, rule=lambda m, t: m.batt_discharge[t] <= load_series[horizon[t]] + m.ev_charge[t]
+        )
+
+    def soc_target_rule(m, t):
+        target = soc_targets_kwh.get(t)
+        if target is None:
+            return pyo.Constraint.Skip
+        return m.soc[t] - target == m.soc_dev_pos[t] - m.soc_dev_neg[t]
+
+    m.soc_target = pyo.Constraint(m.T, rule=soc_target_rule)
+
+    if ev_enabled:
+        departure_idx = _departure_index(preference, horizon, station.timezone)
+        required = float(preference.ev_required_energy_kwh)
+        relevant = [t for t in T if departure_idx is None or t < departure_idx]
+        m.ev_energy_target = pyo.Constraint(
+            expr=sum(m.ev_charge[t] * dt_h for t in relevant) + m.ev_shortfall >= required
+        )
+
+    efc_day_groups = _group_by_local_day(horizon, station.timezone)
+    if preference.max_efc_per_day:
+        for day, idxs in efc_day_groups.items():
+            m.add_component(
+                f"efc_day_{day}",
+                pyo.Constraint(expr=sum(m.batt_discharge[t] * dt_h for t in idxs) <= float(preference.max_efc_per_day) * ref_capacity),
+            )
+    if preference.max_efc_per_month:
+        already_used = get_efc_used(db, station, config, horizon[0].replace(day=1), horizon[0]) or 0.0
+        remaining_budget = max(float(preference.max_efc_per_month) - already_used, 0.0)
+        m.efc_month = pyo.Constraint(expr=sum(m.batt_discharge[t] * dt_h for t in T) <= remaining_budget * ref_capacity)
+
+    terminal_value = price_buy[horizon[-1]] * weights["terminal_value"]
+
+    objective_expr = (
+        sum((m.grid_import[t] * price_buy[horizon[t]] - m.grid_export[t] * price_sell[horizon[t]]) * dt_h for t in T)
+        + weights["wear"] * float(DEFAULT_BATTERY_WEAR_COST_LEI_PER_KWH) * sum((m.batt_charge[t] + m.batt_discharge[t]) * dt_h for t in T)
+        + weights["soc_target"] * SOC_TARGET_PENALTY_LEI_PER_KWH * sum(m.soc_dev_pos[t] + m.soc_dev_neg[t] for t in T)
+        + weights["ev"] * EV_SHORTFALL_PENALTY_LEI_PER_KWH * m.ev_shortfall
+        - terminal_value * m.soc[T[-1]]
+    )
+    m.objective = pyo.Objective(expr=objective_expr, sense=pyo.minimize)
+
+    solver = pyo.SolverFactory("appsi_highs")
+    solver.options["time_limit"] = settings.optimization_solver_timeout_seconds
+    solver_result = solver.solve(m, load_solutions=False)
+
+    tc = solver_result.solver.termination_condition
+    if tc == TerminationCondition.optimal or tc == TerminationCondition.feasible:
+        termination = "optimal"
+    elif tc == TerminationCondition.infeasible:
+        termination = "infeasible"
+    elif tc in (TerminationCondition.maxTimeLimit,):
+        termination = "timeout"
+    else:
+        termination = str(tc)
+
+    if termination not in ("optimal",):
+        return {"termination": termination, "objective": None, "intervals": []}
+
+    m.solutions.load_from(solver_result)
+
+    intervals = []
+    for t in T:
+        intervals.append(
+            {
+                "interval_start": horizon[t],
+                "interval_end": horizon[t] + timedelta(minutes=interval_minutes),
+                "pv_forecast_kw": pv_series[horizon[t]],
+                "load_forecast_kw": load_series[horizon[t]],
+                "battery_power_target_kw": pyo.value(m.batt_charge[t]) - pyo.value(m.batt_discharge[t]),
+                "grid_power_target_kw": pyo.value(m.grid_import[t]) - pyo.value(m.grid_export[t]),
+                "battery_soc_target_percent": pyo.value(m.soc[t]) / avail_capacity * 100.0 if avail_capacity else 0.0,
+                "ev_charge_power_kw": pyo.value(m.ev_charge[t]),
+                "price_import_lei_kwh": price_buy[horizon[t]],
+                "price_export_lei_kwh": price_sell[horizon[t]],
+            }
+        )
+
+    return {"termination": "optimal", "objective": pyo.value(m.objective), "intervals": intervals}
+
+
+def _resolve_soc_targets(preference, horizon, avail_capacity, tz_name) -> dict[int, float]:
+    tz = ZoneInfo(tz_name)
+    out = {}
+    for idx, t in enumerate(horizon):
+        local = t.astimezone(tz)
+        for target in preference.soc_targets or []:
+            try:
+                hh, mm = target["time"].split(":")
+                days = target.get("days_of_week")
+                if days is not None and local.weekday() not in days:
+                    continue
+                if local.hour == int(hh) and local.minute == int(mm):
+                    out[idx] = float(target["target_soc_percent"]) / 100.0 * avail_capacity
+            except (KeyError, ValueError):
+                continue
+    return out
+
+
+def _departure_index(preference, horizon, tz_name) -> int | None:
+    if not preference.ev_departure_time:
+        return None
+    tz = ZoneInfo(tz_name)
+    for idx, t in enumerate(horizon):
+        local = t.astimezone(tz)
+        if local.hour == preference.ev_departure_time.hour and local.minute >= preference.ev_departure_time.minute:
+            return idx
+    return None
+
+
+def _group_by_local_day(horizon, tz_name) -> dict[str, list[int]]:
+    tz = ZoneInfo(tz_name)
+    groups: dict[str, list[int]] = {}
+    for idx, t in enumerate(horizon):
+        key = t.astimezone(tz).date().isoformat()
+        groups.setdefault(key, []).append(idx)
+    return groups
+
+
+def _fallback(db: Session, run: OptimizationRun, station: Station, horizon: list[datetime], interval_minutes: int, reason: str) -> OptimizationRun:
+    run.status = run.status if run.status in (
+        OptimizationRunStatus.infeasible.value, OptimizationRunStatus.solver_timeout.value
+    ) else OptimizationRunStatus.fallback.value
+    run.is_fallback = True
+    run.fallback_reason = reason
+    run.finished_at = utcnow()
+    run.explanation_summary = f"Plan de asteptare (fallback conservator): {reason}"
+    db.add(run)
+    db.flush()
+
+    intervals = [
+        {
+            "interval_start": t,
+            "interval_end": t + timedelta(minutes=interval_minutes),
+            "pv_forecast_kw": 0,
+            "load_forecast_kw": 0,
+            "battery_power_target_kw": 0,
+            "grid_power_target_kw": 0,
+            "battery_soc_target_percent": 0,
+            "ev_charge_power_kw": 0,
+            "price_import_lei_kwh": None,
+            "price_export_lei_kwh": None,
+        }
+        for t in horizon
+    ]
+    _publish_plan(db, run, station, intervals, {}, "cost", fallback_reason=reason)
+    return run
+
+
+def _publish_plan(db: Session, run: OptimizationRun, station: Station, intervals: list[dict], price_buy: dict, priority: str, fallback_reason: str | None = None) -> Plan:
+    previous = db.scalar(
+        select(Plan)
+        .where(Plan.station_id == station.id, Plan.status.in_([PlanStatus.published.value, PlanStatus.accepted_by_device.value, PlanStatus.executing.value]))
+        .order_by(Plan.version.desc())
+        .limit(1)
+    )
+    next_version = (previous.version + 1) if previous else 1
+    if previous is not None:
+        previous.status = PlanStatus.superseded.value
+        previous.superseded_at = utcnow()
+        db.add(previous)
+
+    plan = Plan(
+        optimization_run_id=run.id,
+        station_id=station.id,
+        version=next_version,
+        status=PlanStatus.published.value,
+        execution_mode=station.execution_mode,
+        published_at=utcnow(),
+    )
+    db.add(plan)
+    db.flush()
+
+    if previous is not None:
+        previous.superseded_by_plan_id = plan.id
+        db.add(previous)
+
+    for data in intervals:
+        explanation = (
+            f"Plan de asteptare: {fallback_reason}" if fallback_reason else _explain_interval(data, priority)
+        )
+        db.add(
+            PlanInterval(
+                plan_id=plan.id,
+                interval_start=data["interval_start"],
+                interval_end=data["interval_end"],
+                pv_forecast_kw=Decimal(str(round(data["pv_forecast_kw"], 4))),
+                load_forecast_kw=Decimal(str(round(data["load_forecast_kw"], 4))),
+                battery_power_target_kw=Decimal(str(round(data["battery_power_target_kw"], 4))),
+                grid_power_target_kw=Decimal(str(round(data["grid_power_target_kw"], 4))),
+                battery_soc_target_percent=Decimal(str(round(data["battery_soc_target_percent"], 2))),
+                ev_charge_power_kw=Decimal(str(round(data["ev_charge_power_kw"], 4))),
+                price_import_lei_kwh=Decimal(str(round(data["price_import_lei_kwh"], 6))) if data["price_import_lei_kwh"] is not None else None,
+                price_export_lei_kwh=Decimal(str(round(data["price_export_lei_kwh"], 6))) if data["price_export_lei_kwh"] is not None else None,
+                explanation=explanation,
+            )
+        )
+    db.flush()
+    return plan
