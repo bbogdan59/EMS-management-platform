@@ -12,6 +12,7 @@ recenta), documentata explicit ca atare in UI. Vezi docstring-ul functiei.
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -23,6 +24,15 @@ SOURCE = "opcom_pzu"
 TREND_RATIO_MIN = 0.5
 TREND_RATIO_MAX = 2.0
 RECENT_WINDOW_DAYS = 30
+BUCHAREST = ZoneInfo("Europe/Bucharest")
+
+
+def _today_local() -> date:
+    """Data curenta in fusul pietei (Europe/Bucharest), nu UTC.
+
+    La ora ~21:00-23:59 UTC e deja o alta zi in Bucuresti; folosirea UTC aici
+    ar arata gresit "azi"/"maine" pe pagina de piata langa acea fereastra."""
+    return datetime.now(BUCHAREST).date()
 
 
 def get_available_years(db: Session, source: str = SOURCE) -> list[int]:
@@ -34,8 +44,20 @@ def get_available_years(db: Session, source: str = SOURCE) -> list[int]:
     return [int(r[0]) for r in rows]
 
 
-def get_daily_averages(db: Session, years: list[int] | None = None, source: str = SOURCE) -> list[dict]:
-    """O singura interogare agregata (AVG/MIN/MAX per zi), nu N interogari."""
+def get_daily_averages(
+    db: Session,
+    years: list[int] | None = None,
+    source: str = SOURCE,
+    include_synthetic: bool = False,
+) -> list[dict]:
+    """O singura interogare agregata (AVG/MIN/MAX per zi), nu N interogari.
+
+    Implicit EXCLUDE zilele importate din fixture-uri sintetice
+    (`ImportRun.is_synthetic_fixture`): sunt date de test/demo, nu preturi
+    reale de piata, si nu trebuie sa intre in mediile/predictiile afisate ca
+    reale. `include_synthetic=True` le include explicit (util pentru
+    panoul de admin/diagnostic), iar fiecare rand marcheaza `is_synthetic`
+    ca sa nu se piarda provenienta in continuare (API/CSV/UI)."""
     stmt = (
         select(
             MarketPriceInterval.delivery_date,
@@ -43,17 +65,21 @@ def get_daily_averages(db: Session, years: list[int] | None = None, source: str 
             func.min(MarketPriceInterval.price_lei_per_mwh).label("min_mwh"),
             func.max(MarketPriceInterval.price_lei_per_mwh).label("max_mwh"),
             func.count().label("n"),
+            func.bool_or(ImportRun.is_synthetic_fixture).label("is_synthetic"),
         )
+        .join(ImportRun, ImportRun.id == MarketPriceInterval.import_run_id)
         .where(MarketPriceInterval.source == source, MarketPriceInterval.is_current.is_(True))
         .group_by(MarketPriceInterval.delivery_date)
         .order_by(MarketPriceInterval.delivery_date)
     )
     if years:
         stmt = stmt.where(func.extract("year", MarketPriceInterval.delivery_date).in_(years))
+    if not include_synthetic:
+        stmt = stmt.having(func.bool_or(ImportRun.is_synthetic_fixture).is_(False))
 
     rows = db.execute(stmt).all()
     out = []
-    for d, avg_mwh, min_mwh, max_mwh, n in rows:
+    for d, avg_mwh, min_mwh, max_mwh, n, is_synthetic in rows:
         out.append(
             {
                 "date": d,
@@ -66,6 +92,7 @@ def get_daily_averages(db: Session, years: list[int] | None = None, source: str 
                 "min_price_lei_mwh": float(min_mwh),
                 "max_price_lei_mwh": float(max_mwh),
                 "sample_count": n,
+                "is_synthetic": bool(is_synthetic),
             }
         )
     return out
@@ -102,13 +129,20 @@ def get_monthly_averages(db: Session, years: list[int] | None = None, source: st
     return by_year
 
 
-def get_timeline_split(db: Session, start: datetime, end: datetime, source: str = SOURCE) -> list[dict]:
+def get_timeline_split(
+    db: Session, start: datetime, end: datetime, source: str = SOURCE, include_synthetic: bool = False
+) -> list[dict]:
     """Serie pe interval de 15 minute, cu marcaj explicit `is_future` -- UI-ul
     deseneaza portiunea viitoare (nerealizata inca, ex. 'maine') cu linie
-    punctata, iar restul (trecut/realizat) cu linie continua."""
+    punctata, iar restul (trecut/realizat) cu linie continua.
+
+    Implicit EXCLUDE intervalele provenite din fixture-uri sintetice, la fel
+    ca `get_daily_averages` (vezi acolo motivul); fiecare punct ramas
+    marcheaza `is_synthetic=False` explicit pentru claritate in consumatori."""
     now = utcnow()
-    rows = db.scalars(
-        select(MarketPriceInterval)
+    stmt = (
+        select(MarketPriceInterval, ImportRun.is_synthetic_fixture)
+        .join(ImportRun, ImportRun.id == MarketPriceInterval.import_run_id)
         .where(
             MarketPriceInterval.source == source,
             MarketPriceInterval.is_current.is_(True),
@@ -116,7 +150,10 @@ def get_timeline_split(db: Session, start: datetime, end: datetime, source: str 
             MarketPriceInterval.interval_start < end,
         )
         .order_by(MarketPriceInterval.interval_start)
-    ).all()
+    )
+    if not include_synthetic:
+        stmt = stmt.where(ImportRun.is_synthetic_fixture.is_(False))
+    rows = db.execute(stmt).all()
     return [
         {
             "t": r.interval_start.isoformat(),
@@ -124,8 +161,9 @@ def get_timeline_split(db: Session, start: datetime, end: datetime, source: str 
             "price_lei_kwh": float(r.price_lei_per_kwh),
             "is_negative": r.is_negative,
             "is_future": r.interval_start > now,
+            "is_synthetic": bool(is_synthetic),
         }
-        for r in rows
+        for r, is_synthetic in rows
     ]
 
 
@@ -134,9 +172,13 @@ def get_forecast_to_year_end(db: Session, target_year: int | None = None, source
     (implicit anul curent).
 
     Metoda ("seasonal-naive ajustat cu tendinta recenta"):
-      1. Baza sezoniera: pentru fiecare zi-din-an ramasa, media pretului din
-         ANII ANTERIORI disponibili in acea zi-din-an (ex. media 2024+2025
-         pentru "15 noiembrie").
+      1. Baza sezoniera: pentru fiecare zi calendaristica ramasa (cheie
+         `(luna, zi)`, NU numarul ordinal "zi-din-an" -- acesta se
+         decaleaza intre un an bisect si unul obisnuit dupa 29 februarie si
+         ar amesteca zile calendaristice diferite), media pretului din ANII
+         ANTERIORI disponibili in acea zi calendaristica (ex. media 2024+2025
+         pentru "15 noiembrie"). 29 februarie foloseste propria cheie (2, 29)
+         si ramane fara baza sezoniera in anii care nu au avut-o istoric.
       2. Ajustare de tendinta: raportul dintre media ultimelor
          `RECENT_WINDOW_DAYS` zile REALE din anul curent si media bazei
          sezoniere pentru ACELEASI zile calendaristice -- surprinde daca anul
@@ -154,7 +196,7 @@ def get_forecast_to_year_end(db: Session, target_year: int | None = None, source
     si usor de explicat, tratata ca atare in UI (linie punctata, eticheta
     explicita a metodei).
     """
-    now = utcnow()
+    now = datetime.now(BUCHAREST)
     if target_year is None:
         target_year = now.year
 
@@ -166,12 +208,12 @@ def get_forecast_to_year_end(db: Session, target_year: int | None = None, source
 
     all_daily = get_daily_averages(db, source=source)
     current_year_daily = {row["date"]: row["avg_price_lei_mwh"] for row in all_daily if row["year"] == target_year}
-    prior_years_by_doy: dict[int, list[float]] = {}
+    prior_years_by_month_day: dict[tuple[int, int], list[float]] = {}
     for row in all_daily:
         if row["year"] < target_year:
-            prior_years_by_doy.setdefault(row["day_of_year"], []).append(row["avg_price_lei_mwh"])
+            prior_years_by_month_day.setdefault((row["month"], row["day"]), []).append(row["avg_price_lei_mwh"])
 
-    have_seasonal_baseline = len(prior_years_by_doy) >= 30  # cel putin o luna de referinta istorica
+    have_seasonal_baseline = len(prior_years_by_month_day) >= 30  # cel putin o luna de referinta istorica
 
     trend_ratio = 1.0
     method = "seasonal_naive_trend_adjusted"
@@ -179,9 +221,9 @@ def get_forecast_to_year_end(db: Session, target_year: int | None = None, source
         recent_cutoff = forecast_start - timedelta(days=RECENT_WINDOW_DAYS)
         recent_actual = [v for d, v in current_year_daily.items() if recent_cutoff <= d < forecast_start]
         recent_baseline = [
-            sum(prior_years_by_doy[d.timetuple().tm_yday]) / len(prior_years_by_doy[d.timetuple().tm_yday])
+            sum(prior_years_by_month_day[(d.month, d.day)]) / len(prior_years_by_month_day[(d.month, d.day)])
             for d in current_year_daily
-            if recent_cutoff <= d < forecast_start and d.timetuple().tm_yday in prior_years_by_doy
+            if recent_cutoff <= d < forecast_start and (d.month, d.day) in prior_years_by_month_day
         ]
         if recent_actual and recent_baseline and sum(recent_baseline) > 0:
             trend_ratio = (sum(recent_actual) / len(recent_actual)) / (sum(recent_baseline) / len(recent_baseline))
@@ -196,8 +238,7 @@ def get_forecast_to_year_end(db: Session, target_year: int | None = None, source
     d = forecast_start
     while d <= year_end:
         if method == "seasonal_naive_trend_adjusted":
-            doy = d.timetuple().tm_yday
-            baseline_values = prior_years_by_doy.get(doy)
+            baseline_values = prior_years_by_month_day.get((d.month, d.day))
             predicted = (sum(baseline_values) / len(baseline_values) * trend_ratio) if baseline_values else None
         else:
             predicted = flat_value
@@ -221,7 +262,7 @@ def get_forecast_to_year_end(db: Session, target_year: int | None = None, source
 
 
 def get_market_status(db: Session, source: str = SOURCE) -> dict:
-    now_local_date = utcnow().date()
+    now_local_date = _today_local()
     tomorrow = now_local_date + timedelta(days=1)
 
     def _status_for(d: date) -> dict | None:
