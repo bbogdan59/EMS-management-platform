@@ -1,28 +1,11 @@
-"""telemetry aggregate coverage tracking and nullable energy fields
+"""Coverage and nullable energy; archive UTC calendar aggregates.
 
 Revision ID: a3f7c9d1e6b2
 Revises: febfd647fd64
-Create Date: 2026-09-10 00:00:00.000000
 
-Part of issue #4 (telemetry energy integration correctness): the old
-`telemetry_aggregates` schema forced every energy column to be NOT NULL with
-an implicit 0 default, which made "we don't actually know" indistinguishable
-from "zero energy flowed". This migration:
-
-  - relaxes the 7 energy columns to nullable (existing rows keep their
-    current values -- they were all real computed numbers before, so no
-    data is lost or changed by this step);
-  - adds `coverage` (JSON), a per-metric dict of how much of each aggregate's
-    duration was actually backed by telemetry samples (see
-    `app/services/aggregation_service.py` for the exact integration
-    contract). Existing rows get `{}` (unknown provenance for
-    pre-migration data -- they predate coverage tracking and are treated as
-    fully-measured legacy rows by consumers that don't special-case this).
-
-Backwards compatible: no existing row's numeric values change, and no
-existing numeric value is erased -- `coalesce(sum(energy_col), 0)` style queries
-(e.g. `dashboard_service.get_efc_used`) already skip NULLs the same way SQL
-always has, they simply had never seen one until now.
+Existing numeric data is preserved. Legacy coverage remains unknown ({}).
+UTC day/month rows are archived under separate period types, so new local
+calendar rollups cannot double-count them. Consumers must handle NULL.
 """
 from __future__ import annotations
 

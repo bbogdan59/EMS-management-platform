@@ -34,14 +34,16 @@ def test_nullable_flow_and_simulated_carry_in(db):
     assert rows[0]['coverage']['load'] == 1
     # Explicit EV-disabled config makes the missing component structurally zero.
     config = db.scalar(select(StationConfigVersion))
-    if config is None:
-        with pytest.raises(forecast.ConsumptionForecastError):
-            forecast.generate_consumption_forecast(db, station, start, start+timedelta(minutes=15))
-    else:
-        config.ev_enabled = False
-        db.flush()
-        result = forecast.generate_consumption_forecast(db, station, start, start+timedelta(minutes=15))
-        assert result[0].ev_component_kw == 0
+    assert config is not None
+    config.ev_enabled = False
+    db.flush()
+    result = forecast.generate_consumption_forecast(db, station, start, start+timedelta(minutes=15))
+    assert result[0].ev_component_kw == 0
+    config.ev_enabled = True
+    db.flush()
+    with pytest.raises(forecast.ConsumptionForecastError):
+        forecast.generate_consumption_forecast(db, station, start, start+timedelta(minutes=15))
+
 
 
 def test_migration_retains_values_and_separates_calendars(db, monkeypatch):
