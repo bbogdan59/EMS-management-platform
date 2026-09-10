@@ -22,8 +22,8 @@ separatorul sau encoding-ul.
   numarul de intervale, continuitatea) si arunca o eroare clara (cu
   primele linii primite) daca nu se potriveste -- nu presupune orbeste.
 - Daca sursa reala e inaccesibila (sau schema nu se potriveste) dupa toate
-  reincercarile, se foloseste un fallback cu **date sintetice generate
-  determinist** (`app/services/opcom_fixtures.py`), marcate explicit
+  reincercarile, importul esueaza explicit. Numai in dezvoltare/test se poate
+  activa optional un fallback cu **date sintetice generate determinist** (`app/services/opcom_fixtures.py`), marcate explicit
   (`ImportRun.is_synthetic_fixture=True`) si vizibile ca atare in panoul de
   administrare.
 - **Actiune recomandata inainte de productie reala:** un operator cu acces
@@ -138,3 +138,22 @@ standard `smtplib`, dar nu a fost testat impotriva unui server SMTP real
 `console` (implicit) a fost testat complet -- toate invitatiile/resetarile
 de parola functioneaza corect, doar ca scriu in loguri in loc sa trimita
 email real.
+
+## 12. Corectii din revizia de cod
+
+Fallback-urile optimizatorului sunt publicate exclusiv in `shadow`, inclusiv
+pentru o statie live. Valorile zero din aceste intervale sunt substituenti
+de diagnostic, nu instructiuni de descarcare. Dispatcherul revalideaza modul
+planului/statiei, starea run-ului, versiunile configuratiei/preferintelor si
+suspendarea automatizarii; trimite numai dispozitivului care a acceptat planul.
+Comenzile nelivrate ale planurilor invalidate sunt retrase la polling.
+Aceasta verificare nu poate retrage fizic o comanda deja executata.
+
+`OPCOM_USE_SYNTHETIC_FIXTURE_ON_FAILURE` este implicit `false`, inclusiv in
+Compose. Pornirea in productie cu aceasta optiune activa este respinsa.
+Datele sintetice istorice existente nu sunt sterse automat; trebuie izolate
+sau inlocuite cu importuri reale inainte de activarea live.
+
+Corectiile nu reprezinta certificarea modului live: validarea capabilitatilor,
+provenienta/freshness completa a intrarilor, limitele energetice si bugetele
+EFC istorice necesita in continuare lucrarile de follow-up din GitHub.

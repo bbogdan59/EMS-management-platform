@@ -91,3 +91,33 @@ def test_comma_and_dot_decimal_separators_both_handled():
     assert _parse_price("123,45") == Decimal("123.45")
     assert _parse_price("123.45") == Decimal("123.45")
     assert _parse_price("-12,50") == Decimal("-12.50")
+
+
+@pytest.mark.parametrize("text,expected", [("1.234,56", "1234.56"), ("1,234.56", "1234.56"), ("-1.234,56", "-1234.56")])
+def test_grouped_prices_preserve_decimal_separator(text, expected):
+    from app.services.opcom_service import _parse_price
+    assert _parse_price(text) == Decimal(expected)
+
+
+@pytest.mark.parametrize("text", ["NaN", "sNaN", "Infinity", "-Infinity"])
+def test_nonfinite_prices_rejected(text):
+    from app.services.opcom_service import _parse_price
+    with pytest.raises(OpcomParseError):
+        _parse_price(text)
+
+
+@pytest.mark.parametrize("day,wrong_count", [(date(2026, 9, 10), 92), (date(2026, 3, 29), 96), (date(2026, 10, 25), 96)])
+def test_interval_count_must_match_delivery_date(day, wrong_count):
+    rows = ["Interval;Pret;Moneda"] + [f"{i};100;RON" for i in range(1, wrong_count + 1)]
+    with pytest.raises(OpcomParseError, match="Numar neasteptat"):
+        parse_csv("\n".join(rows), day)
+
+
+@pytest.mark.parametrize("day", [date(2026, 3, 29), date(2026, 10, 25)])
+def test_dst_csv_ends_at_next_local_midnight(day):
+    from datetime import timedelta
+    from zoneinfo import ZoneInfo
+    parsed = parse_csv(generate_synthetic_csv(day), day)
+    end = parsed[-1]["interval_end"].astimezone(ZoneInfo("Europe/Bucharest"))
+    assert end.date() == day + timedelta(days=1)
+    assert (end.hour, end.minute) == (0, 0)

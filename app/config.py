@@ -76,7 +76,7 @@ class Settings(BaseSettings):
     opcom_base_url: str = "https://www.opcom.ro/rapoarte-pzu-raportPIP-export-csv"
     opcom_request_timeout_seconds: float = 20.0
     opcom_max_retries: int = 4
-    opcom_use_synthetic_fixture_on_failure: bool = True
+    opcom_use_synthetic_fixture_on_failure: bool = False
 
     # --- Weather ---
     weather_provider: Literal["open-meteo"] = "open-meteo"
@@ -135,6 +135,8 @@ class Settings(BaseSettings):
             )
         if self.is_production and self.demo_mode_enabled:
             raise RuntimeError("DEMO_MODE_ENABLED nu poate fi activat in productie.")
+        if self.is_production and self.opcom_use_synthetic_fixture_on_failure:
+            raise RuntimeError("Datele OPCOM sintetice nu pot fi activate in productie.")
 
 
 @lru_cache
