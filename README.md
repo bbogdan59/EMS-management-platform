@@ -57,6 +57,25 @@ Pe scurt: monolit modular `app/` cu:
 
 Necesita Python 3.11, PostgreSQL 16, Redis 7, Node.js 20+ (doar pentru build-ul CSS/JS).
 
+### Rapid: `run_local.sh`
+
+```bash
+cp .env.example .env   # editeaza SECRET_KEY / BOOTSTRAP_ADMIN_TOKEN
+./run_local.sh                       # doar web
+./run_local.sh --with-worker         # web + celery worker
+./run_local.sh --with-worker --with-beat   # web + worker + scheduler (o singura instanta de beat!)
+```
+
+Scriptul e idempotent: creeaza `.venv` si instaleaza dependentele Python doar
+daca lipsesc sau `requirements.lock.txt` s-a schimbat, instaleaza si compileaza
+asset-urile frontend doar daca lipsesc, creeaza `.env` din `.env.example` daca
+nu exista, verifica explicit accesul la PostgreSQL/Redis (cu instructiuni
+clare daca nu sunt pornite), ruleaza migratiile Alembic, apoi porneste
+`uvicorn --reload`. Foloseste `--skip-install` pentru porniri repetate rapide
+si `./run_local.sh --help` pentru toate optiunile.
+
+### Manual, pas cu pas
+
 ```bash
 # 1. Dependente Python
 python3.11 -m venv .venv
@@ -150,4 +169,3 @@ autentificare, idempotenta, ciclul de viata al comenzilor.
 [docs/LIMITATIONS.md](docs/LIMITATIONS.md) -- lista onesta a limitarilor reale
 (schema CSV OPCOM neverificata direct din cauza retelei indisponibile in mediul
 de dezvoltare, model PV simplificat, arbitraj fara pairing explicit etc.)
->>>>>>> b7d1195 (Initial EMS Platform: FastAPI monolith, device API, optimization engine, simulator)
