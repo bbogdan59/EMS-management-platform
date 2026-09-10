@@ -19,9 +19,8 @@ from app.core.security import (
 )
 from app.models.enums import Role
 from app.models.organization import Membership, Organization
-from app.models.user import Invitation, PasswordResetToken
+from app.models.user import Invitation, PasswordResetToken, User
 from app.models.user import Session as UserSession
-from app.models.user import User
 
 settings = get_settings()
 

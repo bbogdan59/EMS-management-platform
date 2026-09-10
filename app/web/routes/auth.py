@@ -75,7 +75,7 @@ def login_submit(
             status_code=401,
         )
 
-    session, raw_token = auth_service.create_session(db, user, ip, request.headers.get("user-agent"))
+    _session, raw_token = auth_service.create_session(db, user, ip, request.headers.get("user-agent"))
     record_audit(
         db, action="login_succeeded", resource_type="user", resource_id=str(user.id),
         actor_user_id=user.id, actor_label=user.email, ip_address=ip,
@@ -99,8 +99,9 @@ def login_submit(
 def logout(request: Request, db: Session = Depends(get_db)):
     raw_token = request.cookies.get(settings.session_cookie_name)
     if raw_token:
-        from app.core.security import hash_token
         from sqlalchemy import select
+
+        from app.core.security import hash_token
         from app.models.user import Session as UserSession
 
         token_hash = hash_token(raw_token)

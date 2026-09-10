@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -22,10 +22,10 @@ class User(Entity):
     locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
-    memberships: Mapped[list["Membership"]] = relationship(  # noqa: F821
+    memberships: Mapped[list[Membership]] = relationship(  # noqa: F821
         back_populates="user", cascade="all, delete-orphan"
     )
-    sessions: Mapped[list["Session"]] = relationship(back_populates="user", cascade="all, delete-orphan")
+    sessions: Mapped[list[Session]] = relationship(back_populates="user", cascade="all, delete-orphan")
 
 
 class Session(Entity):
@@ -42,15 +42,15 @@ class Session(Entity):
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
-    user: Mapped["User"] = relationship(back_populates="sessions")
+    user: Mapped[User] = relationship(back_populates="sessions")
 
     @property
     def is_valid(self) -> bool:
-        from datetime import datetime as dt, timezone
+        from datetime import datetime as dt
 
         if self.revoked_at is not None:
             return False
-        return self.expires_at > dt.now(timezone.utc)
+        return self.expires_at > dt.now(UTC)
 
 
 class Invitation(Entity):
@@ -69,7 +69,7 @@ class Invitation(Entity):
     accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
-    organization: Mapped["Organization"] = relationship()  # noqa: F821
+    organization: Mapped[Organization] = relationship()  # noqa: F821
 
 
 class PasswordResetToken(Entity):

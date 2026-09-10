@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 
@@ -140,7 +140,7 @@ def get_timeseries(db: Session, station: Station, start: datetime, end: datetime
 
 def get_prices(db: Session, station: Station, day: date) -> list[dict]:
     tz = _station_tz(station)
-    start = datetime.combine(day, datetime.min.time(), tzinfo=tz).astimezone(timezone.utc)
+    start = datetime.combine(day, datetime.min.time(), tzinfo=tz).astimezone(UTC)
     end = start + timedelta(days=1)
     rows = db.scalars(
         select(MarketPriceInterval)

@@ -4,7 +4,17 @@ import uuid
 from datetime import datetime, time
 from decimal import Decimal
 
-from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Integer, Numeric, String, Time, UniqueConstraint
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Integer,
+    Numeric,
+    String,
+    Time,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Entity
@@ -65,7 +75,7 @@ class PreferenceVersion(Entity):
         JSON, default=list, nullable=False, doc="Conflicte detectate la salvare (explicatii RO)."
     )
 
-    station: Mapped["Station"] = relationship()  # noqa: F821
+    station: Mapped[Station] = relationship()  # noqa: F821
 
 
 StationPreference = PreferenceVersion

@@ -29,4 +29,4 @@ class Alert(Entity):
     acknowledged_by_user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
-    station: Mapped["Station"] = relationship()  # noqa: F821
+    station: Mapped[Station] = relationship()  # noqa: F821

@@ -34,6 +34,7 @@ def test_import_idempotent_revisions(db):
     assert run2.revision == run1.revision + 1
 
     from sqlalchemy import select
+
     from app.models.market import MarketPriceInterval
 
     current_count = db.scalar(

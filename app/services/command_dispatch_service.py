@@ -5,14 +5,19 @@ planul e doar informativ, per cerinta ca platforma sa nu autorizeze
 executia fizica implicit."""
 from __future__ import annotations
 
-
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.security import utcnow
 from app.models.command import Command
 from app.models.device import Device
-from app.models.enums import CommandStatus, CommandType, DeviceStatus, OptimizationRunStatus, PlanStatus
+from app.models.enums import (
+    CommandStatus,
+    CommandType,
+    DeviceStatus,
+    OptimizationRunStatus,
+    PlanStatus,
+)
 from app.models.optimization import Plan, PlanInterval
 from app.models.preference import PreferenceVersion
 from app.models.station import Station, StationConfigVersion

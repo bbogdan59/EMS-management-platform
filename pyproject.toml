@@ -56,6 +56,37 @@ dev = [
 line-length = 100
 target-version = "py311"
 
+[tool.ruff.lint]
+# E/W/F = pycodestyle+pyflakes (PEP 8 baseline). I = import sort. UP =
+# pyupgrade (modern syntax for the pinned Python version). B = bugbear (real
+# bug patterns, e.g. mutable default args, bare except-reraise). C4 =
+# comprehension simplifications. SIM = flake8-simplify. RUF = ruff-native
+# checks (unused noqa, unsorted __all__/__slots__, etc).
+select = ["E", "W", "F", "I", "UP", "B", "C4", "SIM", "RUF"]
+ignore = [
+    "E501",  # line length is enforced by formatting intent, not a hard
+             # wrap column; this codebase favors dense single-line service
+             # functions over forced multi-line wrapping. Reviewers should
+             # still ask for a split when a line hurts readability.
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Test helpers commonly destructure a shared fixture/context tuple
+# (`now, station, config, pref, device, plan, interval, db = context()`) for
+# consistency across a test module even when a given test only needs some of
+# the elements. RUF059 would otherwise force underscore-prefixing tuple
+# elements on every call site; not worth the noise in test code.
+"tests/*" = ["RUF059"]
+
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI's dependency-injection idiom (`db: Session = Depends(get_db)`) is
+# a function call as a default argument by design -- B008 would otherwise
+# flag every route signature in app/web/routes and app/api.
+extend-immutable-calls = [
+    "fastapi.Depends", "fastapi.Query", "fastapi.Path", "fastapi.Body",
+    "fastapi.Cookie", "fastapi.Header", "fastapi.Form", "fastapi.File",
+]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]

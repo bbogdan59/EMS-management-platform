@@ -48,8 +48,8 @@ class Command(Entity):
     executed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_error: Mapped[str | None] = mapped_column(String(1000), nullable=True)
 
-    device: Mapped["Device"] = relationship()  # noqa: F821
-    events: Mapped[list["CommandEvent"]] = relationship(
+    device: Mapped[Device] = relationship()  # noqa: F821
+    events: Mapped[list[CommandEvent]] = relationship(
         back_populates="command", cascade="all, delete-orphan", order_by="CommandEvent.created_at"
     )
 
@@ -67,4 +67,4 @@ class CommandEvent(Entity):
     payload: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
     message: Mapped[str | None] = mapped_column(String(1000), nullable=True)
 
-    command: Mapped["Command"] = relationship(back_populates="events")
+    command: Mapped[Command] = relationship(back_populates="events")

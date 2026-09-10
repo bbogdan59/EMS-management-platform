@@ -46,17 +46,17 @@ def make_device(db, station, name="Test Device"):
 
 
 def make_station(db, org, user, name="Test Station", ev_enabled=False, **overrides):
-    defaults = dict(
-        name=name, timezone="Europe/Bucharest",
-        pv_installed_power_kw=Decimal("5"), inverter_power_kw=Decimal("5"),
-        battery_reference_capacity_kwh=Decimal("10"), battery_available_capacity_kwh=Decimal("10"),
-        battery_max_charge_power_kw=Decimal("3"), battery_max_discharge_power_kw=Decimal("3"),
-        battery_charge_efficiency=Decimal("0.95"), battery_discharge_efficiency=Decimal("0.95"),
-        grid_import_limit_kw=Decimal("10"), grid_export_limit_kw=Decimal("10"),
-        ev_enabled=ev_enabled, ev_battery_capacity_kwh=Decimal("50") if ev_enabled else None,
-        ev_max_charge_power_kw=Decimal("7") if ev_enabled else None,
-        latitude=Decimal("44.43"), longitude=Decimal("26.10"), created_by=user,
-    )
+    defaults = {
+        "name": name, "timezone": "Europe/Bucharest",
+        "pv_installed_power_kw": Decimal("5"), "inverter_power_kw": Decimal("5"),
+        "battery_reference_capacity_kwh": Decimal("10"), "battery_available_capacity_kwh": Decimal("10"),
+        "battery_max_charge_power_kw": Decimal("3"), "battery_max_discharge_power_kw": Decimal("3"),
+        "battery_charge_efficiency": Decimal("0.95"), "battery_discharge_efficiency": Decimal("0.95"),
+        "grid_import_limit_kw": Decimal("10"), "grid_export_limit_kw": Decimal("10"),
+        "ev_enabled": ev_enabled, "ev_battery_capacity_kwh": Decimal("50") if ev_enabled else None,
+        "ev_max_charge_power_kw": Decimal("7") if ev_enabled else None,
+        "latitude": Decimal("44.43"), "longitude": Decimal("26.10"), "created_by": user,
+    }
     defaults.update(overrides)
     return station_service.create_station(db, org, **defaults)
 

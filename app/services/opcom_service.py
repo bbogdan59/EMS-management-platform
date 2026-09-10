@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import csv as csv_module
 import hashlib
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from zoneinfo import ZoneInfo
 
@@ -152,8 +152,8 @@ def parse_csv(raw_text: str, delivery_date: date, schema: OpcomCsvSchema = DEFAU
     count = len(parsed)
     start_local = datetime.combine(delivery_date, datetime.min.time(), tzinfo=BUCHAREST)
     next_local = datetime.combine(delivery_date + timedelta(days=1), datetime.min.time(), tzinfo=BUCHAREST)
-    start_utc = start_local.astimezone(timezone.utc)
-    expected_count = int((next_local.astimezone(timezone.utc) - start_utc).total_seconds() / 900)
+    start_utc = start_local.astimezone(UTC)
+    expected_count = int((next_local.astimezone(UTC) - start_utc).total_seconds() / 900)
     if count != expected_count:
         raise OpcomParseError(
             f"Numar neasteptat de intervale ({count}); asteptat {expected_count} "
@@ -191,11 +191,10 @@ def _fetch_raw(url: str) -> bytes:
         retry=retry_if_exception_type((httpx.HTTPError,)),
         reraise=True,
     ):
-        with attempt:
-            with httpx.Client(timeout=settings.opcom_request_timeout_seconds) as client:
-                resp = client.get(url)
-                resp.raise_for_status()
-                return resp.content
+        with attempt, httpx.Client(timeout=settings.opcom_request_timeout_seconds) as client:
+            resp = client.get(url)
+            resp.raise_for_status()
+            return resp.content
     raise OpcomFetchError("Eroare necunoscuta la preluarea CSV-ului OPCOM.")  # pragma: no cover
 
 
