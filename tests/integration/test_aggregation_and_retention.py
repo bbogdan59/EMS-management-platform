@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 
@@ -239,7 +239,7 @@ def test_reaggregate_range_backfills_late_telemetry_and_cascades_rollups(db):
     db.commit()
 
     device = make_device(db, station)
-    period_start = datetime(2026, 6, 15, 10, 0, tzinfo=timezone.utc)
+    period_start = datetime(2026, 6, 15, 10, 0, tzinfo=UTC)
 
     db.add(_raw(device, station, 0, period_start, pv_power_w=Decimal(1000)))
     db.commit()

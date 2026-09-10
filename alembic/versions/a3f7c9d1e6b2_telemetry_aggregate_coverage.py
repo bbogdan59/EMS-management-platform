@@ -26,8 +26,9 @@ always has, they simply had never seen one until now.
 """
 from __future__ import annotations
 
-from alembic import op
 import sqlalchemy as sa
+
+from alembic import op
 
 revision = "a3f7c9d1e6b2"
 down_revision = "febfd647fd64"

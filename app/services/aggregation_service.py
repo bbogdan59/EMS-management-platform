@@ -75,7 +75,7 @@ dispozitiv, de exemplu).
 from __future__ import annotations
 
 import uuid
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 
@@ -345,7 +345,7 @@ def aggregate_hour(db: Session, station_id: uuid.UUID, hour_start: datetime) -> 
 
 
 def _local_midnight_utc(tz: ZoneInfo, local_date: date) -> datetime:
-    return datetime.combine(local_date, datetime.min.time(), tzinfo=tz).astimezone(timezone.utc)
+    return datetime.combine(local_date, datetime.min.time(), tzinfo=tz).astimezone(UTC)
 
 
 def aggregate_day(db: Session, station: Station, local_date: date) -> dict | None:
