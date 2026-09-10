@@ -5,7 +5,7 @@ anterioara intarzie peste intervalul de planificare)."""
 from __future__ import annotations
 
 import contextlib
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timedelta
 
 import structlog
 from sqlalchemy import select
@@ -42,25 +42,27 @@ def _task_lock(name: str, timeout: int = 600):
 
 @celery_app.task(name="app.workers.tasks.run_aggregation_task")
 def run_aggregation_task() -> dict:
+    """Ruleaza la fiecare 15 minute (vezi `celery_app.beat_schedule`).
+
+    Nu recalculeaza doar sfertul de ora imediat anterior -- reface, idempotent,
+    o fereastra recenta (`aggregation_service.RECENT_REAGGREGATION_LOOKBACK`)
+    de sferturi de ora + rollup-urile de ora/zi/luna atinse de ele. Asta prinde
+    automat telemetria usor intarziata (retry-uri, reconectari scurte ale
+    dispozitivelor) fara sa astepte un backfill manual -- vezi
+    `aggregation_service.reaggregate_range` pentru un backfill pe un interval
+    istoric arbitrar (dupa o intrerupere lunga a unui dispozitiv, de exemplu)."""
     with _task_lock("aggregation") as acquired:
         if not acquired:
             return {"skipped": "already_running"}
         now = utcnow()
-        interval_start = now.replace(minute=(now.minute // 15) * 15, second=0, microsecond=0) - timedelta(minutes=15)
+        window_start = now - aggregation_service.RECENT_REAGGREGATION_LOOKBACK
         processed = 0
         with session_scope() as db:
-            station_ids = [row[0] for row in db.execute(select(Station.id)).all()]
-            for sid in station_ids:
-                aggregation_service.aggregate_interval_15m(db, sid, interval_start)
-                if now.minute < 15:
-                    aggregation_service.aggregate_hour(db, sid, (now - timedelta(hours=1)).replace(minute=0, second=0, microsecond=0))
-                if now.hour == 0 and now.minute < 15:
-                    aggregation_service.aggregate_day(db, sid, (now - timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0))
-                if now.day == 1 and now.hour == 0 and now.minute < 15:
-                    prev_month_end = now.replace(day=1) - timedelta(days=1)
-                    aggregation_service.aggregate_month(db, sid, prev_month_end.replace(day=1, hour=0, minute=0, second=0, microsecond=0))
+            stations = db.scalars(select(Station).where(Station.is_active.is_(True))).all()
+            for station in stations:
+                aggregation_service.reaggregate_range(db, station, window_start, now)
                 processed += 1
-        return {"stations_processed": processed, "interval_start": interval_start.isoformat()}
+        return {"stations_processed": processed, "window_start": window_start.isoformat(), "window_end": now.isoformat()}
 
 
 @celery_app.task(name="app.workers.tasks.opcom_import_daily_task")

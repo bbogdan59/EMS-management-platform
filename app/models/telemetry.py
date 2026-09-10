@@ -56,7 +56,19 @@ class TelemetryRaw(Entity):
 
 class TelemetryAggregate(Entity):
     """Agregate energetice pe interval (15m/ora/zi/luna), folosite pentru
-    grafice si retentie pe termen lung dupa expirarea datelor brute."""
+    grafice si retentie pe termen lung dupa expirarea datelor brute.
+
+    Contract de integrare (vezi si `aggregation_service`): fiecare camp de
+    energie e rezultatul unei integrari ponderate in timp a puterii
+    instantanee (nu media aritmetica simpla a esantioanelor), pe convenția
+    "zero-order hold" -- valoarea unui esantion se considera valabila de la
+    momentul lui pana la urmatorul esantion cunoscut, dar NU mai mult de
+    `aggregation_service.MAX_GAP_SECONDS`. Un camp e `NULL` daca metrica
+    respectiva nu a avut NICIO acoperire in interval -- necunoscut nu
+    inseamna niciodata zero. `coverage` retine, separat pe metrica, fractia
+    din durata intervalului acoperita efectiv de date (0..1); un consumator
+    poate decide singur ce prag de acoperire accepta.
+    """
 
     __tablename__ = "telemetry_aggregates"
     __table_args__ = (
@@ -70,14 +82,22 @@ class TelemetryAggregate(Entity):
     period_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
     period_end: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
-    pv_energy_kwh: Mapped[Decimal] = mapped_column(Numeric(12, 4), default=0, nullable=False)
-    load_energy_kwh: Mapped[Decimal] = mapped_column(Numeric(12, 4), default=0, nullable=False)
-    battery_charge_energy_kwh: Mapped[Decimal] = mapped_column(Numeric(12, 4), default=0, nullable=False)
-    battery_discharge_energy_kwh: Mapped[Decimal] = mapped_column(Numeric(12, 4), default=0, nullable=False)
-    grid_import_energy_kwh: Mapped[Decimal] = mapped_column(Numeric(12, 4), default=0, nullable=False)
-    grid_export_energy_kwh: Mapped[Decimal] = mapped_column(Numeric(12, 4), default=0, nullable=False)
-    ev_energy_kwh: Mapped[Decimal] = mapped_column(Numeric(12, 4), default=0, nullable=False)
+    # NULL = metrica necunoscuta in acest interval (fara acoperire), NU zero.
+    pv_energy_kwh: Mapped[Decimal | None] = mapped_column(Numeric(12, 4), nullable=True)
+    load_energy_kwh: Mapped[Decimal | None] = mapped_column(Numeric(12, 4), nullable=True)
+    battery_charge_energy_kwh: Mapped[Decimal | None] = mapped_column(Numeric(12, 4), nullable=True)
+    battery_discharge_energy_kwh: Mapped[Decimal | None] = mapped_column(Numeric(12, 4), nullable=True)
+    grid_import_energy_kwh: Mapped[Decimal | None] = mapped_column(Numeric(12, 4), nullable=True)
+    grid_export_energy_kwh: Mapped[Decimal | None] = mapped_column(Numeric(12, 4), nullable=True)
+    ev_energy_kwh: Mapped[Decimal | None] = mapped_column(Numeric(12, 4), nullable=True)
 
+    # Explicit nullable: 0% SOC e o valoare reala (baterie goala), distincta
+    # de "necunoscut" -- niciodata colapsate una in cealalta (bug corectat).
     avg_battery_soc_percent: Mapped[Decimal | None] = mapped_column(Numeric(5, 2), nullable=True)
     sample_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     data_quality: Mapped[str] = mapped_column(String(16), default="measured", nullable=False)
+
+    # Fractia din durata intervalului acoperita de date, per metrica -- chei:
+    # "pv", "load", "battery", "grid", "ev", "soc". Absenta unei chei ==
+    # acoperire 0 pentru acea metrica (camp NULL). Vezi docstring-ul clasei.
+    coverage: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
