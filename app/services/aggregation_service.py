@@ -249,7 +249,7 @@ def aggregate_interval_15m(db: Session, station_id: uuid.UUID, period_start: dat
 
     coverage = {"pv": pv_cov, "load": load_cov, "battery": batt_cov, "grid": grid_cov, "ev": ev_cov, "soc": soc_cov}
 
-    if any(r.is_simulated for r in in_interval):
+    if any(r.is_simulated for r in rows):
         quality = "simulated"
     elif n < MIN_SAMPLES_FOR_MEASURED_15M or any(c < FULL_COVERAGE_QUALITY_THRESHOLD for c in coverage.values() if c > 0):
         quality = "estimated"

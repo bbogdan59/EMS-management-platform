@@ -20,7 +20,7 @@ from "zero energy flowed". This migration:
     fully-measured legacy rows by consumers that don't special-case this).
 
 Backwards compatible: no existing row's numeric values change, and no
-existing consumer breaks -- `coalesce(sum(energy_col), 0)` style queries
+existing numeric value is erased -- `coalesce(sum(energy_col), 0)` style queries
 (e.g. `dashboard_service.get_efc_used`) already skip NULLs the same way SQL
 always has, they simply had never seen one until now.
 """
@@ -47,6 +47,8 @@ _ENERGY_COLUMNS = [
 
 
 def upgrade() -> None:
+    # Preserve historical values, but never mix UTC and local-calendar keys.
+    op.execute("UPDATE telemetry_aggregates SET period_type = 'legacy_' || period_type WHERE period_type IN ('day', 'month')")
     for col in _ENERGY_COLUMNS:
         op.alter_column("telemetry_aggregates", col, existing_type=sa.Numeric(precision=12, scale=4), nullable=True)
     op.add_column(
@@ -57,10 +59,12 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    op.execute("UPDATE telemetry_aggregates SET period_type = 'local_' || period_type WHERE period_type IN ('day', 'month')")
+    op.execute("UPDATE telemetry_aggregates SET period_type = substring(period_type from 8) WHERE period_type IN ('legacy_day', 'legacy_month')")
     op.drop_column("telemetry_aggregates", "coverage")
     op.execute(
         "UPDATE telemetry_aggregates SET "
-        + ", ".join(f"{col} = 0" for col in _ENERGY_COLUMNS)
+        + ", ".join(f"{col} = COALESCE({col}, 0)" for col in _ENERGY_COLUMNS)
         + " WHERE " + " OR ".join(f"{col} IS NULL" for col in _ENERGY_COLUMNS)
     )
     for col in _ENERGY_COLUMNS:

@@ -22,7 +22,7 @@ from sqlalchemy.orm import Session
 
 from app.core.security import utcnow
 from app.models.forecast import ConsumptionForecast
-from app.models.station import Station
+from app.models.station import Station, StationConfigVersion
 from app.models.telemetry import TelemetryAggregate
 
 MIN_DAYS_FOR_FULL_PROFILE = 7
@@ -57,6 +57,15 @@ def generate_consumption_forecast(db: Session, station: Station, horizon_start: 
             "Fara istoric de telemetrie agregata -- nu se poate genera o prognoza de consum (cold start complet)."
         )
 
+    config = db.scalar(select(StationConfigVersion).where(
+        StationConfigVersion.station_id == station.id
+    ).order_by(StationConfigVersion.version.desc()).limit(1))
+    ev_disabled = config is not None and config.ev_enabled is False
+    history = [a for a in history if a.load_energy_kwh is not None
+               and (a.coverage or {}).get("load", 0) >= 0.9
+               and (ev_disabled or (a.ev_energy_kwh is not None and (a.coverage or {}).get("ev", 0) >= 0.9))]
+    if not history:
+        raise ConsumptionForecastError("Istoric cu acoperire insuficienta pentru consum/EV.")
     distinct_days = {a.period_start.astimezone(tz).date() for a in history}
     is_cold_start = len(distinct_days) < MIN_DAYS_FOR_FULL_PROFILE
 
@@ -65,7 +74,7 @@ def generate_consumption_forecast(db: Session, station: Station, horizon_start: 
     all_ev: list[float] = []
     for a in history:
         load_kw = float(a.load_energy_kwh) * 4  # kWh/15min -> kW mediu
-        ev_kw = float(a.ev_energy_kwh) * 4
+        ev_kw = 0.0 if ev_disabled else float(a.ev_energy_kwh) * 4
         all_load.append(load_kw)
         all_ev.append(ev_kw)
         if not is_cold_start:

@@ -200,3 +200,6 @@ nullable (vezi migratia `a3f7c9d1e6b2`). Consumatorii care fac
 `float(rand.pv_energy_kwh)` direct, fara verificare de `None`, trebuie
 actualizati -- interogarile bazate pe `coalesce(sum(...), 0)` raman sigure
 neschimbate.
+
+### Upgrade of calendar aggregates
+Existing UTC day/month rows are retained as legacy_day/legacy_month and excluded from current rollups. Reaggregate retained lower-resolution history to populate local day/month rows. If raw/hour history expired, legacy values remain archived; do not relabel them as local days. Downgrade archives new local rows as local_day/local_month and restores legacy keys. Repeated upgrade after a downgrade requires reconciling archived local rows before rebuilding; archived periods are not queried by normal dashboards. NULL consumer support is included in this PR; forecasts reject insufficient coverage and treat absent EV as zero only when the station explicitly disables EV.
