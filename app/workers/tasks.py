@@ -71,7 +71,7 @@ def opcom_import_daily_task() -> dict:
         results = {}
         with session_scope() as db:
             for offset in (0, 1):
-                d = datetime.now(timezone.utc).date() + timedelta(days=offset)
+                d = datetime.now(opcom_service.BUCHAREST).date() + timedelta(days=offset)
                 if _has_successful_real_import(db, d):
                     results[d.isoformat()] = "already_succeeded"
                     continue

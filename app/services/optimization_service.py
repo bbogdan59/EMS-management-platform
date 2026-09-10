@@ -344,12 +344,12 @@ def _solve(*, station, config, preference, horizon, interval_minutes, pv_series,
 
     ref_capacity = float(config.battery_reference_capacity_kwh or 0) or 1.0
     avail_capacity = float(config.battery_available_capacity_kwh or config.battery_reference_capacity_kwh or 1.0)
-    max_charge_kw = float(config.battery_max_charge_power_kw or avail_capacity)
-    max_discharge_kw = float(config.battery_max_discharge_power_kw or avail_capacity)
+    max_charge_kw = float(config.battery_max_charge_power_kw) if config.battery_max_charge_power_kw is not None else avail_capacity
+    max_discharge_kw = float(config.battery_max_discharge_power_kw) if config.battery_max_discharge_power_kw is not None else avail_capacity
     eff_c = float(config.battery_charge_efficiency or 0.95)
     eff_d = float(config.battery_discharge_efficiency or 0.95)
-    import_limit = float(config.grid_import_limit_kw) if config.grid_import_limit_kw else 1e6
-    export_limit = float(config.grid_export_limit_kw) if config.grid_export_limit_kw else 1e6
+    import_limit = float(config.grid_import_limit_kw) if config.grid_import_limit_kw is not None else 1e6
+    export_limit = float(config.grid_export_limit_kw) if config.grid_export_limit_kw is not None else 1e6
 
     soc_min = float(preference.min_reserve_soc_percent) / 100.0 * avail_capacity
     soc_max = float(preference.max_normal_soc_percent) / 100.0 * avail_capacity
@@ -423,13 +423,13 @@ def _solve(*, station, config, preference, horizon, interval_minutes, pv_series,
         )
 
     efc_day_groups = _group_by_local_day(horizon, station.timezone)
-    if preference.max_efc_per_day:
+    if preference.max_efc_per_day is not None:
         for day, idxs in efc_day_groups.items():
             m.add_component(
                 f"efc_day_{day}",
                 pyo.Constraint(expr=sum(m.batt_discharge[t] * dt_h for t in idxs) <= float(preference.max_efc_per_day) * ref_capacity),
             )
-    if preference.max_efc_per_month:
+    if preference.max_efc_per_month is not None:
         already_used = get_efc_used(db, station, config, horizon[0].replace(day=1), horizon[0]) or 0.0
         remaining_budget = max(float(preference.max_efc_per_month) - already_used, 0.0)
         m.efc_month = pyo.Constraint(expr=sum(m.batt_discharge[t] * dt_h for t in T) <= remaining_budget * ref_capacity)
@@ -570,7 +570,8 @@ def _publish_plan(db: Session, run: OptimizationRun, station: Station, intervals
         station_id=station.id,
         version=next_version,
         status=PlanStatus.published.value,
-        execution_mode=station.execution_mode,
+        # Fallback intervals are diagnostic placeholders, never physical setpoints.
+        execution_mode="shadow" if fallback_reason is not None else station.execution_mode,
         published_at=utcnow(),
     )
     db.add(plan)

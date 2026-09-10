@@ -4,8 +4,10 @@
 FROM node:22-alpine AS frontend
 WORKDIR /frontend
 COPY package.json package-lock.json* ./
-RUN npm install
+RUN npm ci
 COPY tailwind.config.js ./
+COPY scripts/vendor_assets.js ./scripts/vendor_assets.js
+COPY app/web/templates ./app/web/templates
 COPY app/web/static ./app/web/static
 RUN npm run build
 

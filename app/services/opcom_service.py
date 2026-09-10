@@ -9,7 +9,7 @@ encoding) nu a putut fi verificata direct impotriva sursei reale in mediul in
 care a fost dezvoltata platforma (acces retea blocat de politica organizatiei
 gazda). Parserul valideaza EXPLICIT structura gasita si NU presupune ca se
 potriveste implicit -- daca sursa e inaccesibila sau schema nu se potriveste
-dupa toate reincercarile, se foloseste (optional, implicit activat) un
+dupa toate reincercarile, se foloseste (optional doar in dezvoltare/test, implicit dezactivat) un
 fallback cu date sintetice, marcate clar ca atare in ImportRun si in UI.
 """
 from __future__ import annotations
@@ -67,11 +67,18 @@ def _decode(raw: bytes, schema: OpcomCsvSchema) -> str:
 def _parse_price(value: str) -> Decimal:
     v = value.strip()
     if "," in v and "." in v:
-        v = v.replace(",", "")
+        # The rightmost separator is decimal: accept both 1.234,56 and 1,234.56.
+        if v.rfind(",") > v.rfind("."):
+            v = v.replace(".", "").replace(",", ".")
+        else:
+            v = v.replace(",", "")
     elif "," in v:
         v = v.replace(",", ".")
     try:
-        return Decimal(v)
+        price = Decimal(v)
+        if not price.is_finite():
+            raise InvalidOperation
+        return price
     except InvalidOperation as exc:
         raise OpcomParseError(f"Valoare de pret nenumerica: '{value}'") from exc
 
@@ -143,18 +150,19 @@ def parse_csv(raw_text: str, delivery_date: date, schema: OpcomCsvSchema = DEFAU
         raise OpcomParseError("Nicio linie de date valida gasita in CSV-ul OPCOM.")
 
     count = len(parsed)
-    if count not in (92, 96, 100):
+    start_local = datetime.combine(delivery_date, datetime.min.time(), tzinfo=BUCHAREST)
+    next_local = datetime.combine(delivery_date + timedelta(days=1), datetime.min.time(), tzinfo=BUCHAREST)
+    start_utc = start_local.astimezone(timezone.utc)
+    expected_count = int((next_local.astimezone(timezone.utc) - start_utc).total_seconds() / 900)
+    if count != expected_count:
         raise OpcomParseError(
-            f"Numar neasteptat de intervale ({count}); asteptat 92 (DST primavara), "
-            "96 (zi normala) sau 100 (DST toamna) pentru rezolutie de 15 minute."
+            f"Numar neasteptat de intervale ({count}); asteptat {expected_count} "
+            f"pentru data {delivery_date.isoformat()} la rezolutie de 15 minute."
         )
     expected_indices = set(range(1, count + 1))
     missing = expected_indices - set(parsed.keys())
     if missing:
         raise OpcomParseError(f"Intervale lipsa in CSV OPCOM: {sorted(missing)[:10]}...")
-
-    start_local = datetime(delivery_date.year, delivery_date.month, delivery_date.day, 0, 0, tzinfo=BUCHAREST)
-    start_utc = start_local.astimezone(timezone.utc)
 
     results = []
     for i in range(1, count + 1):
