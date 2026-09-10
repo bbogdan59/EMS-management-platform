@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
 from app.core.security import hash_password
+from app.models.enums import ImportRunStatus
+from app.models.market import ImportRun, MarketPriceInterval
 from app.models.organization import Membership, Organization
 from app.models.user import User
 from app.services import station_service
@@ -56,3 +59,33 @@ def make_station(db, org, user, name="Test Station", ev_enabled=False, **overrid
     }
     defaults.update(overrides)
     return station_service.create_station(db, org, **defaults)
+
+
+def make_market_day(
+    db, delivery_date: date, prices_lei_mwh: list[float], is_synthetic: bool = False, source: str = "opcom_pzu", revision: int = 1
+) -> ImportRun:
+    """Creeaza un ImportRun + intervale MarketPriceInterval pentru o zi, cu
+    preturile date (un interval per pret din lista, nu neaparat 96 -- suficient
+    pentru testarea logicii de agregare/predictie fara sa genereze CSV-uri)."""
+    run = ImportRun(
+        source=source, delivery_date=delivery_date, revision=revision,
+        status=ImportRunStatus.succeeded.value, source_url="https://test.local",
+        is_synthetic_fixture=is_synthetic, interval_count=len(prices_lei_mwh),
+    )
+    db.add(run)
+    db.flush()
+
+    start = datetime(delivery_date.year, delivery_date.month, delivery_date.day, tzinfo=UTC)
+    interval_minutes = 24 * 60 // len(prices_lei_mwh)
+    for i, price in enumerate(prices_lei_mwh):
+        interval_start = start + timedelta(minutes=interval_minutes * i)
+        db.add(
+            MarketPriceInterval(
+                import_run_id=run.id, source=source, delivery_date=delivery_date, revision=revision,
+                interval_index=i + 1, interval_start=interval_start, interval_end=interval_start + timedelta(minutes=interval_minutes),
+                currency="RON", price_lei_per_mwh=Decimal(str(price)), price_lei_per_kwh=Decimal(str(price / 1000)),
+                is_negative=price < 0, is_current=True,
+            )
+        )
+    db.flush()
+    return run

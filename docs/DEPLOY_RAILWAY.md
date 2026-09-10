@@ -114,6 +114,23 @@ Nu rula migratiile automat la fiecare deploy al serviciului **web**
    railway run --service web alembic upgrade head
    ```
 
+### Backfill istoric de preturi OPCOM (optional, dupa migratii)
+
+Pentru a popula istoricul de preturi PZU pornind de la 2024-01-01 (folosit de
+pagina `/market/prices` -- grafice an-peste-an si predictie), ruleaza o data
+ad-hoc:
+
+```
+railway run --service web python -m scripts.backfill_opcom_history --start 2024-01-01
+```
+
+sau creeaza temporar un serviciu cu config-as-code `railway.migrate.json`
+dar cu `startCommand` inlocuit cu `/entrypoint.sh backfill-opcom` (vezi
+variabilele `OPCOM_BACKFILL_START`/`OPCOM_BACKFILL_END`/`OPCOM_BACKFILL_CONCURRENCY`
+din `docker/entrypoint.sh`), il rulezi o data, apoi il stergi. Dureaza de la
+cateva zeci de secunde (daca majoritatea zilelor cad pe fallback sintetic) la
+cateva minute (cu acces real la opcom.ro si concurenta implicita de 8).
+
 ## 5. Networking, PORT si healthcheck
 
 - Serviciul **web** trebuie sa asculte pe `0.0.0.0:$PORT` -- deja configurat

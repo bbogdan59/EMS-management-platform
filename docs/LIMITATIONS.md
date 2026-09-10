@@ -139,7 +139,23 @@ standard `smtplib`, dar nu a fost testat impotriva unui server SMTP real
 de parola functioneaza corect, doar ca scriu in loguri in loc sa trimita
 email real.
 
-## 12. Corectii din revizia de cod
+## 12. Predictia de preturi PZU pana la finalul anului -- metoda simpla, nu econometrica
+
+`app/services/market_analytics_service.get_forecast_to_year_end` foloseste o
+metoda "seasonal-naive ajustata cu tendinta recenta": media istorica pe
+zi-din-an (din anii anteriori disponibili), inmultita cu raportul dintre
+ultimele 30 de zile reale din anul curent si media istorica pentru aceleasi
+zile calendaristice. E simpla, transparenta si usor de explicat, dar NU
+modeleaza sezonalitate saptamanala, evenimente de piata, schimbari de
+capacitate/reglementare sau alti factori structurali. Predictia e afisata
+intotdeauna cu linie punctata si eticheta explicita a metodei -- niciodata ca
+un fapt cert. Daca nu exista niciun an anterior cu date, se foloseste un
+fallback si mai simplu (medie constanta a ultimelor 30 de zile), marcat ca
+atare. Backfill-ul istoric (`scripts/backfill_opcom_history.py`) ruland din
+2024-01-01 imbunatateste direct calitatea acestei predictii (mai multi ani
+de referinta sezoniera).
+
+## 13. Corectii din revizia de cod
 
 Fallback-urile optimizatorului sunt publicate exclusiv in `shadow`, inclusiv
 pentru o statie live. Valorile zero din aceste intervale sunt substituenti

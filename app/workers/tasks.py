@@ -5,7 +5,7 @@ anterioara intarzie peste intervalul de planificare)."""
 from __future__ import annotations
 
 import contextlib
-from datetime import date, datetime, timedelta
+from datetime import datetime, timedelta
 
 import structlog
 from sqlalchemy import select
@@ -82,27 +82,12 @@ def opcom_import_daily_task() -> dict:
         with session_scope() as db:
             for offset in (0, 1):
                 d = datetime.now(opcom_service.BUCHAREST).date() + timedelta(days=offset)
-                if _has_successful_real_import(db, d):
+                if opcom_service.has_successful_real_import(db, d):
                     results[d.isoformat()] = "already_succeeded"
                     continue
                 run = opcom_service.import_opcom_day(db, d)
                 results[d.isoformat()] = run.status
         return results
-
-
-def _has_successful_real_import(db, d: date) -> bool:
-    from app.models.enums import ImportRunStatus
-    from app.models.market import ImportRun
-
-    existing = db.scalar(
-        select(ImportRun).where(
-            ImportRun.source == "opcom_pzu",
-            ImportRun.delivery_date == d,
-            ImportRun.status == ImportRunStatus.succeeded.value,
-            ImportRun.is_synthetic_fixture.is_(False),
-        ).order_by(ImportRun.revision.desc()).limit(1)
-    )
-    return existing is not None
 
 
 @celery_app.task(name="app.workers.tasks.weather_and_forecast_task")
