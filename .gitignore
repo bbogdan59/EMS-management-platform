@@ -24,3 +24,4 @@ test-results/
 .DS_Store
 railway-logs/
 scratch/
+dump.rdb
