@@ -57,7 +57,11 @@ def test_get_monthly_averages(db):
 
 
 def test_forecast_seasonal_baseline_with_trend_adjustment(db):
-    today = utcnow().date()
+    # Referinta de "azi" trebuie sa fie aceeasi zi calendaristica pe care o
+    # foloseste get_forecast_to_year_end (Europe/Bucharest, nu UTC) --
+    # altfel testul devine nedeterminist in fereastra ~21:00-23:59 UTC, cand
+    # cele doua zile difera (bug real, gasit in CI la exact aceasta ora).
+    today = datetime.now(BUCHAREST).date()
     prior_year_1 = today.year - 1
     prior_year_2 = today.year - 2
     baseline_price = 300.0
@@ -88,7 +92,7 @@ def test_forecast_seasonal_baseline_with_trend_adjustment(db):
 
 
 def test_forecast_falls_back_to_flat_average_without_prior_years(db):
-    today = utcnow().date()
+    today = datetime.now(BUCHAREST).date()  # vezi comentariul din testul anterior
     for offset in range(5):
         make_market_day(db, today - timedelta(days=offset), [280.0])
 
@@ -117,7 +121,7 @@ def test_timeline_split_marks_future_intervals(db):
 
 
 def test_market_status_reports_today_tomorrow_and_missing(db):
-    today = utcnow().date()
+    today = datetime.now(BUCHAREST).date()  # get_market_status foloseste ziua locala, nu UTC
     make_market_day(db, today, [123.0])
     status = market.get_market_status(db)
     assert status["today"]["status"] == "succeeded"
@@ -192,7 +196,16 @@ def test_seasonal_baseline_aligns_by_calendar_day_not_ordinal_day_of_year(db):
     for offset in range(30):
         make_market_day(db, date(2026, 9, 10) - timedelta(days=offset), [911.0])
 
-    forecast = market.get_forecast_to_year_end(db, target_year=2026)
+    # "Azi" e fixat explicit la 10 septembrie 2026 (prin ora locala
+    # Bucuresti la ora amiezii, departe de orice granita de miezul noptii)
+    # ca testul sa nu devina nedeterminist in functie de cand ruleaza cu
+    # adevarat -- altfel "maine" (11 septembrie, exact ziua verificata mai
+    # jos) ar putea sa nu mai fie in viitor daca ceasul real a trecut deja
+    # de acea data.
+    from freezegun import freeze_time
+
+    with freeze_time("2026-09-10 10:00:00"):
+        forecast = market.get_forecast_to_year_end(db, target_year=2026)
     predicted_by_date = {p["date"]: p["predicted_price_lei_mwh"] for p in forecast["points"]}
     assert predicted_by_date["2026-09-11"] == 911.0
 
