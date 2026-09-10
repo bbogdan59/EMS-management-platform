@@ -6,7 +6,7 @@ inventeaza date -- prognozele lipsesc explicit din UI/optimizator)."""
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import httpx
 import structlog
@@ -73,7 +73,7 @@ def store_weather_forecast(db: Session, station: Station, raw: dict) -> list[Wea
 
     created = []
     for i, t in enumerate(times):
-        interval_start = datetime.fromisoformat(t).replace(tzinfo=timezone.utc)
+        interval_start = datetime.fromisoformat(t).replace(tzinfo=UTC)
         wf = WeatherForecast(
             station_id=station.id,
             issued_at=issued_at,

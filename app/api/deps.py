@@ -23,7 +23,7 @@ settings = get_settings()
 
 
 class AuthContext:
-    __slots__ = ("user", "session")
+    __slots__ = ("session", "user")
 
     def __init__(self, user: User, session: UserSession):
         self.user = user

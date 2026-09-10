@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import date
 from decimal import Decimal
+from itertools import pairwise
 
 import pytest
 
@@ -29,7 +30,7 @@ def test_parse_synthetic_round_trip_normal_day():
     assert parsed[0]["interval_index"] == 1
     assert parsed[-1]["interval_index"] == 96
     # Continuitate: fiecare interval e adiacent celui urmator, fara goluri.
-    for a, b in zip(parsed, parsed[1:]):
+    for a, b in pairwise(parsed):
         assert a["interval_end"] == b["interval_start"]
 
 

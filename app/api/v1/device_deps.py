@@ -47,8 +47,8 @@ def get_authenticated_device(
     device_id_str, secret = raw.split(".", 1)
     try:
         device_id = uuid.UUID(device_id_str)
-    except ValueError:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="device_id invalid.")
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="device_id invalid.") from exc
 
     try:
         check_fixed_window(
@@ -59,7 +59,7 @@ def get_authenticated_device(
             status.HTTP_429_TOO_MANY_REQUESTS,
             detail="Prea multe cereri.",
             headers={"Retry-After": str(exc.retry_after_seconds)},
-        )
+        ) from exc
 
     device = db.get(Device, device_id)
     if device is None or device.status != DeviceStatus.active.value:

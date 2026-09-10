@@ -4,7 +4,17 @@ import uuid
 from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import (
+    Boolean,
+    Date,
+    DateTime,
+    ForeignKey,
+    Integer,
+    Numeric,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Entity
@@ -38,7 +48,7 @@ class ImportRun(Entity):
         UniqueConstraint("source", "delivery_date", "revision", name="uq_import_run_revision"),
     )
 
-    intervals: Mapped[list["MarketPriceInterval"]] = relationship(
+    intervals: Mapped[list[MarketPriceInterval]] = relationship(
         back_populates="import_run", cascade="all, delete-orphan"
     )
 
@@ -73,4 +83,4 @@ class MarketPriceInterval(Entity):
     is_negative: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     is_current: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
-    import_run: Mapped["ImportRun"] = relationship(back_populates="intervals")
+    import_run: Mapped[ImportRun] = relationship(back_populates="intervals")

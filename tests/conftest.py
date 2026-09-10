@@ -14,11 +14,11 @@ os.environ.setdefault("BOOTSTRAP_ADMIN_TOKEN", "test-bootstrap-token")
 os.environ.setdefault("OPCOM_USE_SYNTHETIC_FIXTURE_ON_FAILURE", "true")
 
 import pytest
-from alembic import command
 from alembic.config import Config
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
+from alembic import command
 from app.config import get_settings
 from app.database import get_db
 

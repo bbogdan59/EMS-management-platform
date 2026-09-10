@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import pytest
 
+from app.core.rbac import can_manage_station_config, can_modify_operational_settings, role_at_least
 from app.services import auth_service
 from tests.factories import make_user
-from app.core.rbac import role_at_least, can_manage_station_config, can_modify_operational_settings
 
 
 def test_authenticate_success(db):
@@ -54,6 +54,7 @@ def test_password_reset_flow(db):
     auth_service.request_password_reset(db, "reset@test.local")
 
     from sqlalchemy import select
+
     from app.models.user import PasswordResetToken
 
     token_row = db.scalar(select(PasswordResetToken).where(PasswordResetToken.user_id == user.id))

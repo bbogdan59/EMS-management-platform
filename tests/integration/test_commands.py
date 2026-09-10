@@ -58,6 +58,7 @@ def test_command_full_lifecycle(client, db):
     assert result.json()["status"] == "executed"
 
     from sqlalchemy import select
+
     from app.models.command import CommandEvent
 
     events = db.scalars(select(CommandEvent).where(CommandEvent.command_id == cmd.id)).all()

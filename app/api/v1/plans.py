@@ -83,6 +83,6 @@ def accept_plan(version: int, device=Depends(get_authenticated_device), db: Sess
         device_service.accept_plan(db, device, version)
     except device_service.DeviceServiceError as exc:
         db.rollback()
-        raise HTTPException(status.HTTP_409_CONFLICT, detail=str(exc))
+        raise HTTPException(status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     db.commit()
     return get_active_plan(device=device, db=db)

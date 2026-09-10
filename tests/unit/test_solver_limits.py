@@ -1,16 +1,17 @@
 """Exercise real HiGHS solves: an explicit zero must never mean unlimited."""
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
+
 from app.services import optimization_service as service
 
 
 def solve(**overrides):
     horizon = [
-        datetime(2026, 9, 10, 12, tzinfo=timezone.utc) + timedelta(minutes=15 * i) for i in range(4)
+        datetime(2026, 9, 10, 12, tzinfo=UTC) + timedelta(minutes=15 * i) for i in range(4)
     ]
     config = SimpleNamespace(
         battery_reference_capacity_kwh=10,
@@ -43,8 +44,8 @@ def solve(**overrides):
         interval_minutes=15,
         pv_series=dict.fromkeys(horizon, 0),
         load_series=dict.fromkeys(horizon, 0.1),
-        price_buy=dict(zip(horizon, [0.01, 0.01, 3, 3])),
-        price_sell=dict(zip(horizon, [0, 0, 2, 2])),
+        price_buy=dict(zip(horizon, [0.01, 0.01, 3, 3], strict=True)),
+        price_sell=dict(zip(horizon, [0, 0, 2, 2], strict=True)),
         current_soc_kwh=5,
         db=MagicMock(),
     )

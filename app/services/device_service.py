@@ -19,12 +19,11 @@ from app.core.security import (
 from app.models.command import Command, CommandEvent
 from app.models.device import ClaimCode, Device, DeviceCredential
 from app.models.enums import ClaimCodeStatus, CommandStatus, DeviceStatus, PlanStatus
-from app.models.station import Station
-from app.models.user import User
 from app.models.optimization import Plan
 from app.models.preference import PreferenceVersion
-from app.models.station import StationConfigVersion
+from app.models.station import Station, StationConfigVersion
 from app.models.telemetry import TelemetryRaw
+from app.models.user import User
 from app.schemas.device_api import TelemetryItem
 
 MAX_FUTURE_SKEW = timedelta(minutes=5)
@@ -141,27 +140,27 @@ def ingest_telemetry_batch(db: Session, device: Device, items: list[TelemetryIte
 
         is_late = (now - item.measured_at) > LATE_TELEMETRY_THRESHOLD
         rows.append(
-            dict(
-                id=uuid.uuid4(),
-                device_id=device.id,
-                station_id=device.station_id,
-                boot_id=item.boot_id,
-                sequence=item.sequence,
-                schema_version=item.schema_version,
-                measured_at=item.measured_at,
-                received_at=now,
-                pv_power_w=item.pv_power_w,
-                load_power_w=item.load_power_w,
-                battery_power_w=item.battery_power_w,
-                grid_power_w=item.grid_power_w,
-                battery_soc_percent=item.battery_soc_percent,
-                ev_connected=item.ev_connected,
-                ev_power_w=item.ev_power_w,
-                quality_flags=item.quality_flags,
-                raw_payload=item.raw_payload,
-                is_simulated=bool(item.raw_payload.get("simulated", False)),
-                is_late=is_late,
-            )
+            {
+                "id": uuid.uuid4(),
+                "device_id": device.id,
+                "station_id": device.station_id,
+                "boot_id": item.boot_id,
+                "sequence": item.sequence,
+                "schema_version": item.schema_version,
+                "measured_at": item.measured_at,
+                "received_at": now,
+                "pv_power_w": item.pv_power_w,
+                "load_power_w": item.load_power_w,
+                "battery_power_w": item.battery_power_w,
+                "grid_power_w": item.grid_power_w,
+                "battery_soc_percent": item.battery_soc_percent,
+                "ev_connected": item.ev_connected,
+                "ev_power_w": item.ev_power_w,
+                "quality_flags": item.quality_flags,
+                "raw_payload": item.raw_payload,
+                "is_simulated": bool(item.raw_payload.get("simulated", False)),
+                "is_late": is_late,
+            }
         )
 
     accepted = 0

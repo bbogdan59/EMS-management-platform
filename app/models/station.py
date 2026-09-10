@@ -26,11 +26,11 @@ class Station(Entity):
     is_demo: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     execution_mode: Mapped[str] = mapped_column(String(16), default="shadow", nullable=False)
 
-    organization: Mapped["Organization"] = relationship(back_populates="stations")  # noqa: F821
-    panel_groups: Mapped[list["PanelGroup"]] = relationship(
+    organization: Mapped[Organization] = relationship(back_populates="stations")  # noqa: F821
+    panel_groups: Mapped[list[PanelGroup]] = relationship(
         back_populates="station", cascade="all, delete-orphan"
     )
-    config_versions: Mapped[list["StationConfigVersion"]] = relationship(
+    config_versions: Mapped[list[StationConfigVersion]] = relationship(
         back_populates="station", cascade="all, delete-orphan", order_by="StationConfigVersion.version"
     )
 
@@ -73,8 +73,8 @@ class StationConfigVersion(Entity):
 
     notes: Mapped[str | None] = mapped_column(String(2000), nullable=True)
 
-    station: Mapped["Station"] = relationship(back_populates="config_versions")
-    panel_groups: Mapped[list["PanelGroup"]] = relationship(
+    station: Mapped[Station] = relationship(back_populates="config_versions")
+    panel_groups: Mapped[list[PanelGroup]] = relationship(
         back_populates="config_version", cascade="all, delete-orphan"
     )
 
@@ -99,5 +99,5 @@ class PanelGroup(Entity):
     azimuth_degrees: Mapped[Decimal] = mapped_column(Numeric(5, 1), nullable=False)  # 0=N,90=E,180=S,270=V
     tilt_degrees: Mapped[Decimal] = mapped_column(Numeric(4, 1), nullable=False)
 
-    station: Mapped["Station"] = relationship(back_populates="panel_groups")
-    config_version: Mapped["StationConfigVersion"] = relationship(back_populates="panel_groups")
+    station: Mapped[Station] = relationship(back_populates="panel_groups")
+    config_version: Mapped[StationConfigVersion] = relationship(back_populates="panel_groups")

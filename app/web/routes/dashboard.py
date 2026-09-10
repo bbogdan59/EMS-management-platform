@@ -3,7 +3,7 @@ from __future__ import annotations
 import csv
 import io
 import uuid
-from datetime import date, datetime, timedelta
+from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import JSONResponse, StreamingResponse
