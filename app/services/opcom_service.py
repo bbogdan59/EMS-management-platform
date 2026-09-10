@@ -191,6 +191,37 @@ def _fetch_raw(url: str) -> bytes:
     raise OpcomFetchError("Eroare necunoscuta la preluarea CSV-ului OPCOM.")  # pragma: no cover
 
 
+def has_successful_real_import(db: Session, delivery_date: date, source: str = "opcom_pzu") -> bool:
+    """True daca exista deja o revizie reusita si NE-sintetica pentru aceasta zi.
+    Folosit pentru a face importurile (zilnice si de backfill istoric) idempotente
+    fara sa reinterogam sursa externa inutil."""
+    existing = db.scalar(
+        select(ImportRun).where(
+            ImportRun.source == source,
+            ImportRun.delivery_date == delivery_date,
+            ImportRun.status == ImportRunStatus.succeeded.value,
+            ImportRun.is_synthetic_fixture.is_(False),
+        ).order_by(ImportRun.revision.desc()).limit(1)
+    )
+    return existing is not None
+
+
+def get_real_imported_dates(db: Session, start: date, end: date, source: str = "opcom_pzu") -> set[date]:
+    """O singura interogare care returneaza toate zilele din [start, end] care au
+    deja o revizie reusita si ne-sintetica -- folosit de scriptul de backfill ca
+    sa sara eficient peste zilele deja importate, fara N interogari separate."""
+    rows = db.execute(
+        select(ImportRun.delivery_date).where(
+            ImportRun.source == source,
+            ImportRun.delivery_date >= start,
+            ImportRun.delivery_date <= end,
+            ImportRun.status == ImportRunStatus.succeeded.value,
+            ImportRun.is_synthetic_fixture.is_(False),
+        ).distinct()
+    ).all()
+    return {r[0] for r in rows}
+
+
 def import_opcom_day(db: Session, delivery_date: date, triggered_by_user_id=None) -> ImportRun:
     source = "opcom_pzu"
     existing_max = db.scalar(

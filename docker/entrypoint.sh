@@ -80,6 +80,14 @@ case "$ROLE" in
     wait_for_postgres
     exec python scripts/seed_demo.py
     ;;
+  backfill-opcom)
+    wait_for_postgres
+    # OPCOM_BACKFILL_START/END: YYYY-MM-DD. Implicit: 2024-01-01 -> azi.
+    exec python -u -m scripts.backfill_opcom_history \
+      --start "${OPCOM_BACKFILL_START:-2024-01-01}" \
+      ${OPCOM_BACKFILL_END:+--end "$OPCOM_BACKFILL_END"} \
+      --concurrency "${OPCOM_BACKFILL_CONCURRENCY:-8}"
+    ;;
   simulator)
     exec python -u -m simulator.run
     ;;
@@ -87,7 +95,7 @@ case "$ROLE" in
     exec python
     ;;
   *)
-    echo "Rol necunoscut: $ROLE (asteptat: web|worker|scheduler|migrate|seed-demo|simulator|shell)"
+    echo "Rol necunoscut: $ROLE (asteptat: web|worker|scheduler|migrate|seed-demo|backfill-opcom|simulator|shell)"
     exit 1
     ;;
 esac
