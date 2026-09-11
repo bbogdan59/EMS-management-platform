@@ -1,3 +1,4 @@
+
 """Modele SQLAlchemy 2 pentru platforma EMS.
 
 Import central pentru ca Alembic (autogenerate) si aplicatia sa vada
@@ -8,6 +9,7 @@ from app.models.audit import AuditLog
 from app.models.command import Command, CommandEvent
 from app.models.device import ClaimCode, Device, DeviceCredential
 from app.models.forecast import ConsumptionForecast, PvForecast, WeatherForecast
+from app.models.inverter_config import InverterDesired, InverterProfile, InverterReport
 from app.models.market import ImportRun, MarketPriceInterval
 from app.models.optimization import OptimizationRun, Plan, PlanInterval
 from app.models.organization import Membership, Organization
@@ -34,6 +36,9 @@ __all__ = [
     "Device",
     "DeviceCredential",
     "ImportRun",
+    "InverterDesired",
+    "InverterProfile",
+    "InverterReport",
     "Invitation",
     "MarketPriceInterval",
     "Membership",

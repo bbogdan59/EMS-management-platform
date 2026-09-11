@@ -48,6 +48,10 @@ def plan_allows_dispatch(db: Session, plan: Plan, station: Station, now) -> bool
 
 
 def command_allows_delivery(db: Session, command: Command, device: Device, now) -> bool:
+    from app.services.inverter_config_service import COMMAND_TYPE, delivery_allowed
+
+    if command.type == COMMAND_TYPE:
+        return delivery_allowed(db, command, device, now)
     if command.plan_interval_id is None:
         return command.author != "optimizer"
     interval = db.get(PlanInterval, command.plan_interval_id)

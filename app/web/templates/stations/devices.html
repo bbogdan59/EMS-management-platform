@@ -19,7 +19,7 @@
       <tbody>
         {% for d in devices %}
         <tr class="border-t border-gray-100 dark:border-gray-800">
-          <td class="py-1">{{ d.name }}</td>
+          <td class="py-1"><a href="/stations/{{ station.id }}/devices/{{ d.id }}/configuration">{{ d.name }} — configuratie</a></td>
           <td>
             {% if d.status == "active" %}<span class="badge-ok">activ</span>
             {% elif d.status == "revoked" %}<span class="badge-error">revocat</span>

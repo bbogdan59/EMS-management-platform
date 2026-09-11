@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}Configuratie invertor — {{ device.name }}{% endblock %}
+{% block content %}
+<div class="space-y-6">
+<h1 class="text-xl font-semibold">Configuratie invertor — {{ device.name }}</h1>
+<p>Stare: <strong>{{ state.status }}</strong>. Salvarea unei configuratii nu confirma aplicarea in invertor.</p>
+{% if not device.capabilities.get('inverter_settings_v1') %}<p class="badge-warn">Agentul nu declara executia setarilor. Configuratia ramane in asteptare; nu se emit comenzi fizice.</p>{% endif %}
+{% if state.command %}<p>Comanda: {{ state.command.status }}, expira {{ state.command.expires_at }}. {{ state.command.error or '' }}</p>{% endif %}
+<div class="card">
+<h2>Ultima observatie a dispozitivului</h2>
+{% if state.reported %}
+<p>Model {{ state.reported.model }}, firmware {{ state.reported.firmware }} — {{ state.reported.measured_at }}</p>
+<p>{{ state.reported.outcome }}: {{ state.reported.reason or '' }}</p>
+<table class="w-full"><thead><tr><th>Setare</th><th>Observat</th><th>Dorit</th></tr></thead><tbody>
+{% for key,value in state.reported.settings.items() %}<tr><td>{{ key }}</td><td>{{ value if value is not none else 'necunoscut' }}</td><td>{{ state.desired.settings.get(key, 'nespecificat') if state.desired else 'nespecificat' }}</td></tr>{% endfor %}
+</tbody></table>
+{% else %}<p>Nicio citire confirmata. Publica intai conexiunea cu setari goale, apoi asteapta snapshot-ul initial.</p>{% endif %}
+</div>
+{% if can_edit %}
+<div class="card">
+<h2>Configuratie dorita</h2>
+{% if not profiles %}<p>Administratorul platformei trebuie sa aprobe mai intai un profil documentat pentru modelul si firmware-ul exact.</p>{% else %}
+{% set connection = state.desired.connection if state.desired else {} %}
+<form method="post" action="/stations/{{ station.id }}/devices/{{ device.id }}/configuration/form" class="space-y-3">
+<input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+<input type="hidden" name="request_id" value="{{ request_id }}">
+<input type="hidden" name="expected_version" value="{{ state.desired.version if state.desired else 0 }}">
+<label>Profil aprobat <select name="profile_id">{% for profile in profiles %}<option value="{{ profile.id }}" {% if state.desired and state.desired.profile_id == profile.id|string %}selected{% endif %}>{{ profile.definition.model }} — {{ profile.definition.protocol_revision }} — {{ profile.digest[:12] }}</option>{% endfor %}</select></label>
+<label>Port serial stabil <input name="port" required value="{{ connection.get('port', '') }}" placeholder="/dev/serial/by-id/..." /></label>
+<label>Adresa Modbus <input name="slave" type="number" min="1" max="247" value="{{ connection.get('device_id', 1) }}"></label>
+<label>Baudrate <input name="baudrate" type="number" value="{{ connection.get('baudrate', 9600) }}"></label>
+<label>Paritate <input name="parity" value="{{ connection.get('parity', 'N') }}"></label>
+<label>Stop bits <input name="stopbits" type="number" value="{{ connection.get('stopbits', 1) }}"></label>
+<label>Citire la secunde <input name="sample_seconds" type="number" min="5" max="3600" value="{{ connection.get('sample_seconds', 10) }}"></label>
+<label>Setari numerice din profil (JSON; {} pentru prima conectare)<textarea name="settings_json" rows="5">{{ (state.desired.settings if state.desired else {})|tojson }}</textarea></label>
+<label>Motiv <input name="reason" required maxlength="500"></label>
+<button class="btn-primary" type="submit">Publica o versiune noua</button>
+</form>
+{% endif %}
+</div>
+{% endif %}
+<div class="card"><h2>Istoric configuratii dorite</h2><ul>{% for item in history %}<li>v{{ item.version }} — {{ item.created_at }} — autor {{ item.created_by }} — {{ item.reason }} — {{ item.digest[:12] }}</li>{% endfor %}</ul></div>
+</div>
+{% endblock %}

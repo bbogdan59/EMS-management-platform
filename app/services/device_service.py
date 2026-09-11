@@ -323,6 +323,17 @@ def report_command_result(
         )
 
     if status_value == "executed":
+        from app.services.inverter_config_service import (
+            COMMAND_TYPE,
+            ConfigConflict,
+            validate_execution_readback,
+        )
+
+        if command.type == COMMAND_TYPE:
+            try:
+                validate_execution_readback(db, command, device, details)
+            except ConfigConflict as exc:
+                raise DeviceServiceError(str(exc)) from exc
         command.status = CommandStatus.executed.value
         command.executed_at = utcnow()
     else:

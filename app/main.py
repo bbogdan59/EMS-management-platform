@@ -57,6 +57,7 @@ def create_app() -> FastAPI:
     from app.web.routes import admin as admin_routes
     from app.web.routes import auth as auth_routes
     from app.web.routes import dashboard as dashboard_routes
+    from app.web.routes import inverter_config as inverter_config_routes
     from app.web.routes import market as market_routes
     from app.web.routes import organizations as organizations_routes
     from app.web.routes import sse as sse_routes
@@ -67,6 +68,7 @@ def create_app() -> FastAPI:
     app.include_router(stations_routes.router, tags=["web-stations"])
     app.include_router(organizations_routes.router, tags=["web-organizations"])
     app.include_router(market_routes.router, tags=["web-market"])
+    app.include_router(inverter_config_routes.router, tags=["inverter-config"])
     app.include_router(admin_routes.router, prefix="/admin", tags=["web-admin"])
     app.include_router(sse_routes.router, tags=["web-sse"])
     app.include_router(api_v1_router, prefix="/api/v1", tags=["device-api"])
