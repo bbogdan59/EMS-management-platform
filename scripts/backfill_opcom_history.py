@@ -89,7 +89,7 @@ def main() -> None:
     _init_engine(args.concurrency)
 
     start = date.fromisoformat(args.start)
-    end = date.fromisoformat(args.end) if args.end else datetime.utcnow().date()
+    end = date.fromisoformat(args.end) if args.end else datetime.utcnow().date() + timedelta(days=1)
     if start > end:
         print(f"Data de inceput ({start}) e dupa data de sfarsit ({end}).", file=sys.stderr)
         sys.exit(1)
