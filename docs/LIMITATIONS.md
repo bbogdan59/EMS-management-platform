@@ -720,3 +720,63 @@ explicit de interval pentru ferestre >30 zile).
 in UI pentru "Piata energie" care sa permita cererea explicita a unei
 ferestre mai mari de 30 de zile (fereastra implicita ramane hardcodata la
 30 de zile in `market.js::loadTimeline`) -- vezi #33.
+## 17. Dashboard: costuri istorice corecte, beneficiu EMS separat de cel al sistemului, prognoza fara informatie din viitor (issue #13)
+
+**Costul istoric folosea tariful CURENT aplicat retroactiv, nu venitul de
+export deloc.** `get_estimated_savings` apela `tariff_service.get_current_tariff_version(...,
+at=utcnow())` si aplica ACEL pret (valabil doar "acum") la TOT intervalul
+cerut (ex. ultimele 30 de zile) -- daca tariful s-a schimbat in acel
+interval, costul istoric raportat era pur si simplu gresit. In plus, venitul
+din export NU era scazut deloc din cost (doar `grid_import_energy_kwh` era
+folosit). Fix: `_tariff_versions_for_range`/`_market_intervals_for_range` +
+`_lookup_at` (bisectie) gasesc, pentru FIECARE ora din interval, tariful
+REAL valabil in acea ora (import si export, inclusiv formula indexata
+OPCOM+marja), iar `actual_net_cost_lei` include acum si venitul de export.
+
+**Beneficiul sistemului PV/baterie era conflat cu beneficiul EMS.**
+Rezultatul avea un singur reper ("fara PV/baterie deloc"), care masoara
+beneficiul INSTALATIEI, nu al platformei. Acum sunt DOUA repere distincte,
+documentate explicit in raspuns (nu prezentate ca economie masurata):
+`whole_system_benefit_lei` (fata de "fara PV/baterie deloc") si
+`ems_incremental_benefit_lei` (fata de "PV+baterie instalate, dar fara
+optimizare activa -- auto-consum direct, fara arbitraj de pret"). Al doilea
+reper e o APROXIMARE simpla (nu o simulare completa a unui dispecerat
+alternativ fara EMS), documentata ca atare -- o simulare completa ar
+necesita re-rularea unui dispecerat contrafactual peste tot istoricul, in
+afara scopului acestui PR.
+
+**Acoperirea datelor e acum vizibila, nu absorbita tacit.** O ora fara
+consum masurat sau fara pret rezolvabil e EXCLUSA din toate cele trei sume
+(real/reper1/reper2), nu tratata ca zero -- si `hours_priced`/`hours_expected`/
+`hours_with_load_but_no_price`/`coverage_ratio` sunt raportate explicit, ca
+un utilizator sa vada cat de completa e perioada analizata.
+
+**Prognoza-vs-real putea folosi retroactiv o prognoza regenerata ulterior.**
+`get_forecast_vs_actual` nu filtra deloc dupa `issued_at` -- daca o prognoza
+era regenerata de mai multe ori (normal, periodic), interogarea returna MAI
+MULTE randuri pentru acelasi `interval_start` (unul per batch), amestecand pe
+grafic o prognoza veche cu una noua, fara ordine garantata. Fix: pentru
+fiecare `interval_start`, se pastreaza doar cea mai recenta prognoza care
+exista deja LA MOMENTUL acelui interval (`issued_at <= interval_start`) --
+un singur punct per moment, niciodata o prognoza "din viitor" fata de
+intervalul prezis.
+
+**Planificat vs. executat: campurile `observed_*` existau in schema, dar
+nu erau expuse deloc.** `PlanInterval.observed_battery_power_kw`/
+`observed_grid_power_kw`/`observed_soc_percent`/`deviation_notes` sunt
+mentionate in docstring-ul `OptimizationRun`/`Plan` ca fiind completate
+"ulterior dintr-un job de reconciliere", dar **niciun asemenea job nu
+exista inca in acest cod** (verificat explicit -- nicio referinta la aceste
+campuri in afara modelului insusi). `get_plan_chart` le expune acum explicit
+(None cand nu exista, nu omise), iar `dashboard.js` deseneaza seria "real"
+doar daca exista deja cel putin o valoare -- pregatit pentru momentul in
+care reconcilierea va exista, dar NU implementeaza reconcilierea insasi
+(job Celery separat care ar calcula aceste valori din `TelemetryAggregate`
+per interval de plan -- ramane de facut, in afara responsabilitatii
+`dashboard_service`/UI stabilite de acest issue).
+
+**Ramas in afara scopului (deliberat, nu ascuns):** unificarea seriilor
+PV/consum/baterie/pret pe ACELASI grafic (in prezent, `chart-power` si
+`chart-prices` raman grafice separate, fiecare cu axa lui) -- o redesenare
+de UI mai ampla, neceruta explicit in criteriile testabile numeric ale
+acestui issue; jobul de reconciliere `observed_*` mentionat mai sus.

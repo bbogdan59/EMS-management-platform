@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import bisect
 import uuid
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
@@ -14,7 +15,7 @@ from app.models.enums import PlanStatus
 from app.models.market import MarketPriceInterval
 from app.models.optimization import Plan, PlanInterval
 from app.models.station import Station, StationConfigVersion
-from app.models.tariff import TariffVersion
+from app.models.tariff import Tariff, TariffVersion
 from app.models.telemetry import TelemetryAggregate, TelemetryRaw
 from app.services import tariff_service
 
@@ -117,6 +118,60 @@ def _effective_price(tariff_version: TariffVersion | None, market_price: MarketP
     return round(base + float(tariff_version.variable_component_lei_per_kwh), 6)
 
 
+def _tariff_versions_for_range(db: Session, station_id: uuid.UUID, direction: str, start: datetime, end: datetime) -> list[TariffVersion]:
+    """Toate versiunile de tarif care se suprapun cu [start, end), ordonate
+    dupa `valid_from` -- spre deosebire de `tariff_service.get_current_tariff_version`
+    (un singur punct in timp, de regula "acum"), aici avem nevoie de fiecare
+    versiune care a fost in vigoare o parte din interval, ca sa calculam
+    costul istoric cu tariful REAL valabil in fiecare ora, nu cu cel curent."""
+    return db.scalars(
+        select(TariffVersion)
+        .join(Tariff, Tariff.id == TariffVersion.tariff_id)
+        .where(
+            Tariff.station_id == station_id,
+            Tariff.direction == direction,
+            Tariff.is_active.is_(True),
+            TariffVersion.valid_from < end,
+        )
+        .where((TariffVersion.valid_to.is_(None)) | (TariffVersion.valid_to > start))
+        .order_by(TariffVersion.valid_from)
+    ).all()
+
+
+def _market_intervals_for_range(db: Session, source: str, start: datetime, end: datetime) -> list[MarketPriceInterval]:
+    return db.scalars(
+        select(MarketPriceInterval)
+        .where(
+            MarketPriceInterval.source == source,
+            MarketPriceInterval.is_current.is_(True),
+            MarketPriceInterval.interval_start < end,
+            MarketPriceInterval.interval_end > start,
+        )
+        .order_by(MarketPriceInterval.interval_start)
+    ).all()
+
+
+def _lookup_at(sorted_items: list, at: datetime, start_attr: str, end_attr: str):
+    """Bisecteaza o lista deja sortata dupa `start_attr` si returneaza
+    elementul care acopera `at` (start_attr <= at < end_attr), sau None daca
+    niciunul nu acopera acel moment (gol de date, nu o presupunere gresita)."""
+    starts = [getattr(x, start_attr) for x in sorted_items]
+    idx = bisect.bisect_right(starts, at) - 1
+    if idx < 0:
+        return None
+    item = sorted_items[idx]
+    end_value = getattr(item, end_attr)
+    if end_value is not None and at >= end_value:
+        return None
+    return item
+
+
+def _effective_price_at(tariff_versions: list[TariffVersion], market_intervals: list[MarketPriceInterval], at: datetime) -> float | None:
+    tariff = _lookup_at(tariff_versions, at, "valid_from", "valid_to")
+    market = _lookup_at(market_intervals, at, "interval_start", "interval_end")
+    return _effective_price(tariff, market)
+
+
 def get_timeseries(db: Session, station: Station, start: datetime, end: datetime) -> list[dict]:
     rows = db.scalars(
         select(TelemetryRaw)
@@ -182,6 +237,15 @@ def get_plan_chart(db: Session, station: Station) -> dict:
                 "grid_kw": float(pi.grid_power_target_kw),
                 "soc_target_pct": float(pi.battery_soc_target_percent),
                 "explanation": pi.explanation,
+                # Efectul REAL, completat ulterior dintr-un job de reconciliere (vezi
+                # docstring-ul `OptimizationRun`/`Plan`) -- NU exista inca un asemenea
+                # job in acest cod (vezi docs/LIMITATIONS.md), deci ramane None azi
+                # pentru orice plan. Expus explicit, nu omis, ca planificat/executat
+                # sa fie distincte de indata ce reconcilierea va exista.
+                "observed_battery_kw": float(pi.observed_battery_power_kw) if pi.observed_battery_power_kw is not None else None,
+                "observed_grid_kw": float(pi.observed_grid_power_kw) if pi.observed_grid_power_kw is not None else None,
+                "observed_soc_pct": float(pi.observed_soc_percent) if pi.observed_soc_percent is not None else None,
+                "deviation_notes": pi.deviation_notes,
             }
             for pi in intervals
         ],
@@ -251,6 +315,15 @@ def get_efc_used(db: Session, station: Station, config: StationConfigVersion | N
 
 
 def get_forecast_vs_actual(db: Session, station: Station, metric: str, start: datetime, end: datetime) -> list[dict]:
+    """Fiecare prognoza e regenerata periodic (batch-uri noi cu `issued_at` mai
+    recent), iar randurile vechi raman in baza -- fara sa alegem explicit,
+    interogarea de mai jos ar returna MAI MULTE randuri pentru acelasi
+    `interval_start` (unul per batch), amestecand pe grafic o prognoza veche,
+    deja depasita, cu una noua. Pentru fiecare `interval_start`, pastram doar
+    prognoza cea mai RECENTA care exista deja LA MOMENTUL acelui interval
+    (`issued_at <= interval_start`) -- "prognoza asa cum era cunoscuta atunci",
+    nu una regenerata ulterior (ar insemna folosirea retroactiva a unei
+    informatii care inca nu exista la acel moment)."""
     from app.models.forecast import ConsumptionForecast, PvForecast
 
     aggregates = db.scalars(
@@ -264,7 +337,7 @@ def get_forecast_vs_actual(db: Session, station: Station, metric: str, start: da
     actual_by_start = {a.period_start: a for a in aggregates}
 
     if metric == "pv":
-        forecasts = db.scalars(
+        rows = db.scalars(
             select(PvForecast).where(
                 PvForecast.station_id == station.id,
                 PvForecast.scenario == "expected",
@@ -273,13 +346,22 @@ def get_forecast_vs_actual(db: Session, station: Station, metric: str, start: da
             )
         ).all()
     else:
-        forecasts = db.scalars(
+        rows = db.scalars(
             select(ConsumptionForecast).where(
                 ConsumptionForecast.station_id == station.id,
                 ConsumptionForecast.interval_start >= start,
                 ConsumptionForecast.interval_start < end,
             )
         ).all()
+
+    best_by_start: dict[datetime, object] = {}
+    for f in rows:
+        if f.issued_at > f.interval_start:
+            continue  # prognoza emisa "dupa" momentul prezis -- nu era disponibila atunci
+        existing = best_by_start.get(f.interval_start)
+        if existing is None or f.issued_at > existing.issued_at:
+            best_by_start[f.interval_start] = f
+    forecasts = sorted(best_by_start.values(), key=lambda f: f.interval_start)
 
     out = []
     for f in forecasts:
@@ -294,34 +376,96 @@ def get_forecast_vs_actual(db: Session, station: Station, metric: str, start: da
 
 
 def get_estimated_savings(db: Session, station: Station, start: datetime, end: datetime) -> dict:
-    """Economie estimata fata de un reper explicit: costul ipotetic daca TOT
-    consumul ar fi fost importat din retea la tariful de import curent, fara
-    PV/baterie. Reperul e documentat explicit in UI -- nu e o valoare 'magica'."""
-    now = utcnow()
-    import_tariff = tariff_service.get_current_tariff_version(db, station.id, "import", now)
-    if import_tariff is None or import_tariff.economic_calculation_disabled or import_tariff.fixed_price_lei_per_kwh is None:
-        return {"available": False, "reason": "Tarif de import fix indisponibil sau calcul economic dezactivat."}
+    """Economie estimata fata de DOUA repere explicite si distincte, fiecare
+    documentat in UI (nu prezentate ca economie masurata):
 
-    price = float(import_tariff.fixed_price_lei_per_kwh)
-    totals = db.execute(
-        select(
-            func.coalesce(func.sum(TelemetryAggregate.load_energy_kwh), 0),
-            func.coalesce(func.sum(TelemetryAggregate.grid_import_energy_kwh), 0),
-        ).where(
+    1. Beneficiul intregului sistem PV/baterie: cost real (import - export, la
+       preturile REALE valabile istoric, nu tariful curent) fata de costul
+       ipotetic daca TOT consumul ar fi fost importat din retea, fara PV/baterie.
+    2. Beneficiul INCREMENTAL al EMS (optimizarea activa): cost real fata de
+       un al doilea reper -- PV si baterie INSTALATE, dar fara optimizare
+       activa (auto-consum direct: surplusul PV se exporta, deficitul se
+       importa, fara arbitraj de pret). Izoleaza contributia proprie a
+       platformei de beneficiul pe care l-ar aduce oricum orice PV/baterie.
+
+    Ambele repere folosesc tariful REAL valabil in FIECARE ORA a intervalului
+    (nu tariful curent aplicat retroactiv intregului istoric -- bug corectat
+    fata de versiunea anterioara). Orele fara pret rezolvabil sunt EXCLUSE
+    din toate cele trei sume (real/reper1/reper2), nu tratate ca zero, iar
+    acoperirea ramasa e raportata explicit (`hours_priced`/`hours_expected`)."""
+    tariff_versions_buy = _tariff_versions_for_range(db, station.id, "import", start, end)
+    if not tariff_versions_buy:
+        return {"available": False, "reason": "Niciun tarif de import valabil in intervalul cerut."}
+    tariff_versions_sell = _tariff_versions_for_range(db, station.id, "export", start, end)
+    market_intervals = _market_intervals_for_range(db, "opcom_pzu", start, end)
+
+    rows = db.scalars(
+        select(TelemetryAggregate)
+        .where(
             TelemetryAggregate.station_id == station.id,
             TelemetryAggregate.period_type == "hour",
             TelemetryAggregate.period_start >= start,
             TelemetryAggregate.period_start < end,
         )
-    ).one()
-    total_load_kwh, total_import_kwh = float(totals[0]), float(totals[1])
-    baseline_cost = total_load_kwh * price
-    actual_cost = total_import_kwh * price
+        .order_by(TelemetryAggregate.period_start)
+    ).all()
+
+    hours_expected = max(int((end - start).total_seconds() / 3600), 0)
+    hours_priced = 0
+    hours_with_load_but_no_price = 0
+    total_load_kwh = 0.0
+    actual_net_cost = 0.0
+    whole_system_baseline_cost = 0.0
+    ems_incremental_baseline_cost = 0.0
+
+    for r in rows:
+        if r.load_energy_kwh is None:
+            continue
+        price_buy = _effective_price_at(tariff_versions_buy, market_intervals, r.period_start)
+        if price_buy is None:
+            hours_with_load_but_no_price += 1
+            continue
+        # Nicio ipoteza de venit necunoscut daca nu exista tarif de export valabil
+        # in acea ora -- la fel ca `optimization_service._resolve_price`.
+        price_sell = _effective_price_at(tariff_versions_sell, market_intervals, r.period_start) or 0.0
+
+        load = float(r.load_energy_kwh)
+        pv = float(r.pv_energy_kwh) if r.pv_energy_kwh is not None else 0.0
+        grid_import = float(r.grid_import_energy_kwh) if r.grid_import_energy_kwh is not None else 0.0
+        grid_export = float(r.grid_export_energy_kwh) if r.grid_export_energy_kwh is not None else 0.0
+
+        hours_priced += 1
+        total_load_kwh += load
+        actual_net_cost += grid_import * price_buy - grid_export * price_sell
+        whole_system_baseline_cost += load * price_buy
+
+        self_import = max(load - pv, 0.0)
+        self_export = max(pv - load, 0.0)
+        ems_incremental_baseline_cost += self_import * price_buy - self_export * price_sell
+
+    if hours_priced == 0:
+        return {"available": False, "reason": "Nicio ora cu date de consum si pret rezolvabil in intervalul cerut."}
+
     return {
         "available": True,
-        "baseline_description": "Cost ipotetic daca tot consumul era importat din retea, fara PV/baterie.",
-        "baseline_cost_lei": round(baseline_cost, 2),
-        "actual_import_cost_lei": round(actual_cost, 2),
-        "estimated_savings_lei": round(baseline_cost - actual_cost, 2),
+        "hours_priced": hours_priced,
+        "hours_expected": hours_expected,
+        "hours_with_load_but_no_price": hours_with_load_but_no_price,
+        "coverage_ratio": round(hours_priced / hours_expected, 4) if hours_expected else None,
         "total_load_kwh": round(total_load_kwh, 3),
+        "actual_net_cost_lei": round(actual_net_cost, 2),
+        "whole_system_baseline_description": (
+            "Cost ipotetic daca tot consumul era importat din retea, fara PV/baterie -- "
+            "la tariful REAL valabil in fiecare ora din interval, nu tariful curent."
+        ),
+        "whole_system_baseline_cost_lei": round(whole_system_baseline_cost, 2),
+        "whole_system_benefit_lei": round(whole_system_baseline_cost - actual_net_cost, 2),
+        "ems_incremental_baseline_description": (
+            "Cost ipotetic cu PV si baterie instalate, dar FARA optimizare activa "
+            "(auto-consum direct: surplusul PV se exporta, deficitul se importa, fara "
+            "arbitraj de pret sau incarcare/descarcare programata). Aproximare simpla, "
+            "documentata -- nu o simulare completa a unui sistem PV/baterie fara EMS."
+        ),
+        "ems_incremental_baseline_cost_lei": round(ems_incremental_baseline_cost, 2),
+        "ems_incremental_benefit_lei": round(ems_incremental_baseline_cost - actual_net_cost, 2),
     }

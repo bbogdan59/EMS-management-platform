@@ -35,10 +35,20 @@
     <div class="card"><p class="label !mb-1">Pret cumparare</p><p id="kpi-price-buy" class="text-lg font-semibold">-</p></div>
     <div class="card"><p class="label !mb-1">Pret vanzare</p><p id="kpi-price-sell" class="text-lg font-semibold">-</p></div>
   </div>
-  <div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
+  <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
     <div class="card"><p class="label !mb-1">Automatizare</p><p id="kpi-automation" class="text-sm font-medium">-</p></div>
     <div class="card"><p class="label !mb-1">Cicluri echivalente (EFC)</p><p id="kpi-efc" class="text-sm font-medium">-</p></div>
-    <div class="card"><p class="label !mb-1">Economii estimate</p><p id="kpi-savings" class="text-sm font-medium">-</p><p id="kpi-savings-note" class="mt-1 text-xs text-gray-500"></p></div>
+    <div class="card">
+      <p class="label !mb-1">Beneficiu sistem PV/baterie</p>
+      <p id="kpi-savings" class="text-sm font-medium">-</p>
+      <p id="kpi-savings-note" class="mt-1 text-xs text-gray-500"></p>
+      <p id="kpi-savings-coverage" class="mt-1 text-xs text-gray-400"></p>
+    </div>
+    <div class="card">
+      <p class="label !mb-1">Beneficiu incremental EMS</p>
+      <p id="kpi-ems-benefit" class="text-sm font-medium">-</p>
+      <p id="kpi-ems-benefit-note" class="mt-1 text-xs text-gray-500"></p>
+    </div>
   </div>
 
   <!-- Diagrama fluxuri -->
