@@ -139,7 +139,23 @@ standard `smtplib`, dar nu a fost testat impotriva unui server SMTP real
 de parola functioneaza corect, doar ca scriu in loguri in loc sa trimita
 email real.
 
-## 12. Corectii din revizia de cod
+## 12. Predictia de preturi PZU pana la finalul anului -- metoda simpla, nu econometrica
+
+`app/services/market_analytics_service.get_forecast_to_year_end` foloseste o
+metoda "seasonal-naive ajustata cu tendinta recenta": media istorica pe
+zi-din-an (din anii anteriori disponibili), inmultita cu raportul dintre
+ultimele 30 de zile reale din anul curent si media istorica pentru aceleasi
+zile calendaristice. E simpla, transparenta si usor de explicat, dar NU
+modeleaza sezonalitate saptamanala, evenimente de piata, schimbari de
+capacitate/reglementare sau alti factori structurali. Predictia e afisata
+intotdeauna cu linie punctata si eticheta explicita a metodei -- niciodata ca
+un fapt cert. Daca nu exista niciun an anterior cu date, se foloseste un
+fallback si mai simplu (medie constanta a ultimelor 30 de zile), marcat ca
+atare. Backfill-ul istoric (`scripts/backfill_opcom_history.py`) ruland din
+2024-01-01 imbunatateste direct calitatea acestei predictii (mai multi ani
+de referinta sezoniera).
+
+## 13. Corectii din revizia de cod
 
 Fallback-urile optimizatorului sunt publicate exclusiv in `shadow`, inclusiv
 pentru o statie live. Valorile zero din aceste intervale sunt substituenti
@@ -203,3 +219,49 @@ neschimbate.
 
 ### Upgrade of calendar aggregates
 Existing UTC day/month rows are retained as legacy_day/legacy_month and excluded from current rollups. Reaggregate retained lower-resolution history to populate local day/month rows. If raw/hour history expired, legacy values remain archived; do not relabel them as local days. Downgrade archives new local rows as local_day/local_month and restores legacy keys. Repeated upgrade after a downgrade requires reconciling archived local rows before rebuilding; archived periods are not queried by normal dashboards. NULL consumer support is included in this PR; forecasts reject insufficient coverage and treat absent EV as zero only when the station explicitly disables EV.
+## 14. Enrollment automat al dispozitivelor (issue #16) -- domeniu si asumtii
+
+- **Alocarea e restransa la `platform_admin`.** Inventarul de device-uri
+  neasociate (`/admin/devices/pending`) si actiunea de alocare nu sunt
+  expuse administratorilor de organizatie: un `installation_uuid` e doar o
+  identitate declarata de dispozitiv, fara nicio afiliere de organizatie in
+  acel moment, iar expunerea globala a inventarului catre orice admin de
+  organizatie ar permite unei organizatii sa vada/revendice un device
+  destinat altei organizatii. Corelarea "acest installation_uuid e al
+  clientului X" ramane, ca si la codul de asociere clasic, o comunicare
+  in afara platformei (instalator -> administrator).
+- **Fara sweep automat de expirare.** Un enrollment expirat (implicit 72h)
+  ramane in tabela `devices` cu `enrollment_expires_at` in trecut -- e
+  filtrat/marcat explicit in UI si respins explicit la alocare, dar nu
+  exista inca un task periodic care sa-l revoce/curete automat. Un operator
+  poate revoca manual din UI. Un task Celery dedicat ramane de adaugat.
+- **Fereastra scurta de expunere a `pending_credential_secret`.** Intre
+  momentul alocarii si prima cerere autentificata reusita a dispozitivului
+  cu noua credentiala, secretul e pastrat in clar (nu doar hash-uit) in
+  `devices.pending_credential_secret`, EXPLICIT ca sa poata fi recuperat
+  idempotent daca raspunsul de alocare se pierde in retea. Fereastra se
+  inchide automat la prima autentificare reusita. Un compromis al bazei de
+  date exact in acest interval ar expune acea credentiala in clar -- acceptat
+  deliberat, documentat, nu ascuns.
+- **Fara sesiune criptografica de tip challenge-response.** Dovada de
+  posesie e un secret static transmis o data (ca parola), verificat prin
+  hash Argon2 la fiecare reincercare -- nu o schema cu chei asimetrice/HMAC
+  per-cerere. E suficient pentru amenintarea principala vizata (impiedicarea
+  insusirii unui `installation_uuid` cunoscut), dar nu protejeaza impotriva
+  unui atacator care a interceptat deja `provisioning_secret`-ul o data
+  (ex. la primul enrollment, printr-un TLS compromis) -- acelasi model de
+  amenintare ca `DeviceCredential` existent.
+- **Agentul real (`EMS-device-code`) nu implementeaza inca acest flux.**
+  v0.1 al agentului foloseste exclusiv codul de asociere clasic (sectiunea 1
+  din docs/API.md); enrollment-ul automat descris aici e contractul
+  SERVER-SIDE pe care viitorul `EMS-device-code#3` il va consuma. Nu am
+  putut deci valida acest API impotriva unui agent real -- doar impotriva
+  testelor de integrare proprii (Postgres real, inclusiv un test de cursa
+  concurenta reala la nivel de baza de date) si a exemplelor din docs/API.md.
+- **Suprapunere de fisiere cu issue #10.** Issue-ul #16 a necesitat atingeri
+  minime, aditive, in fisiere nominal detinute de #10
+  (`app/api/v1/router.py` -- o linie de inregistrare a noului router;
+  `app/api/v1/device_deps.py` -- stergerea `pending_credential_secret` la
+  prima autentificare reusita). Fluxul clasic cu cod de asociere
+  (`app/api/v1/devices.py::claim_device`, `device_service.claim_device`) nu
+  a fost atins.

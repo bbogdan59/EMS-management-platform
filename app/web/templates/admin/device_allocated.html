@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}Device alocat - {{ app_name }}{% endblock %}
+{% block content %}
+<div class="space-y-6">
+  <h1 class="text-xl font-semibold">Device alocat statiei {{ station.name }}</h1>
+  {% include "admin/_tabs.html" %}
+
+  <div class="card border-brand-300 bg-brand-50 dark:bg-brand-900/20">
+    <p class="text-sm font-medium">Credentiala noua a dispozitivului (afisata o singura data):</p>
+    <p class="mt-1 break-all font-mono text-lg">{{ device.id }}.{{ credential_secret }}</p>
+    <p class="mt-1 text-xs text-gray-600 dark:text-gray-400">
+      Daca operatorul pierde acest ecran inainte sa configureze dispozitivul, nu e nevoie sa reincepi
+      enrollment-ul: dispozitivul insusi poate recupera aceeasi credentiala reincercand
+      <code>POST /api/v1/devices/enroll</code> cu propria identitate (installation_uuid + provisioning_secret)
+      -- serverul o pastreaza in clar exact pana la prima folosire reusita.
+    </p>
+  </div>
+
+  <div class="card">
+    <p class="text-sm"><span class="text-gray-500">Installation UUID:</span> <span class="font-mono text-xs">{{ device.installation_uuid }}</span></p>
+    <p class="text-sm"><span class="text-gray-500">Device ID:</span> <span class="font-mono text-xs">{{ device.id }}</span></p>
+    <p class="text-sm"><span class="text-gray-500">Statie:</span> {{ station.name }}</p>
+  </div>
+
+  <a class="btn-secondary" href="/admin/devices/pending">Inapoi la device-uri neasociate</a>
+</div>
+{% endblock %}

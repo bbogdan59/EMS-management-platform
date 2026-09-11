@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+{% block title %}Piata energie (OPCOM PZU) - {{ app_name }}{% endblock %}
+{% block content %}
+<div class="space-y-6">
+  <div class="flex flex-wrap items-center justify-between gap-3">
+    <div>
+      <h1 class="text-xl font-semibold">Piata energie -- preturi PZU (OPCOM)</h1>
+      <p class="text-sm text-gray-500 dark:text-gray-400">
+        Istoric disponibil: {{ status.earliest_date or "-" }} &rarr; {{ status.latest_date or "-" }}
+        ({{ status.total_days_available }} zile)
+      </p>
+    </div>
+    <a class="btn-secondary" href="/market/export.csv">Export CSV (medii zilnice)</a>
+  </div>
+
+  {% if status.last_import and status.last_import.is_synthetic %}
+  <p class="badge-warn">
+    Cel putin unele date afisate sunt SINTETICE (fallback, sursa OPCOM indisponibila la momentul importului) --
+    marcate explicit in baza de date. Vezi docs/LIMITATIONS.md.
+  </p>
+  {% endif %}
+
+  <!-- KPI -->
+  <div class="grid grid-cols-2 gap-3 sm:grid-cols-4">
+    <div class="card">
+      <p class="label !mb-1">Azi ({{ status.today.date if status.today else "-" }})</p>
+      {% if status.today %}
+      <p class="text-sm font-medium">
+        {% if status.today.status == "succeeded" %}<span class="badge-ok">publicat</span>{% else %}<span class="badge-warn">{{ status.today.status }}</span>{% endif %}
+        {% if status.today.is_synthetic %}<span class="badge-warn">sintetic</span>{% endif %}
+      </p>
+      {% else %}<p class="text-sm text-gray-500">indisponibil</p>{% endif %}
+    </div>
+    <div class="card">
+      <p class="label !mb-1">Maine ({{ status.tomorrow.date if status.tomorrow else "-" }})</p>
+      {% if status.tomorrow and status.tomorrow.status == "succeeded" %}
+      <p class="text-sm font-medium">
+        <span class="badge-ok">publicat</span>
+        {% if status.tomorrow.is_synthetic %}<span class="badge-warn">sintetic</span>{% endif %}
+      </p>
+      {% else %}<p class="text-sm text-gray-500">nepublicat inca</p>{% endif %}
+    </div>
+    <div class="card">
+      <p class="label !mb-1">Ultimul import</p>
+      <p class="text-sm font-medium">{{ status.last_import.delivery_date if status.last_import else "-" }}</p>
+    </div>
+    <div class="card">
+      <p class="label !mb-1">Ani disponibili</p>
+      <p class="text-sm font-medium">{{ available_years | join(", ") }}</p>
+    </div>
+  </div>
+
+  <!-- Timeline cu linie punctata pentru viitor -->
+  <div class="card">
+    <h2 class="mb-2 font-medium">Evolutie pret (ultimele 30 zile + maine)</h2>
+    <p class="mb-2 text-xs text-gray-500 dark:text-gray-400">
+      Linie continua = realizat/trecut. Linie punctata = "maine" (pretul publicat pentru ziua urmatoare, importat automat in fiecare zi).
+    </p>
+    <div class="empty-state text-sm text-gray-500" hidden>Fara date pentru acest interval.</div>
+    <div id="chart-timeline" style="height:320px"></div>
+  </div>
+
+  <!-- Overlay an-peste-an -->
+  <div class="card">
+    <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
+      <h2 class="font-medium">Suprapunere preturi pe ani (zi-din-an)</h2>
+      <div id="year-toggles" class="flex flex-wrap gap-3 text-sm"></div>
+    </div>
+    <div class="empty-state text-sm text-gray-500" hidden>Fara date istorice inca.</div>
+    <div id="chart-yearly-overlay" style="height:360px"></div>
+  </div>
+
+  <!-- Predictie pana la final de an -->
+  <div class="card">
+    <h2 class="mb-1 font-medium">Predictie pret mediu zilnic pana la 31 decembrie</h2>
+    <p id="forecast-note" class="mb-2 text-xs text-amber-700 dark:text-amber-300"></p>
+    <div class="empty-state text-sm text-gray-500" hidden>Predictia necesita cel putin cateva zile de istoric.</div>
+    <div id="chart-forecast" style="height:320px"></div>
+  </div>
+
+  <!-- Medii lunare -->
+  <div class="card">
+    <h2 class="mb-2 font-medium">Medii lunare pe ani</h2>
+    <div class="empty-state text-sm text-gray-500" hidden>Fara date lunare inca.</div>
+    <div id="chart-monthly" style="height:320px"></div>
+  </div>
+</div>
+
+<script src="/static/js/dashboard.js"></script>
+<script src="/static/js/market.js"></script>
+<script>
+  document.addEventListener("DOMContentLoaded", () => emsInitMarket({{ available_years | tojson }}));
+</script>
+{% endblock %}

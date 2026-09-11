@@ -103,6 +103,31 @@ celery -A app.celery_app beat --loglevel=info
 # Acceseaza http://localhost:8000/bootstrap-admin cu token-ul din BOOTSTRAP_ADMIN_TOKEN.
 ```
 
+## Piata energie -- istoric si predictii de preturi PZU (OPCOM)
+
+Pe langa importul zilnic automat (azi + maine, cron Celery Beat, idempotent),
+platforma poate popula un istoric complet de preturi PZU pornind de la
+`01.01.2024`:
+
+```bash
+python -m scripts.backfill_opcom_history --start 2024-01-01
+# reia automat doar zilele lipsa daca il rulezi din nou (idempotent)
+# --concurrency 8 (implicit) controleaza cate zile se preiau simultan
+# --force reimporta si zilele deja reusite (creeaza o noua revizie)
+```
+
+Rezultatul apare in UI la `/market/prices`: evolutia pretului (linie
+punctata pentru "maine", nepublicat inca la momentul cererii), suprapunere
+an-peste-an (2024/2025/2026, configurabil), predictie pana la 31 decembrie
+(metoda simpla, documentata -- vezi `app/services/market_analytics_service.py`
+si `docs/LIMITATIONS.md`) si medii lunare. Export CSV disponibil.
+
+Daca sursa OPCOM nu e accesibila (ex. retea restrictionata), zilele
+respective sunt populate cu date **sintetice**, marcate explicit
+(`import_runs.is_synthetic_fixture=true`, badge vizibil in UI) -- ruleaza din
+nou scriptul dintr-un mediu cu acces la internet ca sa le inlocuiasca cu date
+reale.
+
 ## Instalare cu Docker Compose
 
 ```bash

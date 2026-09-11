@@ -79,6 +79,82 @@ Dispozitive -> "Genereaza cod nou"), e valabil o perioada limitata
 poate fi folosit o singura data. Un cod expirat sau deja folosit returneaza
 `400 Bad Request` cu un mesaj explicit.
 
+## 1b. Enrollment automat (issue #16) -- alternativa fara cod de asociere
+
+```
+POST /api/v1/devices/enroll
+```
+
+Flux DISTINCT de asocierea cu cod (sectiunea 1 de mai sus, neschimbata):
+dispozitivul se prezinta singur, cu o identitate PROPRIE (nu i-o da
+serverul), fara sa aleaga nicio statie/tenant -- un administrator aloca
+explicit statia mai tarziu, din UI (`/admin/devices/pending`).
+
+**Nu necesita header `Authorization`** -- dispozitivul nu are inca nicio
+credentiala emisa de server. Dovada de identitate e `provisioning_secret`,
+generat si pastrat LOCAL de dispozitiv (ex. la prima pornire, persistat
+langa restul starii lui), transmis in corp.
+
+Cererea (idempotenta -- vezi mai jos):
+
+```json
+{
+  "installation_uuid": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+  "provisioning_secret": "un-secret-lung-generat-si-pastrat-local-de-device",
+  "hardware_info": { "model": "raspberry-pi-4", "firmware": "0.1.0" }
+}
+```
+
+Raspuns `200 OK`, inainte de alocare:
+
+```json
+{
+  "status": "pending",
+  "device_id": null,
+  "station_id": null,
+  "credential_secret": null,
+  "enrollment_expires_at": "2026-09-13T20:00:00Z",
+  "message": null
+}
+```
+
+Dupa ce un administrator aloca device-ul unei statii (din UI), ACELASI
+apel, cu ACEEASI identitate, intoarce:
+
+```json
+{
+  "status": "assigned",
+  "device_id": "b7e2f3c1-...-...",
+  "station_id": "a1c4d9e0-...-...",
+  "credential_secret": "mNAihwOUbNlzwB2x77eKO2oQgJjhD24_YAS3_acdlOo",
+  "enrollment_expires_at": null,
+  "message": null
+}
+```
+
+**Idempotenta si recuperare:** aceasta cerere e sigura de reincercat
+oricand cu aceeasi identitate (`installation_uuid`+`provisioning_secret`).
+Daca raspunsul de alocare se pierde in retea, dispozitivul nu are nevoie de
+reprovisionare -- reincearca acelasi `POST /devices/enroll` si primeste din
+nou `status=assigned` cu ACEEASI `credential_secret`, pana la prima cerere
+autentificata reusita cu acea credentiala (ex. primul heartbeat), dupa care
+serverul nu o mai poate retrimite (a fost stearsa din stocarea in clar) --
+recuperarea ramane totusi posibila prin rotatie de credentiale (sectiunea 3),
+odata ce dispozitivul e deja autentificat macar o data.
+
+Daca `installation_uuid` e deja cunoscut dar `provisioning_secret` NU se
+potriveste (identitate falsificata / cineva incearca sa "insuseasca" un
+`installation_uuid` declarat de altcineva): `409 Conflict`, fara nicio
+schimbare de stare. Alocarea unui enrollment expirat (implicit 72h,
+configurabil prin `DEVICE_ENROLLMENT_TTL_HOURS`), deja alocat, sau revocat
+e respinsa explicit de server (nu se produce silentios o schimbare de
+tenant sau o realocare).
+
+`installation_uuid` e DOAR o cheie de corelare pentru operator (ex. transmis
+verbal/prin alt canal de instalator catre administrator) -- NU autorizeaza
+singur nicio statie/organizatie. Alocarea e intotdeauna o actiune explicita
+de administrator, auditata (`device_allocated` in jurnalul de audit).
+
 ## 2. Heartbeat si capabilitati
 
 ```
