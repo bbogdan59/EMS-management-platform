@@ -53,6 +53,13 @@ def test_ack_replay_is_idempotent_but_contradiction_rejected(client, db):
     assert second.status_code == 200
     assert second.json()["status"] == "accepted"
 
+    different_reason = client.post(
+        f"/api/v1/commands/{cmd.id}/ack",
+        json={"status": "accepted", "reason": "different evidence"},
+        headers=headers,
+    )
+    assert different_reason.status_code == 409
+
     # Un rezultat CONTRADICTORIU pentru aceeasi comanda deja finalizata e respins explicit.
     contradiction = client.post(f"/api/v1/commands/{cmd.id}/ack", json={"status": "rejected"}, headers=headers)
     assert contradiction.status_code == 409
@@ -122,11 +129,11 @@ def test_ack_expiry_persists_even_though_the_request_is_rejected(db):
     db.add(cmd)
     db.commit()
 
-    with pytest.raises(device_service.DeviceServiceError, match="expirat"):
+    with pytest.raises(device_service.CommandExpiredError, match="expirat"):
         device_service.acknowledge_command(db, device, cmd.id, "accepted", None)
 
-    # Exact ce fac rutele din app/api/v1/commands.py la DeviceServiceError.
-    db.rollback()
+    # Ruta detine limita tranzactiei si pastreaza numai tranzitia explicita.
+    db.commit()
 
     db.refresh(cmd)
     assert cmd.status == CommandStatus.expired.value

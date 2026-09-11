@@ -37,6 +37,10 @@ class DeviceServiceError(Exception):
     pass
 
 
+class CommandExpiredError(DeviceServiceError):
+    """Semnaleaza ca tranzitia la expired trebuie pastrata de apelant."""
+
+
 def create_claim_code(db: Session, station: Station, created_by: User) -> tuple[ClaimCode, str]:
     settings = get_settings()
     raw_code, prefix = generate_claim_code()
@@ -292,7 +296,14 @@ def acknowledge_command(db: Session, device: Device, command_id: uuid.UUID, stat
     # "accepted") e respins explicit, nu suprascris tacit.
     if command.status in (CommandStatus.accepted.value, CommandStatus.rejected.value):
         if command.status == status_value:
-            return command
+            last_event = db.scalar(
+                select(CommandEvent)
+                .where(CommandEvent.command_id == command.id, CommandEvent.event_type == status_value)
+                .order_by(CommandEvent.created_at.desc())
+                .limit(1)
+            )
+            if last_event is not None and last_event.message == reason:
+                return command
         raise DeviceServiceError(
             f"Comanda este deja in starea '{command.status}'; reincercarea raporteaza un rezultat contradictoriu ('{status_value}')."
         )
@@ -307,12 +318,8 @@ def acknowledge_command(db: Session, device: Device, command_id: uuid.UUID, stat
         command.status = CommandStatus.expired.value
         db.add(command)
         db.add(CommandEvent(command_id=command.id, event_type="expired", source="system"))
-        # commit, nu doar flush: apelantii (rutele API) fac `db.rollback()` la
-        # DeviceServiceError, ceea ce ar sterge tacit exact aceasta tranzitie de
-        # stare pe care incercam sa o persistam -- ea trebuie sa supravietuiasca
-        # indiferent de ce face apelantul cu restul tranzactiei.
-        db.commit()
-        raise DeviceServiceError("Comanda a expirat.")
+        db.flush()
+        raise CommandExpiredError("Comanda a expirat.")
 
     if status_value == "accepted":
         command.status = CommandStatus.accepted.value
