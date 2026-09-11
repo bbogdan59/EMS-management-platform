@@ -5,19 +5,22 @@ anterioara intarzie peste intervalul de planificare)."""
 from __future__ import annotations
 
 import contextlib
-from datetime import datetime, timedelta
+import uuid
+from datetime import date, datetime, timedelta
 
 import structlog
 from sqlalchemy import select
 
 from app.celery_app import celery_app
 from app.config import get_settings
+from app.core.audit import record_audit
 from app.core.rate_limit import get_redis
 from app.core.security import utcnow
 from app.database import session_scope
+from app.models.admin_job import AdminJob
 from app.models.alert import Alert
 from app.models.device import Device
-from app.models.enums import AlertSeverity, AlertStatus
+from app.models.enums import AdminJobStatus, AlertSeverity, AlertStatus
 from app.models.station import Station
 from app.services import (
     aggregation_service,
@@ -177,6 +180,107 @@ def alerts_task() -> dict:
                 open_alert.resolved_at = now
                 db.add(open_alert)
     return {"alerts_created": created}
+
+
+def _mark_admin_job(job_id: uuid.UUID, **fields) -> None:
+    """Actualizeaza un `AdminJob` intr-o sesiune proprie, separata de sesiunea
+    care a rulat munca efectiva -- astfel incat un rollback al muncii (ex. o
+    exceptie in mijlocul importului OPCOM) sa nu stearga si actualizarea de
+    stare pe care vrem sa o pastram (ex. status=failed)."""
+    with session_scope() as db:
+        job = db.get(AdminJob, job_id)
+        if job is None:
+            logger.warning("admin_job.not_found", job_id=str(job_id))
+            return
+        for key, value in fields.items():
+            setattr(job, key, value)
+
+
+@celery_app.task(name="app.workers.tasks.admin_opcom_import_job_task")
+def admin_opcom_import_job_task(job_id: str) -> dict:
+    """Executa, pe fundal, un import OPCOM declansat manual din panoul admin
+    (`AdminJob.job_type == 'opcom_import'`) -- ruta web doar creeaza randul
+    `AdminJob` (status=queued) si trimite acest task, ca sa nu tina cererea
+    HTTP blocata pe durata importului. Nu inlocuieste `opcom_import_daily_task`
+    (rularea planificata Celery beat), care ramane neschimbata."""
+    job_uuid = uuid.UUID(job_id)
+    _mark_admin_job(job_uuid, status=AdminJobStatus.running.value, started_at=utcnow())
+
+    with session_scope() as db:
+        job = db.get(AdminJob, job_uuid)
+        if job is None:
+            return {"error": "job_not_found"}
+        delivery_date = date.fromisoformat(job.params["delivery_date"])
+        triggered_by_user_id = job.triggered_by_user_id
+
+    try:
+        with session_scope() as db:
+            run = opcom_service.import_opcom_day(db, delivery_date, triggered_by_user_id=triggered_by_user_id)
+            run_id, run_status = run.id, run.status
+            record_audit(
+                db, action="opcom_import_triggered", resource_type="import_run", resource_id=str(run_id),
+                actor_user_id=triggered_by_user_id, actor_label="admin_job",
+                metadata={"delivery_date": delivery_date.isoformat(), "status": run_status, "admin_job_id": job_id},
+            )
+    except Exception as exc:
+        logger.error("admin_opcom_import_job.failed", job_id=job_id, error=str(exc))
+        _mark_admin_job(job_uuid, status=AdminJobStatus.failed.value, finished_at=utcnow(), error_message=str(exc)[:500])
+        return {"status": "failed", "error": str(exc)}
+
+    _mark_admin_job(
+        job_uuid,
+        status=AdminJobStatus.succeeded.value,
+        finished_at=utcnow(),
+        result_resource_type="import_run",
+        result_resource_id=run_id,
+    )
+    return {"status": "succeeded", "import_run_id": str(run_id)}
+
+
+@celery_app.task(name="app.workers.tasks.admin_optimize_station_job_task")
+def admin_optimize_station_job_task(job_id: str) -> dict:
+    """Executa, pe fundal, o reoptimizare a unei statii declansata manual din
+    panoul admin (`AdminJob.job_type == 'optimization'`) -- vezi docstring-ul
+    `admin_opcom_import_job_task` pentru motivatie. Nu inlocuieste
+    `optimization_all_stations_task` (rularea planificata pentru toate
+    statiile), care ramane neschimbata."""
+    job_uuid = uuid.UUID(job_id)
+    _mark_admin_job(job_uuid, status=AdminJobStatus.running.value, started_at=utcnow())
+
+    with session_scope() as db:
+        job = db.get(AdminJob, job_uuid)
+        if job is None:
+            return {"error": "job_not_found"}
+        station_id = job.station_id
+        triggered_by_user_id = job.triggered_by_user_id
+
+    try:
+        with session_scope() as db:
+            run = optimization_service.run_optimization_for_station(
+                db, station_id, triggered_by="user", triggered_by_user_id=triggered_by_user_id
+            )
+            run_id, run_status = run.id, run.status
+            record_audit(
+                db, action="optimization_triggered", resource_type="optimization_run", resource_id=str(run_id),
+                actor_user_id=triggered_by_user_id, actor_label="admin_job", station_id=station_id,
+                metadata={"status": run_status, "admin_job_id": job_id},
+            )
+    except OptimizationLockedError:
+        _mark_admin_job(job_uuid, status=AdminJobStatus.skipped_locked.value, finished_at=utcnow())
+        return {"status": "skipped_locked"}
+    except Exception as exc:
+        logger.error("admin_optimize_station_job.failed", job_id=job_id, error=str(exc))
+        _mark_admin_job(job_uuid, status=AdminJobStatus.failed.value, finished_at=utcnow(), error_message=str(exc)[:500])
+        return {"status": "failed", "error": str(exc)}
+
+    _mark_admin_job(
+        job_uuid,
+        status=AdminJobStatus.succeeded.value,
+        finished_at=utcnow(),
+        result_resource_type="optimization_run",
+        result_resource_id=run_id,
+    )
+    return {"status": "succeeded", "optimization_run_id": str(run_id)}
 
 
 @celery_app.task(name="app.workers.tasks.retention_task")

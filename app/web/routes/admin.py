@@ -13,11 +13,12 @@ from app.core.audit import record_audit
 from app.core.csrf import verify_csrf
 from app.core.security import utcnow
 from app.database import get_db
+from app.models.admin_job import AdminJob
 from app.models.alert import Alert
 from app.models.audit import AuditLog
 from app.models.command import Command
 from app.models.device import Device
-from app.models.enums import AlertStatus
+from app.models.enums import AdminJobStatus, AdminJobType, AlertStatus
 from app.models.market import ImportRun
 from app.models.optimization import OptimizationRun
 from app.models.organization import Membership, Organization
@@ -111,6 +112,7 @@ def operations(request: Request, db: Session = Depends(get_db), user: User = Dep
     devices = db.scalars(select(Device).order_by(Device.created_at.desc()).limit(50)).all()
     commands = db.scalars(select(Command).order_by(Command.created_at.desc()).limit(30)).all()
     stations = db.scalars(select(Station).order_by(Station.name)).all()
+    admin_jobs = db.scalars(select(AdminJob).order_by(AdminJob.created_at.desc()).limit(20)).all()
 
     context = {
         "import_runs": import_runs,
@@ -118,9 +120,13 @@ def operations(request: Request, db: Session = Depends(get_db), user: User = Dep
         "devices": devices,
         "commands": commands,
         "stations": stations,
+        "admin_jobs": admin_jobs,
         **build_nav_context(db, user),
     }
     return templates.TemplateResponse(request, "admin/operations.html", context)
+
+
+_ACTIVE_ADMIN_JOB_STATUSES = (AdminJobStatus.queued.value, AdminJobStatus.running.value)
 
 
 @router.post("/operations/import-opcom", dependencies=[Depends(verify_csrf)])
@@ -132,15 +138,39 @@ def trigger_opcom_import(
 ):
     from datetime import date as date_cls
 
-    from app.services.opcom_service import import_opcom_day
+    from app.workers.tasks import admin_opcom_import_job_task
 
-    d = date_cls.fromisoformat(delivery_date)
-    run = import_opcom_day(db, d, triggered_by_user_id=user.id)
+    d = date_cls.fromisoformat(delivery_date).isoformat()
+
+    existing = db.scalar(
+        select(AdminJob).where(
+            AdminJob.job_type == AdminJobType.opcom_import.value,
+            AdminJob.status.in_(_ACTIVE_ADMIN_JOB_STATUSES),
+            AdminJob.params["delivery_date"].as_string() == d,
+        )
+    )
+    if existing is not None:
+        return RedirectResponse("/admin/operations?error=opcom_import_in_progress", status_code=303)
+
+    job = AdminJob(
+        job_type=AdminJobType.opcom_import.value,
+        status=AdminJobStatus.queued.value,
+        params={"delivery_date": d},
+        target_label=f"Import OPCOM {d}",
+        triggered_by_user_id=user.id,
+    )
+    db.add(job)
+    db.flush()
     record_audit(
-        db, action="opcom_import_triggered", resource_type="import_run", resource_id=str(run.id),
-        actor_user_id=user.id, actor_label=user.email, metadata={"delivery_date": delivery_date, "status": run.status},
+        db, action="opcom_import_triggered", resource_type="admin_job", resource_id=str(job.id),
+        actor_user_id=user.id, actor_label=user.email, metadata={"delivery_date": d},
     )
     db.commit()
+
+    async_result = admin_opcom_import_job_task.delay(str(job.id))
+    job.celery_task_id = async_result.id
+    db.commit()
+
     return RedirectResponse("/admin/operations", status_code=303)
 
 
@@ -151,14 +181,42 @@ def trigger_optimization(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    from app.services.optimization_service import run_optimization_for_station
+    from app.workers.tasks import admin_optimize_station_job_task
 
-    run = run_optimization_for_station(db, station_id, triggered_by="user", triggered_by_user_id=user.id)
+    station = db.get(Station, station_id)
+    if station is None:
+        return RedirectResponse("/admin/operations?error=station_not_found", status_code=303)
+
+    existing = db.scalar(
+        select(AdminJob).where(
+            AdminJob.job_type == AdminJobType.optimization.value,
+            AdminJob.status.in_(_ACTIVE_ADMIN_JOB_STATUSES),
+            AdminJob.station_id == station_id,
+        )
+    )
+    if existing is not None:
+        return RedirectResponse("/admin/operations?error=optimization_in_progress", status_code=303)
+
+    job = AdminJob(
+        job_type=AdminJobType.optimization.value,
+        status=AdminJobStatus.queued.value,
+        params={},
+        target_label=station.name,
+        station_id=station_id,
+        triggered_by_user_id=user.id,
+    )
+    db.add(job)
+    db.flush()
     record_audit(
-        db, action="optimization_triggered", resource_type="optimization_run", resource_id=str(run.id),
-        actor_user_id=user.id, actor_label=user.email, station_id=station_id, metadata={"status": run.status},
+        db, action="optimization_triggered", resource_type="admin_job", resource_id=str(job.id),
+        actor_user_id=user.id, actor_label=user.email, station_id=station_id,
     )
     db.commit()
+
+    async_result = admin_optimize_station_job_task.delay(str(job.id))
+    job.celery_task_id = async_result.id
+    db.commit()
+
     return RedirectResponse("/admin/operations", status_code=303)
 
 

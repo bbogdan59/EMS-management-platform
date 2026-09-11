@@ -5,8 +5,49 @@
   <h1 class="text-xl font-semibold">Operatiuni</h1>
   {% include "admin/_tabs.html" %}
 
+  {% if request.query_params.get("error") == "opcom_import_in_progress" %}
+  <div class="badge-warn rounded p-2">Exista deja un import OPCOM in curs pentru aceasta data.</div>
+  {% elif request.query_params.get("error") == "optimization_in_progress" %}
+  <div class="badge-warn rounded p-2">Exista deja o reoptimizare in curs pentru aceasta statie.</div>
+  {% elif request.query_params.get("error") == "station_not_found" %}
+  <div class="badge-error rounded p-2">Statia nu a fost gasita.</div>
+  {% endif %}
+
+  <div class="card">
+    <h2 class="mb-2 font-medium">Joburi admin (asincrone)</h2>
+    <table class="w-full text-sm">
+      <thead class="text-left text-gray-500"><tr><th class="py-1">Tip</th><th>Tinta</th><th>Status</th><th>Rezultat / eroare</th><th>Creat</th></tr></thead>
+      <tbody>
+        {% for j in admin_jobs %}
+        <tr class="border-t border-gray-100 dark:border-gray-800">
+          <td class="py-1">{{ j.job_type }}</td>
+          <td>{{ j.target_label }}</td>
+          <td>
+            {% if j.status == "succeeded" %}<span class="badge-ok">succes</span>
+            {% elif j.status in ("failed",) %}<span class="badge-error">esuat</span>
+            {% elif j.status == "skipped_locked" %}<span class="badge-warn">omis (blocat)</span>
+            {% else %}<span class="badge-warn">{{ j.status }}</span>{% endif %}
+          </td>
+          <td>
+            {% if j.result_resource_type == "import_run" and j.result_resource_id %}
+              <a class="text-brand-700 hover:underline dark:text-brand-300" href="/admin/operations#import-runs">import #{{ j.result_resource_id }}</a>
+            {% elif j.result_resource_type == "optimization_run" and j.result_resource_id %}
+              <a class="text-brand-700 hover:underline dark:text-brand-300" href="/admin/operations#optimization-runs">optimizare #{{ j.result_resource_id }}</a>
+            {% elif j.error_message %}
+              <span class="text-red-600" title="{{ j.error_message }}">{{ j.error_message | truncate(60) }}</span>
+            {% else %}-{% endif %}
+          </td>
+          <td>{{ j.created_at.strftime("%d.%m %H:%M") }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="5" class="py-2 text-gray-500">Niciun job admin inca.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
   <div class="grid gap-4 lg:grid-cols-2">
-    <div class="card">
+    <div class="card" id="import-runs">
       <h2 class="mb-2 font-medium">Reexecutare import OPCOM</h2>
       <form method="post" action="/admin/operations/import-opcom" class="flex items-end gap-3">
         <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}" />
@@ -36,7 +77,7 @@
       </table>
     </div>
 
-    <div class="card">
+    <div class="card" id="optimization-runs">
       <h2 class="mb-2 font-medium">Reexecutare optimizare</h2>
       <form method="post" action="" id="optimize-form" class="flex items-end gap-3">
         <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}" />

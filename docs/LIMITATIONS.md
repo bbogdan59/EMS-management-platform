@@ -265,3 +265,90 @@ Existing UTC day/month rows are retained as legacy_day/legacy_month and excluded
   prima autentificare reusita). Fluxul clasic cu cod de asociere
   (`app/api/v1/devices.py::claim_device`, `device_service.claim_device`) nu
   a fost atins.
+
+## 15. Joburi admin asincrone, CI si deploy verificabil (issue #11)
+
+**Joburi admin asincrone.** `POST /admin/operations/import-opcom` si
+`POST /admin/operations/optimize/{station_id}` rulau anterior sincron, in
+firul cererii HTTP -- un import OPCOM sau o (re)optimizare putea tine
+cererea blocata cat dura efectiv operatia (posibil zeci de secunde pentru
+solver). Acum ambele rute doar creeaza un rand `AdminJob` (status=`queued`),
+il comit si trimit un task Celery (`admin_opcom_import_job_task` /
+`admin_optimize_station_job_task`), apoi redirecteaza imediat. Panoul
+`/admin/operations` afiseaza lista de joburi (tip, tinta, status, legatura
+catre `ImportRun`/`OptimizationRun` rezultat sau eroarea, daca a esuat).
+Fiecare ruta respinge o declansare duplicata pentru aceeasi tinta (aceeasi
+data de livrare / aceeasi statie) cat timp exista deja un job `queued` sau
+`running`. Modelul `AdminJob` e distinct de `ImportRun`/`OptimizationRun`
+(acelea raman inregistrarea de business a rezultatului) si NU e folosit de
+rularile planificate (Celery beat) -- acelea nu au un declansator uman de
+urmarit si isi gestioneaza deja propria idempotenta/lock-uri.
+
+**CI: build imagine + smoke test.** A fost adaugat un al doilea job in
+`.github/workflows/ci.yml` (`docker-build-and-smoke-test`) care ruleaza
+`docker build .`, porneste containerul cu rolul `web` (cu Postgres 16 si
+Redis 7 ca service-uri, `RUN_MIGRATIONS_ON_START=true`) si asteapta un
+raspuns 200 la `/health` (pana la 60s), afisand log-urile containerului la
+esec sau intotdeauna pentru diagnostic. **Nu am putut rula acest job local**
+-- acelasi motiv ca la limitarea 8 (`dockerd` nefunctional in acest mediu
+sandbox: `Operation not permitted` la pornirea daemon-ului). Am validat doar
+sintaxa YAML (parsare cu `yaml.safe_load`) si am revizuit manual, cu atentie,
+fiecare pas fata de `Dockerfile`/`docker/entrypoint.sh` existente
+(`ENTRYPOINT ["/entrypoint.sh"]`, rolul `web` accepta migratii la pornire
+prin `RUN_MIGRATIONS_ON_START`). Corectitudinea job-ului ramane de confirmat
+la prima rulare reala in GitHub Actions.
+
+**Dezvaluire de detalii interne catre apelanti neautentificati.** Am gasit
+si corectat doua puncte in care un eșec de conectare la Postgres/Redis
+ajungea, cu detaliul brut al exceptiei, fie intr-un raspuns HTTP
+neautentificat, fie repetat in log-urile persistente ale containerului:
+- `GET /readiness` (`app/main.py`) intorcea anterior
+  `{"status": "error", "detail": str(exc)}` oricui, neautentificat -- acum
+  intoarce un mesaj generic (`"Serviciul nu este pregatit."`), iar detaliul
+  complet e logat doar server-side (`structlog`).
+- `docker/entrypoint.sh` (`wait_for_postgres`/`wait_for_redis`) tiparea
+  `str(exc)` la FIECARE din cele pana la 30 de reincercari (la fiecare
+  pornire de container) -- acum tipareste doar `type(exc).__name__` la
+  fiecare incercare, iar detaliul complet apare o singura data, doar daca
+  toate cele 30 de incercari esueaza.
+
+Am verificat empiric (conexiune reala, cu parola gresita, la Postgres local)
+ca `str(exc)` pentru o eroare de autentificare psycopg contine
+host/port/utilizator, dar **NU contine parola insasi** -- deci descrierea
+corecta a acestei probleme e "dezvaluire de detalii de infrastructura
+interna", nu "scurgere de parola". Ambele corectii raman utile indiferent de
+continutul exact al mesajului: un apelant neautentificat sau un log
+persistent nu ar trebui sa afle niciodata topologia interna (host intern,
+nume de utilizator de baza de date).
+
+**Strategia de testare pentru taskurile Celery.** Niciun test existent nu
+exercita anterior stratul Celery. Taskurile noi (`admin_opcom_import_job_task`
+/ `admin_optimize_station_job_task`) folosesc intern `session_scope()` --
+o sesiune SQLAlchemy noua, pe o conexiune reala separata -- ceea ce nu e
+vizibil din fixture-ul obisnuit de test `db` (izolat printr-un SAVEPOINT pe
+o singura conexiune, niciodata comis efectiv la nivel Postgres). Din acest
+motiv NU am activat `task_always_eager` global (ar fi produs esecuri
+"job_not_found" greu de diagnosticat, din cauza acestei neconcordante de
+izolare): 
+- Taskurile insele sunt testate direct (apel Python direct, nu `.delay()`)
+  in `tests/integration/test_admin_job_tasks.py`, cu date de test comise
+  REAL prin fixture-ul `engine` (acelasi tipar folosit deja de testele de
+  cursa concurenta din `test_device_enrollment.py`), inclusiv un test pentru
+  `skipped_locked` (lock Redis pre-achizitionat manual) si teste pentru
+  mesajul de eroare trunchiat/sigur la esec.
+- Rutele HTTP (`trigger_opcom_import`/`trigger_optimization`) sunt testate
+  separat in `tests/integration/test_admin_operations_routes.py`, cu
+  `.delay()` inlocuit printr-un stub (fixture-ul `db`/`client` obisnuit,
+  izolat prin SAVEPOINT) -- se testeaza doar crearea randului `AdminJob` si
+  protectia la declansare duplicata, nu executia reala a taskului.
+
+**Fix de pre-existenta portat din PR #28 (issue #8), nu re-descoperit.**
+Rularea suitei complete a scos la iveala aceeasi problema de poluare a
+testelor prin contorul de rate-limit la login din Redis (niciodata golit
+intre teste in aceeasi rulare pytest) deja diagnosticata si corectata in
+PR #28 -- care insa nu era inca fuzionat in `main` la momentul cand acest
+branch a fost creat. Am portat acelasi fix cu o singura linie
+(`LOGIN_RATE_LIMIT_ATTEMPTS=100000` in `tests/conftest.py`, doar pentru
+mediul de test) ca sa nu lase acest PR cu esecuri CI nelegate de continutul
+lui; fix-ul devine un no-op inofensiv odata ce PR #28 se fuzioneaza si aduce
+aceeasi linie.
