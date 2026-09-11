@@ -23,7 +23,7 @@ from app.models.optimization import OptimizationRun
 from app.models.organization import Membership, Organization
 from app.models.station import Station
 from app.models.user import User
-from app.services import station_service
+from app.services import device_service, station_service
 from app.web.context import build_nav_context
 from app.web.templating import templates
 
@@ -178,3 +178,86 @@ def audit_log(
     entries = db.scalars(stmt).all()
     context = {"entries": entries, "filter_action": action or "", "filter_actor": actor or "", **build_nav_context(db, user)}
     return templates.TemplateResponse(request, "admin/audit.html", context)
+
+
+# --- Enrollment automat: inventar device-uri neasociate (issue #16) ------
+#
+# Alocarea unui device enrollat este restransa la platform_admin (acelasi
+# guard ca restul acestui router): un installation_uuid e doar o identitate
+# DECLARATA de dispozitiv, fara nicio afiliere de organizatie -- expunerea
+# inventarului neasociat catre admini de organizatie ar permite unei
+# organizatii sa "vada"/revendice un device destinat altei organizatii,
+# inainte de orice corelare umana in afara platformei (ex. instalatorul
+# comunica installation_uuid-ul catre clientul corect). Vezi
+# docs/LIMITATIONS.md pentru nota completa.
+
+
+@router.get("/devices/pending")
+def pending_devices_list(request: Request, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    pending = device_service.list_pending_devices(db)
+    now = utcnow()
+    stations = db.scalars(select(Station).order_by(Station.name)).all()
+    context = {
+        "pending_devices": pending,
+        "now": now,
+        "stations": stations,
+        **build_nav_context(db, user),
+    }
+    return templates.TemplateResponse(request, "admin/devices_pending.html", context)
+
+
+@router.post("/devices/{device_id}/allocate", dependencies=[Depends(verify_csrf)])
+def allocate_pending_device(
+    request: Request,
+    device_id: uuid.UUID,
+    station_id: uuid.UUID = Form(...),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    device = db.get(Device, device_id)
+    station = db.get(Station, station_id)
+    if device is None or station is None:
+        return RedirectResponse("/admin/devices/pending", status_code=303)
+
+    try:
+        secret = device_service.allocate_device(db, device, station, user)
+    except device_service.DeviceServiceError as exc:
+        db.rollback()
+        record_audit(
+            db, action="device_allocation_failed", resource_type="device", resource_id=str(device.id),
+            actor_user_id=user.id, actor_label=user.email, station_id=station.id,
+            metadata={"reason": str(exc)}, outcome="failure",
+        )
+        db.commit()
+        return RedirectResponse("/admin/devices/pending?error=1", status_code=303)
+
+    record_audit(
+        db, action="device_allocated", resource_type="device", resource_id=str(device.id),
+        actor_user_id=user.id, actor_label=user.email, station_id=station.id,
+        metadata={"installation_uuid": device.installation_uuid},
+    )
+    db.commit()
+    return templates.TemplateResponse(
+        request,
+        "admin/device_allocated.html",
+        {"device": device, "station": station, "credential_secret": secret, **build_nav_context(db, user)},
+    )
+
+
+@router.post("/devices/{device_id}/revoke-enrollment", dependencies=[Depends(verify_csrf)])
+def revoke_pending_device(
+    request: Request,
+    device_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    device = db.get(Device, device_id)
+    if device is not None:
+        device_service.revoke_device(db, device, reason=f"Enrollment revocat manual de {user.email}.")
+        record_audit(
+            db, action="device_enrollment_revoked", resource_type="device", resource_id=str(device.id),
+            actor_user_id=user.id, actor_label=user.email,
+            metadata={"installation_uuid": device.installation_uuid},
+        )
+        db.commit()
+    return RedirectResponse("/admin/devices/pending", status_code=303)
