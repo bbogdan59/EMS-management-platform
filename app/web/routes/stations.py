@@ -205,7 +205,11 @@ def station_config_submit(
         pv_installed_power_kw=validated.pv_installed_power_kw,
         inverter_power_kw=validated.inverter_power_kw,
         battery_reference_capacity_kwh=validated.battery_reference_capacity_kwh,
-        battery_available_capacity_kwh=validated.battery_available_capacity_kwh or validated.battery_reference_capacity_kwh,
+        battery_available_capacity_kwh=(
+            validated.battery_available_capacity_kwh
+            if validated.battery_available_capacity_kwh is not None
+            else validated.battery_reference_capacity_kwh
+        ),
         battery_max_charge_power_kw=validated.battery_max_charge_power_kw,
         battery_max_discharge_power_kw=validated.battery_max_discharge_power_kw,
         battery_charge_efficiency=validated.battery_charge_efficiency,
@@ -361,7 +365,18 @@ def preferences_submit(
             local_naive = datetime.fromisoformat(validated.automation_suspended_until)
         except ValueError:
             return _preferences_error_redirect(station.id, ["Suspendare automatizare: data/ora invalida."])
-        suspended_until_utc = local_naive.replace(tzinfo=tz).astimezone(UTC)
+        candidates = [local_naive.replace(tzinfo=tz, fold=fold) for fold in (0, 1)]
+        valid = [
+            candidate
+            for candidate in candidates
+            if candidate.astimezone(UTC).astimezone(tz).replace(tzinfo=None) == local_naive
+        ]
+        if not valid or valid[0].utcoffset() != valid[-1].utcoffset():
+            return _preferences_error_redirect(
+                station.id,
+                ["Suspendare automatizare: ora locala este inexistenta sau ambigua din cauza schimbarii DST."],
+            )
+        suspended_until_utc = valid[0].astimezone(UTC)
 
     current_version = station_service.next_preference_version(db, station) - 1
     if validated.expected_version != current_version:

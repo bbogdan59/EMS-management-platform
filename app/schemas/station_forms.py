@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from datetime import time
 from decimal import Decimal
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -57,6 +58,8 @@ class StationConfigInput(Strict):
             raise ValueError("Capacitatea disponibila nu poate depasi capacitatea de referinta a bateriei.")
         if self.ev_enabled and self.ev_battery_capacity_kwh is None:
             raise ValueError("Capacitatea bateriei EV este necesara cand statia de incarcare EV e prezenta.")
+        if sum(group.power_kwp for group in self.panel_groups) != self.pv_installed_power_kw:
+            raise ValueError("Suma puterilor grupurilor PV trebuie sa fie egala cu puterea PV instalata.")
         return self
 
 
@@ -118,3 +121,12 @@ class StationCreateInput(Strict):
     grid_import_limit_kw: Decimal | None = Field(default=None, ge=0)
     grid_export_limit_kw: Decimal | None = Field(default=None, ge=0)
     ev_enabled: bool = False
+
+    @field_validator("timezone")
+    @classmethod
+    def _valid_timezone(cls, value: str) -> str:
+        try:
+            ZoneInfo(value)
+        except ZoneInfoNotFoundError as exc:
+            raise ValueError("Fus orar IANA invalid.") from exc
+        return value

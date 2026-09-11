@@ -9,6 +9,7 @@ from datetime import UTC
 
 from sqlalchemy import func, select
 
+from app.core.rate_limit import reset_key
 from app.models.organization import Membership
 from app.models.preference import PreferenceVersion
 from app.models.station import PanelGroup, Station, StationConfigVersion
@@ -62,6 +63,7 @@ def _latest_preference(db, station_id):
 
 
 def _admin(db, name_suffix, role="organization_admin"):
+    reset_key("login_attempts:testclient")
     user = make_user(db, email=f"cfg-{name_suffix}@test.local", password="Password1234")
     org = make_org(db, f"Cfg Org {name_suffix}")
     station = make_station(db, org, user, name=f"Cfg Station {name_suffix}")
@@ -140,6 +142,33 @@ def test_config_save_persists_multiple_panel_groups(client, db):
     persisted = db.scalars(select(PanelGroup).where(PanelGroup.config_version_id == config.id)).all()
     assert len(persisted) == 2
     assert {g.name for g in persisted} == {"Acoperis Sud", "Acoperis Est"}
+
+
+def test_config_preserves_explicit_zero_available_capacity(client, db):
+    user, org, station = _admin(db, "zeroavailable")
+    login(client, user.email, "Password1234")
+    response = client.post(
+        f"/stations/{station.id}/config",
+        data=_config_payload(
+            station,
+            csrf_token=client.cookies.get("ems_csrf"),
+            battery_reference_capacity_kwh="10",
+            battery_available_capacity_kwh="0",
+        ),
+    )
+    assert "Nu s-a salvat" not in response.text
+    assert _latest_config(db, station.id).battery_available_capacity_kwh == 0
+
+
+def test_config_rejects_panel_total_different_from_installed_power(client, db):
+    user, org, station = _admin(db, "paneltotal")
+    login(client, user.email, "Password1234")
+    groups = [{"name": "Sud", "power_kwp": "5", "azimuth_degrees": "180", "tilt_degrees": "30"}]
+    response = client.post(
+        f"/stations/{station.id}/config",
+        data=_config_payload(station, csrf_token=client.cookies.get("ems_csrf"), panel_groups_json=json.dumps(groups)),
+    )
+    assert "Suma puterilor grupurilor PV" in response.text
 
 
 def test_config_save_detects_concurrent_edit(client, db):
@@ -250,7 +279,22 @@ def test_preferences_automation_suspension_round_trips_through_station_timezone(
     assert pref2.automation_suspended_until is None
 
 
+def test_preferences_rejects_nonexistent_dst_local_time(client, db):
+    user, org, station = _admin(db, "dstgap", role="operator")
+    login(client, user.email, "Password1234")
+    response = client.post(
+        f"/stations/{station.id}/preferences",
+        data=_preferences_payload(
+            station,
+            csrf_token=client.cookies.get("ems_csrf"),
+            automation_suspended_until="2026-03-29T03:30",
+        ),
+    )
+    assert "inexistenta sau ambigua" in response.text
+
+
 def test_station_creation_requires_valid_coordinates(client, db):
+    reset_key("login_attempts:testclient")
     user = make_user(db, email="orgcreate1@test.local", password="Password1234")
     org = make_org(db, "Create Org 1")
     make_membership(db, user, org, role="organization_admin")
@@ -284,6 +328,28 @@ def test_station_creation_requires_valid_coordinates(client, db):
     assert station is not None
     assert float(station.latitude) == 44.43
     assert float(station.longitude) == 26.10
+
+
+def test_station_creation_rejects_unknown_timezone(client, db):
+    reset_key("login_attempts:testclient")
+    user = make_user(db, email="orgtimezone@test.local", password="Password1234")
+    org = make_org(db, "Timezone Org")
+    make_membership(db, user, org, role="organization_admin")
+    db.commit()
+    login(client, user.email, "Password1234")
+    response = client.post(
+        f"/organizations/{org.id}/stations",
+        data={
+            "csrf_token": client.cookies.get("ems_csrf"),
+            "name": "Bad timezone",
+            "timezone": "Mars/Olympus",
+            "latitude": "44.43",
+            "longitude": "26.10",
+            "pv_installed_power_kw": "5",
+            "inverter_power_kw": "5",
+        },
+    )
+    assert "Fus orar IANA invalid" in response.text
 
 
 def test_operator_cannot_manage_station_config_deterministic(client, db):
@@ -379,4 +445,3 @@ def test_config_race_produces_no_duplicate_versions(engine):
             cleanup.execute(delete(Organization).where(Organization.id == org_id))
             cleanup.execute(delete(User).where(User.id == user_id))
             cleanup.commit()
-
