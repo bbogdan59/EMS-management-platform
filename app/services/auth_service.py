@@ -24,6 +24,8 @@ from app.models.user import Session as UserSession
 
 settings = get_settings()
 
+ORGANIZATION_ROLES = {Role.organization_admin.value, Role.operator.value, Role.viewer.value}
+
 
 class AuthError(Exception):
     pass
@@ -136,7 +138,8 @@ def bootstrap_first_admin(db: Session, provided_token: str, email: str, password
 def create_invitation(
     db: Session, organization: Organization, email: str, role: str, invited_by_user_id: uuid.UUID
 ) -> tuple[Invitation, str]:
-    Role(role)  # validare
+    if role not in ORGANIZATION_ROLES:
+        raise AuthError("Rol de organizatie invalid.")
     raw_token = generate_opaque_token()
     invitation = Invitation(
         organization_id=organization.id,

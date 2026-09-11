@@ -142,6 +142,10 @@ class Settings(BaseSettings):
             raise RuntimeError("DEMO_MODE_ENABLED nu poate fi activat in productie.")
         if self.is_production and self.opcom_use_synthetic_fixture_on_failure:
             raise RuntimeError("Datele OPCOM sintetice nu pot fi activate in productie.")
+        if self.is_production and not self.session_cookie_secure:
+            raise RuntimeError("SESSION_COOKIE_SECURE trebuie activat in productie.")
+        if self.is_production and self.email_backend == "console":
+            raise RuntimeError("EMAIL_BACKEND=console nu poate fi folosit in productie.")
 
 
 @lru_cache
