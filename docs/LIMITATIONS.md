@@ -318,15 +318,13 @@ formularea Pyomo) NU a fost atins -- ramane in sarcina issue-ului #12.
   cu constrangerea unica `(station_id, version)`. Numerotarea foloseste acum
   `MAX(version)` pe toate planurile statiei; cautarea planului activ de
   inlocuit (superseded) ramane separata si neschimbata.
-- **Lock-ul Redis e tinut pana la commit, nu doar pana la finalul calculului.**
-  `run_optimization_for_station` comite (sau anuleaza, la exceptie)
-  tranzactia inainte sa elibereze lock-ul -- anterior, eliberarea imediata
-  dupa `_run_locked` (inainte de commit-ul facut separat de apelant) permitea
-  unui al doilea apel concurent sa citeasca starea inca necomisa si sa
-  calculeze aceeasi versiune, esuand brut la commit pe constrangerea unica in
-  loc de o serializare curata. Acoperit de un test real cu doua thread-uri /
-  sesiuni separate pe `engine`-ul de test (nu fixtura `db` cu SAVEPOINT, care
-  nu poate exercita commit-uri concurente reale).
+- **Serializarea ramane activa pana la commit fara ca serviciul sa comita
+  tranzactia apelantului.** Lock-ul Redis evita lucrul concurent obisnuit, iar
+  un advisory lock PostgreSQL transaction-scoped pe ID-ul statiei ramane activ
+  pana la commit/rollback-ul detinut de ruta sau worker. Astfel urmatoarea
+  rulare vede versiunea deja publicata, iar auditul si planul pot ramane in
+  aceeasi tranzactie. Acoperit de un test real cu doua thread-uri/sesiuni
+  separate pe `engine`-ul de test.
 - **Un refresh best-effort esuat (meteo/PV/consum) nu mai poate lasa sesiunea
   SQLAlchemy inutilizabila.** Fiecare incercare din `_ensure_forecasts` ruleaza
   acum intr-un SAVEPOINT dedicat (`db.begin_nested()`); o exceptie in timpul

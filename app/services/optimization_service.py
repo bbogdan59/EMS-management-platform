@@ -253,27 +253,23 @@ def _explain_interval(pi_data: dict, priority: str) -> str:
 
 
 def run_optimization_for_station(db: Session, station_id: uuid.UUID, triggered_by: str, triggered_by_user_id=None) -> OptimizationRun:
-    """Achizitioneaza lock-ul Redis pe toata durata calculului SI a commit-ului
-    tranzactiei -- nu doar a calculului. Eliberarea lock-ului inainte de commit
-    (comportamentul anterior) permitea unui al doilea apel concurent sa citeasca
-    planul anterior inca necomis, sa calculeze aceeasi versiune urmatoare si sa
-    esueze cu o eroare bruta de constrangere unica la commit, in loc de un
-    `OptimizationLockedError` curat sau o serializare reala. Apelantul nu mai
-    trebuie sa comita separat rezultatul acestei functii."""
+    """Serializeaza optimizarea fara a prelua limita tranzactiei apelantului.
+
+    Redis evita lucrul concurent obisnuit, iar lock-ul PostgreSQL transaction-scoped
+    din `_run_locked` ramane activ pana la commit/rollback-ul facut de apelant.
+    """
     lock = _acquire_lock(station_id)
     try:
-        run = _run_locked(db, station_id, triggered_by, triggered_by_user_id)
-        db.commit()
-        return run
-    except Exception:
-        db.rollback()
-        raise
+        return _run_locked(db, station_id, triggered_by, triggered_by_user_id)
     finally:
         with contextlib.suppress(Exception):
             lock.release()
 
 
 def _run_locked(db: Session, station_id: uuid.UUID, triggered_by: str, triggered_by_user_id) -> OptimizationRun:
+    # Acest lock ramane activ pana la commit/rollback-ul tranzactiei apelantului,
+    # astfel incat urmatoarea rulare vede obligatoriu versiunea deja publicata.
+    db.execute(select(func.pg_advisory_xact_lock(func.hashtextextended(str(station_id), 0))))
     station = db.get(Station, station_id)
     if station is None:
         raise ValueError("Statia nu exista.")
@@ -401,8 +397,39 @@ def _run_locked(db: Session, station_id: uuid.UUID, triggered_by: str, triggered
             "measured_at": soc_measured_at.isoformat() if soc_measured_at else None,
             "max_age_minutes": settings.optimization_soc_max_age_minutes,
         },
-        "pv_forecast_kw": {t.isoformat(): v for t, v in pv_series_raw.items()},
-        "load_forecast_kw": {t.isoformat(): v for t, v in load_series_raw.items()},
+        "station": {"timezone": station.timezone, "execution_mode": station.execution_mode},
+        "config": {
+            "id": str(config.id),
+            "version": config.version,
+            "battery_reference_capacity_kwh": str(config.battery_reference_capacity_kwh) if config.battery_reference_capacity_kwh is not None else None,
+            "battery_available_capacity_kwh": str(config.battery_available_capacity_kwh) if config.battery_available_capacity_kwh is not None else None,
+            "battery_max_charge_power_kw": str(config.battery_max_charge_power_kw) if config.battery_max_charge_power_kw is not None else None,
+            "battery_max_discharge_power_kw": str(config.battery_max_discharge_power_kw) if config.battery_max_discharge_power_kw is not None else None,
+            "battery_charge_efficiency": str(config.battery_charge_efficiency) if config.battery_charge_efficiency is not None else None,
+            "battery_discharge_efficiency": str(config.battery_discharge_efficiency) if config.battery_discharge_efficiency is not None else None,
+            "grid_import_limit_kw": str(config.grid_import_limit_kw) if config.grid_import_limit_kw is not None else None,
+            "grid_export_limit_kw": str(config.grid_export_limit_kw) if config.grid_export_limit_kw is not None else None,
+            "ev_enabled": config.ev_enabled,
+            "ev_max_charge_power_kw": str(config.ev_max_charge_power_kw) if config.ev_max_charge_power_kw is not None else None,
+        },
+        "preference": {
+            "id": str(preference.id),
+            "version": preference.version,
+            "min_reserve_soc_percent": str(preference.min_reserve_soc_percent),
+            "max_normal_soc_percent": str(preference.max_normal_soc_percent),
+            "allow_grid_charge": preference.allow_grid_charge,
+            "allow_battery_export": preference.allow_battery_export,
+            "max_efc_per_day": str(preference.max_efc_per_day) if preference.max_efc_per_day is not None else None,
+            "max_efc_per_month": str(preference.max_efc_per_month) if preference.max_efc_per_month is not None else None,
+            "priority": preference.priority,
+            "soc_targets": preference.soc_targets,
+            "ev_required_energy_kwh": str(preference.ev_required_energy_kwh) if preference.ev_required_energy_kwh is not None else None,
+            "ev_departure_time": preference.ev_departure_time.isoformat() if preference.ev_departure_time else None,
+        },
+        "pv_forecast_raw_kw": {t.isoformat(): v for t, v in pv_series_raw.items()},
+        "pv_forecast_kw": {t.isoformat(): v for t, v in pv_series.items()},
+        "load_forecast_raw_kw": {t.isoformat(): v for t, v in load_series_raw.items()},
+        "load_forecast_kw": {t.isoformat(): v for t, v in load_series.items()},
         "price_buy_lei_kwh": {t.isoformat(): v for t, v in price_buy.items()},
         "price_buy_quality": {t.isoformat(): q for t, q in price_buy_quality.items()},
         "price_sell_lei_kwh": {t.isoformat(): v for t, v in price_sell.items()},

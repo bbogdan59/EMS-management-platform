@@ -345,10 +345,33 @@ def test_input_snapshot_is_sufficient_for_replay(db):
     assert snap["horizon"]["interval_minutes"] == 15
     assert snap["soc"]["quality"] == "measured"
     assert snap["soc"]["measured_at"] is not None
+    assert snap["config"]["id"] == str(run.station_config_version_id)
+    assert snap["preference"]["id"] == str(run.preference_version_id)
+    assert set(snap["pv_forecast_raw_kw"]) == set(snap["pv_forecast_kw"])
+    assert set(snap["load_forecast_raw_kw"]) == set(snap["load_forecast_kw"])
     assert set(snap["price_buy_lei_kwh"].keys()) == set(snap["price_buy_quality"].keys())
     # Fiecare cheie de orizont e reproductibila ca timestamp UTC explicit.
     for key in list(snap["pv_forecast_kw"])[:3]:
         datetime.fromisoformat(key)
+
+
+def test_optimization_service_does_not_commit_callers_transaction(monkeypatch):
+    from unittest.mock import MagicMock
+
+    from app.services import optimization_service
+
+    db = MagicMock()
+    expected = object()
+    lock = MagicMock()
+    monkeypatch.setattr(optimization_service, "_acquire_lock", lambda _station_id: lock)
+    monkeypatch.setattr(optimization_service, "_run_locked", lambda *_args: expected)
+
+    result = run_optimization_for_station(db, uuid.uuid4(), triggered_by="user")
+
+    assert result is expected
+    db.commit.assert_not_called()
+    db.rollback.assert_not_called()
+    lock.release.assert_called_once()
 
 
 def test_plan_version_does_not_restart_after_previous_plan_completed(db):
@@ -471,6 +494,7 @@ def test_concurrent_optimization_runs_serialize_until_commit(engine):
             barrier.wait(timeout=5)
             try:
                 run = run_optimization_for_station(session, station_id, triggered_by="user")
+                session.commit()
                 return ("ok", run.id)
             except OptimizationLockedError:
                 return ("locked", None)
