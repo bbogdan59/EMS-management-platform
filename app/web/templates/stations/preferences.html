@@ -5,6 +5,11 @@
   <h1 class="text-xl font-semibold">Preferinte - {{ station.name }}</h1>
   {% if preference %}
   <p class="text-sm text-gray-500 dark:text-gray-400">Versiune curenta: v{{ preference.version }}</p>
+  {% if automation_suspended_until_local %}
+  <div class="rounded-lg bg-amber-50 p-3 text-sm text-amber-800 dark:bg-amber-900/30 dark:text-amber-200">
+    Automatizarea live e suspendata pana la {{ automation_suspended_until_local.strftime("%d.%m.%Y %H:%M") }} (ora locala statiei, {{ station.timezone }}).
+  </div>
+  {% endif %}
   {% if preference.conflict_warnings %}
   <div class="rounded-lg bg-amber-50 p-3 text-sm text-amber-800 dark:bg-amber-900/30 dark:text-amber-200">
     <p class="mb-1 font-medium">Conflicte detectate la ultima salvare:</p>
@@ -15,23 +20,34 @@
   {% endif %}
   {% endif %}
 
-  <form method="post" action="/stations/{{ station.id }}/preferences" class="card space-y-4 {% if not can_edit %}pointer-events-none opacity-60{% endif %}">
+  {% if errors %}
+  <div class="rounded-lg bg-red-50 p-3 text-sm text-red-800 dark:bg-red-900/30 dark:text-red-200">
+    <p class="mb-1 font-medium">Nu s-a salvat -- nicio versiune noua nu a fost creata:</p>
+    <ul class="list-inside list-disc">
+      {% for e in errors %}<li>{{ e }}</li>{% endfor %}
+    </ul>
+  </div>
+  {% endif %}
+
+  <form method="post" action="/stations/{{ station.id }}/preferences" class="card space-y-4 {% if not can_edit %}pointer-events-none opacity-60{% endif %}" id="preferences-form">
     <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}" />
+    <input type="hidden" name="expected_version" value="{{ expected_version }}" />
+    <input type="hidden" name="soc_targets_json" id="soc_targets_json" />
 
     <fieldset class="rounded-lg border border-gray-200 p-3 dark:border-gray-800">
       <legend class="px-1 text-sm font-medium">Constrangeri obligatorii</legend>
       <div class="grid gap-4 sm:grid-cols-2">
         <div>
           <label class="label">SOC minim de rezerva (%)</label>
-          <input class="input" type="number" step="0.1" name="min_reserve_soc_percent" value="{{ preference.min_reserve_soc_percent if preference else 15 }}" required {% if not can_edit %}disabled{% endif %} />
+          <input class="input" type="number" step="0.1" min="0" max="100" name="min_reserve_soc_percent" value="{{ preference.min_reserve_soc_percent if preference else 15 }}" required {% if not can_edit %}disabled{% endif %} />
         </div>
         <div>
           <label class="label">SOC maxim normal (%)</label>
-          <input class="input" type="number" step="0.1" name="max_normal_soc_percent" value="{{ preference.max_normal_soc_percent if preference else 95 }}" required {% if not can_edit %}disabled{% endif %} />
+          <input class="input" type="number" step="0.1" min="0" max="100" name="max_normal_soc_percent" value="{{ preference.max_normal_soc_percent if preference else 95 }}" required {% if not can_edit %}disabled{% endif %} />
         </div>
         <div>
           <label class="label">Energie maxima autorizata pentru optimizare (kWh)</label>
-          <input class="input" type="number" step="0.01" name="max_optimization_energy_kwh" value="{{ preference.max_optimization_energy_kwh if preference }}" {% if not can_edit %}disabled{% endif %} />
+          <input class="input" type="number" step="0.01" min="0" name="max_optimization_energy_kwh" value="{{ preference.max_optimization_energy_kwh if preference }}" {% if not can_edit %}disabled{% endif %} />
         </div>
         <div>
           <label class="label">Prioritate</label>
@@ -43,11 +59,11 @@
         </div>
         <div>
           <label class="label">Max. cicluri echivalente (EFC) / zi</label>
-          <input class="input" type="number" step="0.01" name="max_efc_per_day" value="{{ preference.max_efc_per_day if preference }}" {% if not can_edit %}disabled{% endif %} />
+          <input class="input" type="number" step="0.01" min="0" name="max_efc_per_day" value="{{ preference.max_efc_per_day if preference }}" {% if not can_edit %}disabled{% endif %} />
         </div>
         <div>
           <label class="label">Max. cicluri echivalente (EFC) / luna</label>
-          <input class="input" type="number" step="0.01" name="max_efc_per_month" value="{{ preference.max_efc_per_month if preference }}" {% if not can_edit %}disabled{% endif %} />
+          <input class="input" type="number" step="0.01" min="0" name="max_efc_per_month" value="{{ preference.max_efc_per_month if preference }}" {% if not can_edit %}disabled{% endif %} />
         </div>
       </div>
       <div class="mt-3 flex gap-6 text-sm">
@@ -61,7 +77,7 @@
       <div class="grid gap-4 sm:grid-cols-2">
         <div>
           <label class="label">Energie necesara EV (kWh)</label>
-          <input class="input" type="number" step="0.01" name="ev_required_energy_kwh" value="{{ preference.ev_required_energy_kwh if preference }}" {% if not can_edit %}disabled{% endif %} />
+          <input class="input" type="number" step="0.01" min="0" name="ev_required_energy_kwh" value="{{ preference.ev_required_energy_kwh if preference }}" {% if not can_edit %}disabled{% endif %} />
         </div>
         <div>
           <label class="label">Ora plecare EV</label>
@@ -69,15 +85,82 @@
         </div>
         <div>
           <label class="label">Prag beneficiu economic arbitraj (lei/kWh)</label>
-          <input class="input" type="number" step="0.0001" name="arbitrage_min_benefit_lei" value="{{ preference.arbitrage_min_benefit_lei if preference else 0 }}" {% if not can_edit %}disabled{% endif %} />
+          <input class="input" type="number" step="0.0001" min="0" name="arbitrage_min_benefit_lei" value="{{ preference.arbitrage_min_benefit_lei if preference else 0 }}" {% if not can_edit %}disabled{% endif %} />
         </div>
       </div>
-      <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">
-        Tintele SOC recurente se configureaza din panoul dispozitivului dupa integrarea completa; structura de date este pregatita (JSON versionat).
+    </fieldset>
+
+    <fieldset class="rounded-lg border border-gray-200 p-3 dark:border-gray-800">
+      <legend class="px-1 text-sm font-medium">Tinte SOC recurente</legend>
+      <p class="mb-2 text-xs text-gray-500 dark:text-gray-400">
+        Ora e locala statiei ({{ station.timezone }}). Zilele saptamanii sunt optionale -- lasate goale, tinta se aplica in fiecare zi.
       </p>
+      <table class="w-full text-sm" id="soc-targets-table">
+        <thead class="text-left text-gray-500">
+          <tr><th class="py-1">Ora (HH:MM)</th><th>SOC tinta (%)</th><th>Zile (0=Luni..6=Duminica, separate prin virgula)</th><th></th></tr>
+        </thead>
+        <tbody id="soc-targets-body"></tbody>
+      </table>
+      {% if can_edit %}<button type="button" id="add-soc-target" class="btn-secondary mt-2">+ Adauga tinta</button>{% endif %}
+    </fieldset>
+
+    <fieldset class="rounded-lg border border-gray-200 p-3 dark:border-gray-800">
+      <legend class="px-1 text-sm font-medium">Suspendare automatizare live</legend>
+      <p class="mb-2 text-xs text-gray-500 dark:text-gray-400">
+        Cat timp e activa, dispatch-ul de comenzi live e blocat pentru aceasta statie (planurile raman doar informative). Lasa gol pentru a relua automatizarea imediat.
+      </p>
+      <label class="label">Suspenda pana la (ora locala statiei)</label>
+      <input class="input" type="datetime-local" name="automation_suspended_until"
+             value="{% if automation_suspended_until_local %}{{ automation_suspended_until_local.strftime('%Y-%m-%dT%H:%M') }}{% endif %}"
+             {% if not can_edit %}disabled{% endif %} />
     </fieldset>
 
     {% if can_edit %}<button type="submit" class="btn-primary">Salveaza (creeaza versiune noua)</button>{% endif %}
   </form>
 </div>
+
+{% if can_edit %}
+<script>
+(function () {
+  var initial = {{ soc_targets_json | safe }};
+  var body = document.getElementById("soc-targets-body");
+
+  function addRow(target) {
+    target = target || { time: "18:00", target_soc_percent: "80", days_of_week: null };
+    var tr = document.createElement("tr");
+    tr.className = "border-t border-gray-100 dark:border-gray-800";
+    tr.innerHTML =
+      '<td class="py-1"><input class="input" type="time" data-field="time" required /></td>' +
+      '<td><input class="input" type="number" step="0.1" min="0" max="100" data-field="target_soc_percent" required /></td>' +
+      '<td><input class="input" type="text" data-field="days_of_week" placeholder="ex: 0,1,2,3,4" /></td>' +
+      '<td><button type="button" class="btn-danger remove-row">Sterge</button></td>';
+    body.appendChild(tr);
+    tr.querySelector('[data-field="time"]').value = target.time;
+    tr.querySelector('[data-field="target_soc_percent"]').value = target.target_soc_percent;
+    tr.querySelector('[data-field="days_of_week"]').value = (target.days_of_week || []).join(",");
+    tr.querySelector(".remove-row").addEventListener("click", function () { tr.remove(); });
+  }
+
+  initial.forEach(addRow);
+
+  document.getElementById("add-soc-target").addEventListener("click", function () { addRow(); });
+
+  document.getElementById("preferences-form").addEventListener("submit", function () {
+    var targets = [];
+    body.querySelectorAll("tr").forEach(function (tr) {
+      var daysRaw = tr.querySelector('[data-field="days_of_week"]').value.trim();
+      var days = daysRaw
+        ? daysRaw.split(",").map(function (s) { return parseInt(s.trim(), 10); }).filter(function (n) { return !isNaN(n); })
+        : null;
+      targets.push({
+        time: tr.querySelector('[data-field="time"]').value,
+        target_soc_percent: tr.querySelector('[data-field="target_soc_percent"]').value,
+        days_of_week: days,
+      });
+    });
+    document.getElementById("soc_targets_json").value = JSON.stringify(targets);
+  });
+})();
+</script>
+{% endif %}
 {% endblock %}

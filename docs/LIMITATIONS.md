@@ -282,6 +282,99 @@ Existing UTC day/month rows are retained as legacy_day/legacy_month and excluded
   (`app/api/v1/devices.py::claim_device`, `device_service.claim_device`) nu
   a fost atins.
 
+## 15. Validare configurare statie, preferinte si creare statie (issue #8)
+
+Domeniul strict: `app/web/routes/stations.py` (config/preferinte/tarife),
+doar functia `create_station` din `app/web/routes/organizations.py`,
+`app/schemas/station_forms.py` (nou), template-urile acestor formulare.
+Invitatiile/claim/SSE (#6) si solver-ul nu au fost atinse.
+
+- **Validare stricta reala, nu doar cosmetica.** Toate campurile numerice
+  trec acum prin scheme Pydantic dedicate (`app/schemas/station_forms.py`)
+  inainte sa atinga baza de date: valori nefinite (NaN/Infinity trimise ca
+  text brut de formular, ocolind constrangerile `type=number` ale
+  browser-ului) sunt respinse explicit, `pv_installed_power_kw`/
+  `inverter_power_kw` trebuie sa fie strict pozitive (zero nu mai e acceptat
+  tacit), randamentele bateriei sunt constranse la `(0, 1]`, iar SOC
+  minim/maxim la `[0, 100]` cu `min <= max` validat explicit. Anterior,
+  `_dec()` inlocuia orice input invalid cu o valoare implicita (adesea 0)
+  fara sa anunte utilizatorul -- acum orice esec de validare respinge
+  INTREAGA cerere, fara nicio versiune noua creata (verificat exact prin
+  teste care compara numarul de versiuni inainte/dupa).
+- **Grupuri PV multiple, editabile, fara pierdere de date.** Salvarea
+  configuratiei reconstruia anterior necondiționat un singur grup PV hardcodat
+  ("Grup principal", azimut 180, inclinatie 30), indiferent cate exista deja.
+  Acum orice numar de grupuri (cu nume/putere/azimut/inclinatie proprii) e
+  trimis ca JSON validat (`panel_groups_json`, populat dintr-un editor simplu
+  in JS vanilla care adauga/sterge randuri) si persistat integral la fiecare
+  versiune noua.
+- **Coordonatele statiei se colecteaza la creare.** `create_station` seta
+  anterior necondiționat `latitude=None, longitude=None` -- prognoza PV
+  (issue #8 dependent de #7/#5 anterior) nu putea functiona fara ele pentru
+  o statie noua pana la o editare manuala ulterioara, niciodata ceruta
+  explicit. Acum sunt campuri obligatorii, validate in intervalul geografic
+  valid ([-90,90]/[-180,180]).
+- **Flux complet in UI pentru tinte SOC si suspendarea automatizarii.**
+  `PreferenceVersion.soc_targets`/`automation_suspended_until` existau in
+  model si erau deja CITITE de `optimization_service`
+  (`_resolve_soc_targets`) si `command_dispatch_service`
+  (`plan_allows_dispatch`), dar formularul de preferinte nu avea niciun
+  camp pentru ele -- un admin nu putea seta niciodata o tinta SOC sau
+  suspenda automatizarea live din UI. Acum ambele au flux complet: tinte
+  SOC recurente (ora locala HH:MM, procent, zile optionale ale saptamanii,
+  validate inclusiv peste miezul noptii -- 23:45/00:15 testate explicit) si
+  suspendare pana la o data/ora locala (convertita corect in UTC prin fusul
+  orar al statiei, verificat cu un test explicit de conversie).
+- **Concurenta optimista pe versiuni.** Formularele de configurare/preferinte
+  poarta acum un camp ascuns `expected_version` (versiunea vazuta la
+  incarcarea paginii). O trimitere cu o versiune invechita (alt editor a
+  publicat intre timp) e respinsa explicit, cu mesaj clar, fara sa
+  suprascrie tacit modificarea celuilalt. Constrangerea unica existenta
+  `(station_id, version)` ramane ca ultim garant la nivel de baza de date
+  pentru o cursa reala simultana (`IntegrityError` prins si transformat in
+  acelasi mesaj clar, nu un 500 brut) -- verificat cu un test real de
+  concurenta pe doua sesiuni/thread-uri separate (fixtura `engine`, nu `db`).
+- **XSS stocat prevenit explicit la embedarea JSON in `<script>`.** Numele
+  unui grup PV sau o tinta SOC salvata anterior sunt reafisate ca JSON
+  direct intr-un bloc `<script>` (pentru editorul JS) folosind `| safe` in
+  Jinja -- `json.dumps()` nu escapeaza `<`/`>`/`&`, deci un nume de grup
+  continand literal `</script><script>...` ar fi putut rupe blocul si
+  executa cod arbitrar la urmatoarea randare a paginii. Corectat cu o
+  escapare explicita (`_safe_script_json`) inainte de orice inserare `| safe`.
+- **Bug real de infrastructura de testare gasit si corectat, nu doar
+  ocolit.** Un test RBAC pre-existent
+  (`test_org_isolation.py::test_operator_cannot_manage_station_config_but_can_view`)
+  esua intermitent in suita completa, NU izolat -- am investigat exhaustiv
+  (nu doar presupus "flaky") si am gasit cauza reala: rate limiting de login
+  e cheiat per IP client (`app/web/routes/auth.py`), iar `TestClient`
+  raporteaza mereu acelasi IP fals (`"testclient"`) pentru toate cererile;
+  Redis (spre deosebire de baza de date) nu e golit intre teste individuale
+  in cadrul unei rulari, deci contorul se acumuleaza pe TOATA sesiunea de
+  testare -- dupa exact limita implicita (10) de apeluri `login()` cumulate
+  din ORICE combinatie de teste, urmatoarele autentificari esueaza tacit cu
+  429 (fara cookie de sesiune), iar `TestClient` urmeaza automat
+  redirect-ul 401-catre-/login pana la un 200 aparent nevinovat -- usor de
+  confundat cu un bug real de autorizare (exact ce am crezut initial).
+  Reprodus determinist prin instrumentare directa (`role_at_least` niciodata
+  apelat, contor Redis exact la limita, cookie de sesiune absent) inainte de
+  a scrie orice fix. Corectat in `tests/conftest.py` (limita ridicata generos
+  doar pentru mediul de test, prin variabila de mediu deja citita de
+  `Settings`) -- nu prin golirea Redis intre teste, care ar fi sters si
+  starea pe care alte teste de rate-limiting ar vrea sa o verifice explicit.
+  Testul original devine acum determinist (verificat cu 3 rulari complete
+  succesive ale intregii suite, fara nicio recurenta a esecului), si am
+  adaugat teste RBAC proprii, deterministe, pentru criteriile acestui issue.
+- **Atins minim, in afara domeniului nominal, strict necesar:**
+  `tests/e2e/test_ui_flows.py` (adaugat completarea campurilor
+  latitudine/longitudine acum obligatorii in formularul Playwright de creare
+  statie -- fara aceasta modificare testul e2e existent ar fi esuat, intrucat
+  browserul blocheaza trimiterea formularului cu campuri `required` goale) si
+  `tests/conftest.py` (fix-ul de rate-limiting de mai sus, infrastructura
+  comuna de testare, nu specifica niciunui issue).
+- **Nu acopera:** un editor JS complet drag-and-drop/vizual pentru grupurile
+  PV sau tintele SOC -- editorul implementat e functional (adauga/sterge
+  randuri, validare server-side completa, fara pierdere de date la editare),
+  dar ramane un tabel HTML simplu cu JS vanilla, nu o interfata avansata.
 ## 15. Pregatirea inputurilor de optimizare -- prospetime, proveniență si concurenta (issue #9)
 
 Domeniul strict al acestei lucrari: `optimization_service.py` -- pregatirea
