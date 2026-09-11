@@ -20,7 +20,9 @@ class EmailAdapter:
 
 class ConsoleEmailAdapter(EmailAdapter):
     def send(self, to: str, subject: str, body: str) -> None:
-        logger.info("email.console_send", to=to, subject=subject, body=body)
+        # Corpurile includ tokenuri de resetare/invitatie; nici macar backend-ul
+        # de dezvoltare nu trebuie sa le copieze in loguri persistente.
+        logger.info("email.console_send", to=to, subject=subject, body_redacted=True)
 
 
 class SmtpEmailAdapter(EmailAdapter):

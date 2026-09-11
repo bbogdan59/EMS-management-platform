@@ -16,6 +16,13 @@ router = APIRouter()
 settings = get_settings()
 
 
+def _sensitive_template(request: Request, template: str, context: dict, status_code: int = 200):
+    response = templates.TemplateResponse(request, template, context, status_code=status_code)
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    return response
+
+
 def _client_ip(request: Request) -> str:
     return request.client.host if request.client else "unknown"
 
@@ -130,7 +137,7 @@ def request_reset_submit(request: Request, email: str = Form(...), db: Session =
 
 @router.get("/reset-password")
 def reset_password_form(request: Request, token: str):
-    return templates.TemplateResponse(request, "auth/reset_password.html", {"token": token, "error": None})
+    return _sensitive_template(request, "auth/reset_password.html", {"token": token, "error": None})
 
 
 @router.post("/reset-password", dependencies=[Depends(verify_csrf)])
@@ -142,11 +149,11 @@ def reset_password_submit(
     db: Session = Depends(get_db),
 ):
     if password != password_confirm:
-        return templates.TemplateResponse(
+        return _sensitive_template(
             request, "auth/reset_password.html", {"token": token, "error": "Parolele nu coincid."}, status_code=400
         )
     if len(password) < 10:
-        return templates.TemplateResponse(
+        return _sensitive_template(
             request,
             "auth/reset_password.html",
             {"token": token, "error": "Parola trebuie sa aiba cel putin 10 caractere."},
@@ -156,7 +163,7 @@ def reset_password_submit(
         user = auth_service.reset_password(db, token, password)
     except auth_service.AuthError as exc:
         db.rollback()
-        return templates.TemplateResponse(
+        return _sensitive_template(
             request, "auth/reset_password.html", {"token": token, "error": str(exc)}, status_code=400
         )
     record_audit(db, action="password_reset_completed", resource_type="user", actor_user_id=user.id, actor_label=user.email)
@@ -166,7 +173,7 @@ def reset_password_submit(
 
 @router.get("/accept-invitation")
 def accept_invitation_form(request: Request, token: str):
-    return templates.TemplateResponse(request, "auth/accept_invitation.html", {"token": token, "error": None})
+    return _sensitive_template(request, "auth/accept_invitation.html", {"token": token, "error": None})
 
 
 @router.post("/accept-invitation", dependencies=[Depends(verify_csrf)])
@@ -179,11 +186,11 @@ def accept_invitation_submit(
     db: Session = Depends(get_db),
 ):
     if password != password_confirm:
-        return templates.TemplateResponse(
+        return _sensitive_template(
             request, "auth/accept_invitation.html", {"token": token, "error": "Parolele nu coincid."}, status_code=400
         )
     if len(password) < 10:
-        return templates.TemplateResponse(
+        return _sensitive_template(
             request,
             "auth/accept_invitation.html",
             {"token": token, "error": "Parola trebuie sa aiba cel putin 10 caractere."},
@@ -193,7 +200,7 @@ def accept_invitation_submit(
         user = auth_service.accept_invitation(db, token, password, full_name)
     except auth_service.AuthError as exc:
         db.rollback()
-        return templates.TemplateResponse(
+        return _sensitive_template(
             request, "auth/accept_invitation.html", {"token": token, "error": str(exc)}, status_code=400
         )
     record_audit(db, action="invitation_accepted", resource_type="user", actor_user_id=user.id, actor_label=user.email)

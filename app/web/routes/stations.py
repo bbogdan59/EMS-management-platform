@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+import json
 import uuid
 from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import RedirectResponse
+from pydantic import ValidationError
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api.deps import StationAccess, get_current_user
@@ -18,11 +22,44 @@ from app.models.device import ClaimCode, Device
 from app.models.station import PanelGroup, StationConfigVersion
 from app.models.tariff import Tariff
 from app.models.user import User
+from app.schemas.station_forms import PreferenceInput, StationConfigInput
 from app.services import device_service, station_service, tariff_service
 from app.web.context import build_nav_context
 from app.web.templating import templates
 
 router = APIRouter()
+
+
+def _validation_errors(exc: ValidationError) -> list[str]:
+    """Mesaje explicite, un rand per eroare -- nu doar json-ul brut Pydantic,
+    care ar expune nume de camp tehnice fara context util pentru un
+    administrator care completeaza formularul."""
+    out = []
+    for err in exc.errors():
+        field = ".".join(str(p) for p in err["loc"]) or "formular"
+        out.append(f"{field}: {err['msg']}")
+    return out
+
+
+def _none_if_blank(value: str | None) -> str | None:
+    if value is None or value.strip() == "":
+        return None
+    return value
+
+
+def _error_redirect(path: str, errors: list[str]) -> RedirectResponse:
+    from urllib.parse import urlencode
+
+    query = urlencode([("error", e) for e in errors])
+    return RedirectResponse(f"{path}?{query}", status_code=303)
+
+
+def _config_error_redirect(station_id: uuid.UUID, errors: list[str]) -> RedirectResponse:
+    return _error_redirect(f"/stations/{station_id}/config", errors)
+
+
+def _preferences_error_redirect(station_id: uuid.UUID, errors: list[str]) -> RedirectResponse:
+    return _error_redirect(f"/stations/{station_id}/preferences", errors)
 
 
 def _dec(value: str | None, default: Decimal | None = None) -> Decimal | None:
@@ -35,6 +72,29 @@ def _dec(value: str | None, default: Decimal | None = None) -> Decimal | None:
 
 
 # --- Configuratie tehnica ---
+
+
+def _safe_script_json(value) -> str:
+    """json.dumps() nu escapeaza `<`/`>`/`&` -- un nume de grup PV salvat anterior
+    continand literal `</script>` ar rupe blocul <script> in care e inserat acest
+    JSON (cu `| safe` in template) si ar permite XSS stocat. Escapare standard
+    pentru JSON inserat in HTML: inlocuim caracterele periculoase cu echivalentul
+    lor unicode-escape, valid in JSON si inofensiv pentru parser-ul HTML."""
+    return json.dumps(value).replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
+
+
+def _panel_groups_json(config: StationConfigVersion | None) -> str:
+    if config is None:
+        return _safe_script_json([{"name": "Grup principal", "power_kwp": "0", "azimuth_degrees": "180", "tilt_degrees": "30"}])
+    return _safe_script_json(
+        [
+            {
+                "name": g.name, "power_kwp": str(g.power_kwp),
+                "azimuth_degrees": str(g.azimuth_degrees), "tilt_degrees": str(g.tilt_degrees),
+            }
+            for g in config.panel_groups
+        ]
+    )
 
 
 @router.get("/stations/{station_id}/config")
@@ -60,7 +120,10 @@ def station_config_form(
         "station": station,
         "config": config,
         "history": history,
+        "panel_groups_json": _panel_groups_json(config),
+        "expected_version": config.version if config else 0,
         "can_edit": can_manage_station_config(role),
+        "errors": request.query_params.getlist("error"),
         **build_nav_context(db, user, station.id),
     }
     return templates.TemplateResponse(request, "stations/config.html", context)
@@ -83,53 +146,114 @@ def station_config_submit(
     ev_battery_capacity_kwh: str | None = Form(None),
     ev_max_charge_power_kw: str | None = Form(None),
     notes: str | None = Form(None),
+    panel_groups_json: str = Form(...),
+    expected_version: int = Form(...),
     db: Session = Depends(get_db),
     station_role: tuple = Depends(StationAccess(min_role="organization_admin")),
     user: User = Depends(get_current_user),
 ):
     station, _role = station_role
-    version = station_service.next_config_version(db, station)
+
+    try:
+        panel_groups_raw = json.loads(panel_groups_json)
+    except json.JSONDecodeError:
+        return _config_error_redirect(station.id, ["Grupurile de panouri: JSON invalid."])
+    if not isinstance(panel_groups_raw, list):
+        return _config_error_redirect(station.id, ["Grupurile de panouri trebuie sa fie o lista."])
+
+    raw = {
+        "pv_installed_power_kw": pv_installed_power_kw,
+        "inverter_power_kw": inverter_power_kw,
+        "battery_reference_capacity_kwh": _none_if_blank(battery_reference_capacity_kwh),
+        "battery_available_capacity_kwh": _none_if_blank(battery_available_capacity_kwh),
+        "battery_max_charge_power_kw": _none_if_blank(battery_max_charge_power_kw),
+        "battery_max_discharge_power_kw": _none_if_blank(battery_max_discharge_power_kw),
+        "grid_import_limit_kw": _none_if_blank(grid_import_limit_kw),
+        "grid_export_limit_kw": _none_if_blank(grid_export_limit_kw),
+        "ev_enabled": bool(ev_enabled),
+        "ev_battery_capacity_kwh": _none_if_blank(ev_battery_capacity_kwh),
+        "ev_max_charge_power_kw": _none_if_blank(ev_max_charge_power_kw),
+        "notes": notes or None,
+        "panel_groups": panel_groups_raw,
+        "expected_version": expected_version,
+    }
+    if battery_charge_efficiency:
+        raw["battery_charge_efficiency"] = battery_charge_efficiency
+    if battery_discharge_efficiency:
+        raw["battery_discharge_efficiency"] = battery_discharge_efficiency
+
+    try:
+        validated = StationConfigInput.model_validate(raw)
+    except ValidationError as exc:
+        return _config_error_redirect(station.id, _validation_errors(exc))
+
+    # Concurenta optimista: daca o alta editare a fost publicata intre randarea
+    # formularului si aceasta trimitere, respingem explicit in loc sa suprascriem
+    # tacit modificarea celuilalt editor.
+    current_version = station_service.next_config_version(db, station) - 1
+    if validated.expected_version != current_version:
+        return _config_error_redirect(
+            station.id,
+            [f"Configuratia a fost modificata intre timp (v{current_version} e curenta) -- reincarca pagina si reaplica modificarile."],
+        )
+
+    version = current_version + 1
     config = StationConfigVersion(
         station_id=station.id,
         version=version,
         created_by_user_id=user.id,
-        pv_installed_power_kw=_dec(pv_installed_power_kw, Decimal("0")),
-        inverter_power_kw=_dec(inverter_power_kw, Decimal("0")),
-        battery_reference_capacity_kwh=_dec(battery_reference_capacity_kwh),
-        battery_available_capacity_kwh=_dec(battery_available_capacity_kwh) or _dec(battery_reference_capacity_kwh),
-        battery_max_charge_power_kw=_dec(battery_max_charge_power_kw),
-        battery_max_discharge_power_kw=_dec(battery_max_discharge_power_kw),
-        battery_charge_efficiency=_dec(battery_charge_efficiency, Decimal("0.95")),
-        battery_discharge_efficiency=_dec(battery_discharge_efficiency, Decimal("0.95")),
-        grid_import_limit_kw=_dec(grid_import_limit_kw),
-        grid_export_limit_kw=_dec(grid_export_limit_kw),
-        ev_enabled=bool(ev_enabled),
-        ev_battery_capacity_kwh=_dec(ev_battery_capacity_kwh),
-        ev_max_charge_power_kw=_dec(ev_max_charge_power_kw),
-        notes=notes,
+        pv_installed_power_kw=validated.pv_installed_power_kw,
+        inverter_power_kw=validated.inverter_power_kw,
+        battery_reference_capacity_kwh=validated.battery_reference_capacity_kwh,
+        battery_available_capacity_kwh=(
+            validated.battery_available_capacity_kwh
+            if validated.battery_available_capacity_kwh is not None
+            else validated.battery_reference_capacity_kwh
+        ),
+        battery_max_charge_power_kw=validated.battery_max_charge_power_kw,
+        battery_max_discharge_power_kw=validated.battery_max_discharge_power_kw,
+        battery_charge_efficiency=validated.battery_charge_efficiency,
+        battery_discharge_efficiency=validated.battery_discharge_efficiency,
+        grid_import_limit_kw=validated.grid_import_limit_kw,
+        grid_export_limit_kw=validated.grid_export_limit_kw,
+        ev_enabled=validated.ev_enabled,
+        ev_battery_capacity_kwh=validated.ev_battery_capacity_kwh,
+        ev_max_charge_power_kw=validated.ev_max_charge_power_kw,
+        notes=validated.notes,
     )
     db.add(config)
     db.flush()
-    db.add(
-        PanelGroup(
-            station_id=station.id,
-            config_version_id=config.id,
-            name="Grup principal",
-            power_kwp=config.pv_installed_power_kw,
-            azimuth_degrees=Decimal("180"),
-            tilt_degrees=Decimal("30"),
+    for group in validated.panel_groups:
+        db.add(
+            PanelGroup(
+                station_id=station.id,
+                config_version_id=config.id,
+                name=group.name,
+                power_kwp=group.power_kwp,
+                azimuth_degrees=group.azimuth_degrees,
+                tilt_degrees=group.tilt_degrees,
+            )
         )
-    )
     record_audit(
         db, action="station_config_updated", resource_type="station_config", resource_id=str(config.id),
         actor_user_id=user.id, actor_label=user.email, station_id=station.id,
-        metadata={"version": version},
+        metadata={"version": version, "panel_group_count": len(validated.panel_groups)},
     )
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        return _config_error_redirect(station.id, ["Configuratia a fost modificata concurent -- reincarca pagina si reaplica modificarile."])
     return RedirectResponse(f"/stations/{station.id}/config", status_code=303)
 
 
 # --- Preferinte ---
+
+
+def _soc_targets_json(preference) -> str:
+    if preference is None or not preference.soc_targets:
+        return "[]"
+    return _safe_script_json(preference.soc_targets)
 
 
 @router.get("/stations/{station_id}/preferences")
@@ -148,10 +272,21 @@ def preferences_form(
         .order_by(PreferenceVersion.version.desc())
         .limit(1)
     )
+    automation_suspended_until_local = None
+    if preference is not None and preference.automation_suspended_until is not None:
+        try:
+            tz = ZoneInfo(station.timezone)
+        except Exception:
+            tz = ZoneInfo("Europe/Bucharest")
+        automation_suspended_until_local = preference.automation_suspended_until.astimezone(tz)
     context = {
         "station": station,
         "preference": preference,
+        "soc_targets_json": _soc_targets_json(preference),
+        "automation_suspended_until_local": automation_suspended_until_local,
+        "expected_version": preference.version if preference else 0,
         "can_edit": can_modify_operational_settings(role),
+        "errors": request.query_params.getlist("error"),
         **build_nav_context(db, user, station.id),
     }
     return templates.TemplateResponse(request, "stations/preferences.html", context)
@@ -168,9 +303,12 @@ def preferences_submit(
     max_efc_per_day: str | None = Form(None),
     max_efc_per_month: str | None = Form(None),
     priority: str = Form("cost"),
+    soc_targets_json: str = Form("[]"),
     ev_required_energy_kwh: str | None = Form(None),
     ev_departure_time: str | None = Form(None),
+    automation_suspended_until: str | None = Form(None),
     arbitrage_min_benefit_lei: str = Form("0"),
+    expected_version: int = Form(...),
     db: Session = Depends(get_db),
     station_role: tuple = Depends(StationAccess(min_role="operator")),
     user: User = Depends(get_current_user),
@@ -178,33 +316,93 @@ def preferences_submit(
     from app.models.preference import PreferenceVersion
 
     station, _role = station_role
-    version = station_service.next_preference_version(db, station)
 
-    ev_time = None
+    try:
+        soc_targets_raw = json.loads(soc_targets_json) if soc_targets_json else []
+    except json.JSONDecodeError:
+        return _preferences_error_redirect(station.id, ["Tintele SOC: JSON invalid."])
+    if not isinstance(soc_targets_raw, list):
+        return _preferences_error_redirect(station.id, ["Tintele SOC trebuie sa fie o lista."])
+
+    ev_time_str = None
     if ev_departure_time:
         try:
             h, m = ev_departure_time.split(":")
-            from datetime import time as dtime
-
-            ev_time = dtime(int(h), int(m))
+            ev_time_str = f"{int(h):02d}:{int(m):02d}"
         except ValueError:
-            ev_time = None
+            return _preferences_error_redirect(station.id, ["Ora plecare EV: format invalid (asteptat HH:MM)."])
+
+    raw = {
+        "min_reserve_soc_percent": min_reserve_soc_percent,
+        "max_normal_soc_percent": max_normal_soc_percent,
+        "max_optimization_energy_kwh": _none_if_blank(max_optimization_energy_kwh),
+        "allow_grid_charge": bool(allow_grid_charge),
+        "allow_battery_export": bool(allow_battery_export),
+        "max_efc_per_day": _none_if_blank(max_efc_per_day),
+        "max_efc_per_month": _none_if_blank(max_efc_per_month),
+        "priority": priority,
+        "soc_targets": soc_targets_raw,
+        "ev_required_energy_kwh": _none_if_blank(ev_required_energy_kwh),
+        "automation_suspended_until": _none_if_blank(automation_suspended_until),
+        "arbitrage_min_benefit_lei": arbitrage_min_benefit_lei or "0",
+        "expected_version": expected_version,
+    }
+    if ev_time_str:
+        raw["ev_departure_time"] = ev_time_str
+
+    try:
+        validated = PreferenceInput.model_validate(raw)
+    except ValidationError as exc:
+        return _preferences_error_redirect(station.id, _validation_errors(exc))
+
+    suspended_until_utc = None
+    if validated.automation_suspended_until:
+        try:
+            tz = ZoneInfo(station.timezone)
+        except Exception:
+            tz = ZoneInfo("Europe/Bucharest")
+        try:
+            local_naive = datetime.fromisoformat(validated.automation_suspended_until)
+        except ValueError:
+            return _preferences_error_redirect(station.id, ["Suspendare automatizare: data/ora invalida."])
+        candidates = [local_naive.replace(tzinfo=tz, fold=fold) for fold in (0, 1)]
+        valid = [
+            candidate
+            for candidate in candidates
+            if candidate.astimezone(UTC).astimezone(tz).replace(tzinfo=None) == local_naive
+        ]
+        if not valid or valid[0].utcoffset() != valid[-1].utcoffset():
+            return _preferences_error_redirect(
+                station.id,
+                ["Suspendare automatizare: ora locala este inexistenta sau ambigua din cauza schimbarii DST."],
+            )
+        suspended_until_utc = valid[0].astimezone(UTC)
+
+    current_version = station_service.next_preference_version(db, station) - 1
+    if validated.expected_version != current_version:
+        return _preferences_error_redirect(
+            station.id,
+            [f"Preferintele au fost modificate intre timp (v{current_version} e curenta) -- reincarca pagina si reaplica modificarile."],
+        )
+    version = current_version + 1
 
     preference = PreferenceVersion(
         station_id=station.id,
         version=version,
         created_by_user_id=user.id,
-        min_reserve_soc_percent=_dec(min_reserve_soc_percent, Decimal("15")),
-        max_normal_soc_percent=_dec(max_normal_soc_percent, Decimal("95")),
-        max_optimization_energy_kwh=_dec(max_optimization_energy_kwh),
-        allow_grid_charge=bool(allow_grid_charge),
-        allow_battery_export=bool(allow_battery_export),
-        max_efc_per_day=_dec(max_efc_per_day),
-        max_efc_per_month=_dec(max_efc_per_month),
-        priority=priority,
-        ev_required_energy_kwh=_dec(ev_required_energy_kwh),
-        ev_departure_time=ev_time,
-        arbitrage_min_benefit_lei=_dec(arbitrage_min_benefit_lei, Decimal("0")),
+        min_reserve_soc_percent=validated.min_reserve_soc_percent,
+        max_normal_soc_percent=validated.max_normal_soc_percent,
+        max_optimization_energy_kwh=validated.max_optimization_energy_kwh,
+        allow_grid_charge=validated.allow_grid_charge,
+        allow_battery_export=validated.allow_battery_export,
+        max_efc_per_day=validated.max_efc_per_day,
+        max_efc_per_month=validated.max_efc_per_month,
+        priority=validated.priority,
+        soc_targets=[t.model_dump(mode="json") for t in validated.soc_targets],
+        ev_required_energy_kwh=validated.ev_required_energy_kwh,
+        ev_departure_time=validated.ev_departure_time,
+        automation_suspended_until=suspended_until_utc,
+        arbitrage_min_benefit_lei=validated.arbitrage_min_benefit_lei,
     )
 
     config = db.scalar(
@@ -221,7 +419,11 @@ def preferences_submit(
         actor_user_id=user.id, actor_label=user.email, station_id=station.id,
         metadata={"version": version, "conflicts": preference.conflict_warnings},
     )
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        return _preferences_error_redirect(station.id, ["Preferintele au fost modificate concurent -- reincarca pagina si reaplica modificarile."])
     return RedirectResponse(f"/stations/{station.id}/preferences", status_code=303)
 
 
@@ -307,7 +509,7 @@ def devices_page(
         "devices": devices,
         "claim_codes": claim_codes,
         "can_edit": can_manage_station_config(role),
-        "new_claim_code": request.query_params.get("new_code"),
+        "new_claim_code": None,
         **build_nav_context(db, user, station.id),
     }
     return templates.TemplateResponse(request, "stations/devices.html", context)
@@ -327,7 +529,25 @@ def create_claim_code(
         actor_user_id=user.id, actor_label=user.email, station_id=station.id,
     )
     db.commit()
-    return RedirectResponse(f"/stations/{station.id}/devices?new_code={raw_code}", status_code=303)
+    devices = db.scalars(select(Device).where(Device.station_id == station.id)).all()
+    claim_codes = db.scalars(
+        select(ClaimCode).where(ClaimCode.station_id == station.id).order_by(ClaimCode.created_at.desc()).limit(10)
+    ).all()
+    response = templates.TemplateResponse(
+        request,
+        "stations/devices.html",
+        {
+            "station": station,
+            "devices": devices,
+            "claim_codes": claim_codes,
+            "can_edit": True,
+            "new_claim_code": raw_code,
+            **build_nav_context(db, user, station.id),
+        },
+    )
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    return response
 
 
 @router.post("/stations/{station_id}/devices/{device_id}/revoke", dependencies=[Depends(verify_csrf)])

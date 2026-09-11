@@ -7,6 +7,15 @@
     <p class="text-sm text-gray-500 dark:text-gray-400">Rolul tau: <span class="badge-muted">{{ my_role }}</span></p>
   </div>
 
+  {% if errors %}
+  <div class="rounded-lg bg-red-50 p-3 text-sm text-red-800 dark:bg-red-900/30 dark:text-red-200">
+    <p class="mb-1 font-medium">Nu s-a putut salva:</p>
+    <ul class="list-inside list-disc">
+      {% for e in errors %}<li>{{ e }}</li>{% endfor %}
+    </ul>
+  </div>
+  {% endif %}
+
   <div class="grid gap-6 lg:grid-cols-2">
     <div class="card">
       <h2 class="mb-3 font-medium">Statii</h2>
@@ -38,6 +47,16 @@
             <div>
               <label class="label">Putere PV instalata (kW)</label>
               <input class="input" type="number" step="0.01" name="pv_installed_power_kw" required />
+            </div>
+          </div>
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="label">Latitudine (necesara pentru prognoza PV)</label>
+              <input class="input" type="number" step="0.000001" min="-90" max="90" name="latitude" required />
+            </div>
+            <div>
+              <label class="label">Longitudine (necesara pentru prognoza PV)</label>
+              <input class="input" type="number" step="0.000001" min="-180" max="180" name="longitude" required />
             </div>
           </div>
           <div class="grid grid-cols-2 gap-3">
@@ -81,6 +100,9 @@
 
     <div class="card">
       <h2 class="mb-3 font-medium">Membri</h2>
+      {% if invitation_error %}
+      <p class="mb-3 rounded-lg bg-red-50 p-3 text-sm text-red-700 dark:bg-red-900/30 dark:text-red-300">{{ invitation_error }}</p>
+      {% endif %}
       <ul class="divide-y divide-gray-100 dark:divide-gray-800">
         {% for m in memberships %}
         <li class="flex items-center justify-between py-2 text-sm">
@@ -110,10 +132,10 @@
           <button type="submit" class="btn-primary">Trimite invitatie</button>
         </form>
       </details>
-      {% if invite_link %}
+      {% if invitation_token %}
       <p class="mt-3 rounded-lg bg-brand-50 p-3 text-xs text-brand-800 dark:bg-brand-900/30 dark:text-brand-200">
-        Invitatie creata. Link (mod demo/console email): <br />
-        <code class="break-all">{{ invite_link }}</code>
+        Invitatie creata. Token afisat o singura data în mod non-productie: <br />
+        <code class="break-all">{{ invitation_token }}</code>
       </p>
       {% endif %}
       {% endif %}

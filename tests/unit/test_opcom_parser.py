@@ -3,11 +3,14 @@ from __future__ import annotations
 from datetime import date
 from decimal import Decimal
 from itertools import pairwise
+from pathlib import Path
 
 import pytest
 
 from app.services.opcom_fixtures import generate_synthetic_csv, intervals_for_date
 from app.services.opcom_service import OpcomParseError, parse_csv
+
+FIXTURES_DIR = Path(__file__).resolve().parents[1] / "fixtures"
 
 
 def test_intervals_for_normal_day():
@@ -122,3 +125,27 @@ def test_dst_csv_ends_at_next_local_midnight(day):
     end = parsed[-1]["interval_end"].astimezone(ZoneInfo("Europe/Bucharest"))
     assert end.date() == day + timedelta(days=1)
     assert (end.hour, end.minute) == (0, 0)
+
+
+def test_parses_real_opcom_export_sample():
+    """Regressie pentru un export CSV real descarcat de pe opcom.ro
+    (rezolutie 15 minute): virgula ca delimitator, fiecare camp incadrat in
+    ghilimele duble (RFC4180), un titlu + un tabel sumar (medii Base/Peak/
+    Off-Peak) inaintea tabelului detaliat, iar coloana de pret se numeste
+    "Pret de Inchidere a Pietei [lei/MWh]" -- nu doar "Pret". Fisierul de test
+    e o copie neschimbata a exportului real."""
+    csv_text = (FIXTURES_DIR / "opcom_real_sample_pt15m_2026-09-12.csv").read_text(encoding="utf-8-sig")
+    d = date(2026, 9, 12)
+
+    parsed = parse_csv(csv_text, d)
+
+    assert len(parsed) == 96
+    assert parsed[0]["interval_index"] == 1
+    assert parsed[0]["price_lei_per_mwh"] == Decimal("1233.84")
+    assert parsed[1]["price_lei_per_mwh"] == Decimal("1229.63")
+    assert parsed[-1]["interval_index"] == 96
+    assert parsed[-1]["price_lei_per_mwh"] == Decimal("1000.08")
+    for p in parsed:
+        assert p["currency"] == "RON"
+    for a, b in pairwise(parsed):
+        assert a["interval_end"] == b["interval_start"]

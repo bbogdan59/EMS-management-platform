@@ -94,6 +94,11 @@ class Settings(BaseSettings):
     optimization_interval_minutes: int = 15
     optimization_solver_timeout_seconds: float = 30.0
     optimization_shadow_mode_default: bool = True
+    # Prag de prospetime pentru ultima telemetrie SOC folosita ca punct de plecare
+    # al optimizarii. SOC lipsa/invechit peste acest prag blocheaza planul LIVE
+    # (raman doar planuri shadow, calculate cu ultima valoare cunoscuta sau o
+    # presupunere documentata drept atare).
+    optimization_soc_max_age_minutes: int = 10
 
     # --- Retention ---
     telemetry_raw_retention_days: int = 90
@@ -142,6 +147,10 @@ class Settings(BaseSettings):
             raise RuntimeError("DEMO_MODE_ENABLED nu poate fi activat in productie.")
         if self.is_production and self.opcom_use_synthetic_fixture_on_failure:
             raise RuntimeError("Datele OPCOM sintetice nu pot fi activate in productie.")
+        if self.is_production and not self.session_cookie_secure:
+            raise RuntimeError("SESSION_COOKIE_SECURE trebuie activat in productie.")
+        if self.is_production and self.email_backend == "console":
+            raise RuntimeError("EMAIL_BACKEND=console nu poate fi folosit in productie.")
 
 
 @lru_cache
