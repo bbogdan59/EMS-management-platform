@@ -4,35 +4,51 @@ Aceasta lista e intentionat onesta: enumera ce NU e verificat/implementat
 complet, cu motivul exact, asa cum a cerut specificatia ("nu masca
 integrarile lipsa prin date fictive nemarcate").
 
-## 1. Schema CSV-ului OPCOM nu a putut fi verificata direct
+## 1. Schema CSV-ului OPCOM (verificata ulterior impotriva unui export real)
 
-Mediul in care a fost dezvoltata aceasta platforma blocheaza la nivel de
-retea accesul catre `opcom.ro` (politica organizationala a mediului de
-lucru, confirmata explicit de proxy-ul de iesire: `EGRESS_BLOCKED`). Nu am
-putut deci descarca un CSV real si verifica numele exacte ale coloanelor,
-separatorul sau encoding-ul.
+Mediul in care a fost dezvoltata initial aceasta platforma blocheaza la
+nivel de retea accesul catre `opcom.ro` (politica organizationala a
+mediului de lucru, confirmata explicit de proxy-ul de iesire:
+`EGRESS_BLOCKED`) -- initial nu s-a putut deci descarca un CSV real si
+verifica numele exacte ale coloanelor, separatorul sau encoding-ul.
 
-**Ce am facut in schimb:**
-- `app/services/opcom_schema.py` defineste o schema **configurabila** (nume
-  de coloane, delimitator, encoding-uri candidate), cu cea mai buna
-  aproximare rezonabila pentru un export CSV romanesc, dar marcata explicit
-  ca neverificata.
-- Parserul (`app/services/opcom_service.py`) **valideaza structural** ce
-  gaseste (cauta antetul dupa alias-uri cunoscute, valideaza moneda,
-  numarul de intervale, continuitatea) si arunca o eroare clara (cu
-  primele linii primite) daca nu se potriveste -- nu presupune orbeste.
-- Daca sursa reala e inaccesibila (sau schema nu se potriveste) dupa toate
-  reincercarile, importul esueaza explicit. Numai in dezvoltare/test se poate
-  activa optional un fallback cu **date sintetice generate determinist** (`app/services/opcom_fixtures.py`), marcate explicit
-  (`ImportRun.is_synthetic_fixture=True`) si vizibile ca atare in panoul de
-  administrare.
-- **Actiune recomandata inainte de productie reala:** un operator cu acces
-  la internet trebuie sa descarce manual un CSV real de pe opcom.ro, sa-l
-  compare cu schema implicita din `opcom_schema.py` si sa ajusteze
-  `interval_column`/`price_column`/`delimiter`/etc. daca difera (sau sa
-  deschida o modificare de cod daca structura reala e semnificativ
-  diferita). Testele din `tests/unit/test_opcom_parser.py` documenteaza
-  exact ce format e acceptat in acest moment.
+**Actualizare:** utilizatorul a furnizat ulterior un export CSV real
+(`rezultatePZU_PT15M_...`, rezolutie 15 minute), care a scos la iveala
+diferente reale fata de aproximarea initiala -- corectate in cod, nu doar
+documentate:
+- Fisierul foloseste **virgula** ca delimitator (nu punct-virgula, cum era
+  presupus initial), cu fiecare camp incadrat in ghilimele duble (CSV
+  standard RFC4180). Parserul folosea o simpla `line.split(delimiter)`, care
+  NU intelege ghilimelele -- orice camp care ar fi continut el insusi
+  delimitatorul (ex. un pret cu separator zecimal identic cu delimitatorul)
+  s-ar fi rupt gresit. Inlocuit cu `csv.reader`, care gestioneaza corect
+  incadrarea in ghilimele.
+- Coloana reala de pret se numeste **"Pret de Inchidere a Pietei [lei/MWh]"**,
+  nu doar "Pret" -- potrivirea antetului cerea egalitate EXACTA cu un alias
+  scurt, deci nu se potrivea niciodata. Schimbata la potrivire pe **subsir**
+  (alias continut in numele coloanei), pastrand totusi validarea structurala
+  (antetul trebuie sa aiba o coloana de interval SI o coloana de pret pe
+  indici DIFERITI -- un tabel sumar anterior in fisier, cu medii
+  Base/Peak/Off-Peak, e ignorat automat pentru ca nu are coloana de interval).
+- Fisierul are un titlu si un tabel sumar (medii Base/Peak/Off-Peak) INAINTE
+  de tabelul detaliat pe intervale -- deja gestionat corect de cautarea
+  antetului in primele `header_search_rows` linii nevide.
+- `app/services/opcom_schema.py`: delimitatorul implicit a fost schimbat la
+  virgula (era punct-virgula) sa reflecte formatul real observat; sniffer-ul
+  de delimitator ramane ca fallback daca un format viitor difera.
+- Test de regresie nou: `tests/unit/test_opcom_parser.py::test_parses_real_opcom_export_sample`,
+  ruland impotriva unei copii neschimbate a exportului real
+  (`tests/fixtures/opcom_real_sample_pt15m_2026-09-12.csv`), verificand toate
+  cele 96 de intervale si primele/ultimele preturi exact.
+
+**Ramane neverificat** (limitarea de retea originala inca se aplica in acest
+mediu sandbox): fetch-ul HTTP live catre `opcom.ro` (`_fetch_raw` in
+`app/services/opcom_service.py`) -- headerele de raspuns reale, coduri de
+eroare, comportamentul retry-ului contra serverului real. Parserul insusi
+(logica de interpretare a CSV-ului, odata continutul primit) e acum verificat
+impotriva unui esantion real, nu doar presupus. Fallback-ul cu date sintetice
+(`app/services/opcom_fixtures.py`) ramane neschimbat pentru cazul in care
+sursa reala e indisponibila.
 
 ## 2. Sursa meteo (Open-Meteo) -- acelasi tip de limitare de retea
 
