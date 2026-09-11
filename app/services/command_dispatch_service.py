@@ -20,6 +20,7 @@ from app.models.enums import (
     PlanStatus,
 )
 from app.models.optimization import Plan, PlanInterval
+from app.models.organization import Organization
 from app.models.preference import PreferenceVersion
 from app.models.station import Station, StationConfigVersion
 
@@ -27,6 +28,11 @@ from app.models.station import Station, StationConfigVersion
 def plan_allows_dispatch(db: Session, plan: Plan, station: Station, now) -> bool:
     """Recheck persisted authorization at dispatch/delivery time, not only at solve time."""
     if not station.is_active or station.execution_mode != "live" or plan.execution_mode != "live":
+        return False
+    # O organizatie suspendata/arhivata (issue #24) nu poate primi comenzi live,
+    # indiferent de starea proprie a statiei -- verificat aici (nu doar la nivel
+    # de UI), la fel ca celelalte reautorizari de la aceasta functie.
+    if station.organization is not None and station.organization.status != "active":
         return False
     if plan.status not in (PlanStatus.accepted_by_device.value, PlanStatus.executing.value):
         return False
@@ -70,7 +76,11 @@ def command_allows_delivery(db: Session, command: Command, device: Device, now) 
 
 def dispatch_due_commands(db: Session) -> list[Command]:
     now = utcnow()
-    live_stations = db.scalars(select(Station).where(Station.execution_mode == "live", Station.is_active.is_(True))).all()
+    live_stations = db.scalars(
+        select(Station)
+        .join(Organization, Organization.id == Station.organization_id)
+        .where(Station.execution_mode == "live", Station.is_active.is_(True), Organization.status == "active")
+    ).all()
     created: list[Command] = []
 
     for station in live_stations:

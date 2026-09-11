@@ -88,6 +88,27 @@ def test_dispatch_rejects_non_executable_plan(change):
     assert not dispatch.plan_allows_dispatch(db, plan, station, now)
 
 
+@pytest.mark.parametrize("org_status", ["suspended", "archived"])
+def test_dispatch_rejects_plan_when_organization_not_active(org_status):
+    """Issue #24: o organizatie suspendata/arhivata nu poate primi comenzi
+    live, indiferent de starea proprie (activa) a statiei."""
+    from app.models.organization import Organization
+
+    now, station, config, pref, device, plan, interval, db = context()
+    station.organization = Organization(status=org_status)
+    db.scalar.side_effect = [pref, config]
+    assert not dispatch.plan_allows_dispatch(db, plan, station, now)
+
+
+def test_dispatch_allows_plan_when_organization_active():
+    from app.models.organization import Organization
+
+    now, station, config, pref, device, plan, interval, db = context()
+    station.organization = Organization(status="active")
+    db.scalar.side_effect = [pref, config]
+    assert dispatch.plan_allows_dispatch(db, plan, station, now)
+
+
 def test_dispatch_targets_the_device_that_accepted_the_plan():
     now, station, config, pref, device, plan, interval, db = context()
     db.scalars.return_value.all.return_value = [station]

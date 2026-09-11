@@ -106,6 +106,29 @@ def revoke_all_sessions_for_user(db: Session, user_id: uuid.UUID, except_session
     return count
 
 
+def revoke_all_sessions_for_users_in_organization(db: Session, organization_id: uuid.UUID) -> int:
+    """Revoca toate sesiunile web active ale MEMBRILOR unei organizatii --
+    folosit la suspendarea/arhivarea organizatiei (issue #24). Un utilizator
+    poate avea membership in mai multe organizatii; doar sesiunea lui web
+    (unica per browser) e revocata aici, nu apartenenta insasi -- daca are
+    acces si prin alta organizatie neafectata, va trebui sa se re-autentifice,
+    dar contul insusi ramane activ."""
+    session_ids = db.scalars(
+        select(UserSession.id)
+        .join(Membership, Membership.user_id == UserSession.user_id)
+        .where(Membership.organization_id == organization_id, UserSession.revoked_at.is_(None))
+    ).all()
+    count = 0
+    for session_id in session_ids:
+        sess = db.get(UserSession, session_id)
+        if sess is not None and sess.revoked_at is None:
+            sess.revoked_at = utcnow()
+            db.add(sess)
+            count += 1
+    db.flush()
+    return count
+
+
 # --- Bootstrap primul admin ---
 
 

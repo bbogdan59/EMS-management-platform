@@ -7,14 +7,19 @@
 
   <div class="card">
     <table class="w-full text-sm">
-      <thead class="text-left text-gray-500"><tr><th class="py-1">Nume</th><th>Slug</th><th>Statii</th><th></th></tr></thead>
+      <thead class="text-left text-gray-500"><tr><th class="py-1">Nume</th><th>Slug</th><th>Stare</th><th>Statii</th><th></th></tr></thead>
       <tbody>
         {% for o in organizations %}
         <tr class="border-t border-gray-100 dark:border-gray-800">
           <td class="py-1">{{ o.name }}{% if o.is_demo %} <span class="badge-warn">demo</span>{% endif %}</td>
           <td>{{ o.slug }}</td>
+          <td>
+            {% if o.status == "active" %}<span class="badge-ok">activa</span>
+            {% elif o.status == "suspended" %}<span class="badge-warn">suspendata</span>
+            {% else %}<span class="badge-error">arhivata</span>{% endif %}
+          </td>
           <td>{{ o.stations | length }}</td>
-          <td><a class="text-brand-700 hover:underline dark:text-brand-300" href="/organizations/{{ o.id }}">deschide</a></td>
+          <td><a class="text-brand-700 hover:underline dark:text-brand-300" href="/admin/organizations/{{ o.id }}">deschide</a></td>
         </tr>
         {% endfor %}
       </tbody>

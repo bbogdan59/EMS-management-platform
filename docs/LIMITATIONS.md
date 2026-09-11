@@ -662,6 +662,79 @@ REALA a solverului (fara PV, fara import de retea, consum peste puterea
 maxima de descarcare), distinct de vechiul test care exercita acum
 pre-verificarea de configurare (banda SOC min >= max).
 
+## 17. Backoffice admin: lifecycle organizatie, suspendare/arhivare, arhivare statie (issue #24)
+
+**Ce s-a implementat.** `Organization` primeste un camp `status`
+(active/suspended/archived), cu metadate ale ULTIMEI tranzitii de
+suspendare/arhivare (motiv, actor, timestamp) pastrate ca istoric --
+tranzitiile valide sunt aplicate strict prin `organization_service.py`
+(niciodata direct pe model), fiecare serializata printr-un advisory lock
+PostgreSQL transaction-scoped (acelasi tipar ca `optimization_service`) si
+insotita de o intrare `AuditLog`. O pagina noua de backoffice
+(`/admin/organizations/{id}`, distincta de `/organizations/{id}` --
+autoservirea managerului de client) arata profilul, membrii, statiile (cu
+numar de device-uri, alerte active si ultima telemetrie), audit recent, si
+controalele de suspendare/reactivare/arhivare/restaurare.
+
+**Efectul suspendarii/arhivarii e aplicat la mai multe niveluri, nu doar in
+UI:**
+- Sesiunile web active ale TUTUROR membrilor organizatiei sunt revocate
+  imediat (`auth_service.revoke_all_sessions_for_users_in_organization`) --
+  la fel ca revocarea individuala deja existenta (`revoke_all_sessions_for_user`).
+- `app/api/deps.py` (`OrganizationAccess`/`StationAccess`, verificate pe
+  FIECARE ruta protejata, nu doar ascunse in UI): o organizatie `suspended`
+  blocheaza actiunile de scriere (rol peste `viewer`) ale membrilor
+  non-platform_admin, dar pastreaza accesul de CITIRE -- clientul isi poate
+  in continuare vedea/exporta datele inainte de reactivare. O organizatie
+  `archived` blocheaza TOT accesul non-platform_admin, inclusiv citirea.
+  platform_admin nu e afectat de niciuna dintre stari (trebuie sa poata
+  gestiona/reactiva organizatia).
+- `command_dispatch_service.plan_allows_dispatch`/`dispatch_due_commands`:
+  nicio comanda live nu mai e dispecerizata catre statiile unei organizatii
+  care nu e `active`, indiferent de starea proprie (`is_active`,
+  `execution_mode`) a statiei -- verificat la momentul dispecerizarii, nu
+  doar la publicarea planului (acelasi principiu ca celelalte re-verificari
+  deja existente in aceasta functie).
+
+**Arhivarea statiei e nedistructiva.** `POST /admin/stations/{id}/archive`
+seteaza doar `Station.is_active=False` (camp deja existent, deja verificat
+la dispecerizare) -- nicio telemetrie, plan sau device nu e sters ori
+modificat, reversibil prin `/restore`.
+
+**Hard-delete e deliberat INDISPONIBIL in aceasta prima versiune** -- issue-ul
+insusi cere explicit acest lucru ("preferabil indisponibil in prima
+versiune"). Arhivarea ramane starea cea mai "finala" disponibila din UI, si
+e recuperabila prin restaurare. O implementare viitoare de hard-delete real
+ar necesita o politica de retentie explicita (cat timp se pastreaza
+telemetria/facturarea dupa arhivare, export obligatoriu inainte de stergere
+etc.), netratata aici.
+
+**Procedura de offboarding recomandata (documentatie operationala ceruta de
+issue):**
+1. Suspendare (`reason` obligatoriu) -- efect imediat, reversibil. Clientul
+   pastreaza acces de CITIRE/export (rol `viewer`) cat timp doar suspendat.
+2. Clientul (sau administratorul, in numele lui) exporta orice date
+   necesare (export CSV existent pe dashboard-ul statiei/pagina de piata)
+   inainte de pasul urmator -- arhivarea blocheaza inclusiv citirea.
+3. Arhivare (`reason` obligatoriu) -- stare finala din UI, dar recuperabila
+   prin `/restore` de catre platform_admin oricand ulterior (nicio limita
+   de timp impusa in cod).
+4. Hard-delete real (stergere ireversibila din baza de date) ramane un pas
+   MANUAL, in afara aplicatiei, in aceasta prima versiune -- nu exista
+   niciun buton/ruta care sa il declanseze.
+
+**Ramas explicit in afara scopului acestei PR (nu ascuns):**
+- Gestiunea completa a membership-urilor (adaugare/eliminare/schimbare rol
+  din backoffice) -- ramane doar prin fluxul de invitatii existent
+  (`/organizations/{id}` autoservire); vezi issue #23 (RBAC delegat), care
+  acopera explicit acest domeniu.
+- Creare/editare completa a statiei din backoffice-ul admin -- UI-ul de
+  autoservire (`/organizations/{id}/stations`, `/stations/{id}/config`)
+  acopera deja aceasta nevoie pentru managerul clientului; backoffice-ul
+  admin adauga doar arhivare/restaurare (nedistructiva), nu re-implementeaza
+  formularele de creare/configurare tehnica.
+- Cautare/paginare avansata in lista de organizatii (`/admin/organizations`
+  ramane o lista simpla, ca inainte) -- volum mic asteptat in aceasta faza.
 ## 17. Import OPCOM: rezolutie variabila (15/30/60 minute) si agregare orara pentru grafice mari (issue #35)
 
 **Bug real, nu doar teoretic: parserul presupunea orbeste 15 minute pentru

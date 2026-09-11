@@ -1,0 +1,163 @@
+{% extends "base.html" %}
+{% block title %}{{ organization.name }} - {{ app_name }}{% endblock %}
+{% block content %}
+<div class="space-y-6">
+  <div class="flex flex-wrap items-center justify-between gap-3">
+    <div>
+      <h1 class="text-xl font-semibold">{{ organization.name }}</h1>
+      <p class="text-sm text-gray-500 dark:text-gray-400">
+        {{ organization.slug }}
+        {% if organization.status == "active" %}<span class="badge-ok">activa</span>
+        {% elif organization.status == "suspended" %}<span class="badge-warn">suspendata</span>
+        {% else %}<span class="badge-error">arhivata</span>{% endif %}
+        {% if organization.is_demo %}<span class="badge-warn">demo</span>{% endif %}
+      </p>
+    </div>
+    <a class="nav-link" href="/admin/organizations">&larr; toate organizatiile</a>
+  </div>
+
+  {% for error in errors %}
+  <p class="badge-error">{{ error }}</p>
+  {% endfor %}
+
+  {% if organization.status == "suspended" %}
+  <p class="badge-warn">
+    Suspendata la {{ organization.suspended_at }} -- motiv: {{ organization.suspended_reason }}.
+    Membrii nu mai pot efectua actiuni de scriere si sesiunile lor active au fost revocate;
+    accesul de vizualizare ramane permis. Nicio comanda live nu mai poate fi dispecerizata catre statiile acestei organizatii.
+  </p>
+  {% elif organization.status == "archived" %}
+  <p class="badge-error">
+    Arhivata la {{ organization.archived_at }} -- motiv: {{ organization.archived_reason }}.
+    Niciun membru (in afara de platform_admin) nu mai are acces, nici macar de vizualizare.
+  </p>
+  {% endif %}
+
+  <div class="grid gap-4 lg:grid-cols-2">
+    <!-- Profil -->
+    <div class="card">
+      <h2 class="mb-3 font-medium">Profil</h2>
+      <form method="post" action="/admin/organizations/{{ organization.id }}/edit" class="space-y-3">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}" />
+        <div>
+          <label class="label">Nume</label>
+          <input class="input" name="name" value="{{ organization.name }}" required />
+        </div>
+        <div>
+          <label class="label">E-mail facturare</label>
+          <input class="input" type="email" name="billing_email" value="{{ organization.billing_email or '' }}" />
+        </div>
+        <div>
+          <label class="label">Note administrative</label>
+          <textarea class="input" name="notes" rows="3">{{ organization.notes or '' }}</textarea>
+        </div>
+        <button type="submit" class="btn-secondary">Salveaza profilul</button>
+      </form>
+    </div>
+
+    <!-- Lifecycle -->
+    <div class="card">
+      <h2 class="mb-3 font-medium">Stare</h2>
+      <div class="space-y-3">
+        {% if organization.status == "active" %}
+        <form method="post" action="/admin/organizations/{{ organization.id }}/suspend" class="space-y-2">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}" />
+          <label class="label">Motiv suspendare (obligatoriu)</label>
+          <input class="input" name="reason" required />
+          <button type="submit" class="btn-secondary">Suspenda organizatia</button>
+        </form>
+        <form method="post" action="/admin/organizations/{{ organization.id }}/archive" class="space-y-2">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}" />
+          <label class="label">Motiv arhivare (obligatoriu)</label>
+          <input class="input" name="reason" required />
+          <button type="submit" class="btn-danger">Arhiveaza organizatia</button>
+        </form>
+        {% elif organization.status == "suspended" %}
+        <form method="post" action="/admin/organizations/{{ organization.id }}/reactivate">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}" />
+          <button type="submit" class="btn-primary">Reactiveaza organizatia</button>
+        </form>
+        <form method="post" action="/admin/organizations/{{ organization.id }}/archive" class="space-y-2">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}" />
+          <label class="label">Motiv arhivare (obligatoriu)</label>
+          <input class="input" name="reason" required />
+          <button type="submit" class="btn-danger">Arhiveaza organizatia</button>
+        </form>
+        {% elif organization.status == "archived" %}
+        <form method="post" action="/admin/organizations/{{ organization.id }}/restore">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}" />
+          <button type="submit" class="btn-primary">Restaureaza organizatia (redevine activa)</button>
+        </form>
+        {% endif %}
+        <p class="text-xs text-gray-500 dark:text-gray-400">
+          Stergerea definitiva (hard-delete) nu este disponibila in aceasta versiune -- arhivarea este
+          starea cea mai finala si ramane recuperabila prin restaurare.
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Membri -->
+  <div class="card">
+    <h2 class="mb-2 font-medium">Membri ({{ members | length }})</h2>
+    <table class="w-full text-sm">
+      <thead class="text-left text-gray-500"><tr><th class="py-1">E-mail</th><th>Rol</th></tr></thead>
+      <tbody>
+        {% for m in members %}
+        <tr class="border-t border-gray-100 dark:border-gray-800"><td class="py-1">{{ m.email }}</td><td>{{ m.role }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Statii -->
+  <div class="card">
+    <h2 class="mb-2 font-medium">Statii ({{ station_rows | length }})</h2>
+    <table class="w-full text-sm">
+      <thead class="text-left text-gray-500">
+        <tr><th class="py-1">Nume</th><th>Mod</th><th>Stare</th><th>Device-uri</th><th>Alerte active</th><th>Ultima telemetrie</th><th></th></tr>
+      </thead>
+      <tbody>
+        {% for row in station_rows %}
+        <tr class="border-t border-gray-100 dark:border-gray-800">
+          <td class="py-1"><a class="text-brand-700 hover:underline dark:text-brand-300" href="/?station_id={{ row.station.id }}">{{ row.station.name }}</a></td>
+          <td>{{ row.station.execution_mode }}</td>
+          <td>{% if row.station.is_active %}<span class="badge-ok">activa</span>{% else %}<span class="badge-muted">arhivata</span>{% endif %}</td>
+          <td>{{ row.device_count }}</td>
+          <td>{% if row.open_alerts %}<span class="badge-warn">{{ row.open_alerts }}</span>{% else %}0{% endif %}</td>
+          <td>{{ row.last_telemetry_at or "niciodata" }}</td>
+          <td>
+            {% if row.station.is_active %}
+            <form method="post" action="/admin/stations/{{ row.station.id }}/archive" class="inline">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}" />
+              <button type="submit" class="text-xs text-red-600 hover:underline">arhiveaza</button>
+            </form>
+            {% else %}
+            <form method="post" action="/admin/stations/{{ row.station.id }}/restore" class="inline">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}" />
+              <button type="submit" class="text-xs text-brand-700 hover:underline dark:text-brand-300">restaureaza</button>
+            </form>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Audit recent -->
+  <div class="card">
+    <h2 class="mb-2 font-medium">Audit recent</h2>
+    <table class="w-full text-sm">
+      <thead class="text-left text-gray-500"><tr><th class="py-1">Cand</th><th>Actiune</th><th>Actor</th></tr></thead>
+      <tbody>
+        {% for entry in recent_audit %}
+        <tr class="border-t border-gray-100 dark:border-gray-800">
+          <td class="py-1">{{ entry.occurred_at }}</td><td>{{ entry.action }}</td><td>{{ entry.actor_label }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
