@@ -6,6 +6,7 @@ executia fizica implicit."""
 from __future__ import annotations
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.security import utcnow
@@ -120,7 +121,20 @@ def dispatch_due_commands(db: Session) -> list[Command]:
             valid_from=current_interval.interval_start,
             expires_at=current_interval.interval_end,
         )
-        db.add(command)
+        # SAVEPOINT dedicat per statie: check-then-insert de mai sus nu e atomic
+        # (doua rulari concurente ale acestei functii pot trece amandoua
+        # verificarea `existing is None` inainte ca vreuna sa scrie). Constrangerea
+        # unica (device_id, idempotency_key) garanteaza ca niciodata nu apar doua
+        # comenzi echivalente, dar fara acest SAVEPOINT o coliziune ar invalida
+        # intreaga tranzactie la urmatorul flush si ar anula dispatch-ul PENTRU
+        # TOATE celelalte statii deja procesate in aceasta rulare.
+        try:
+            with db.begin_nested():
+                db.add(command)
+                db.flush()
+        except IntegrityError:
+            continue
+
         created.append(command)
         if plan.status == PlanStatus.accepted_by_device.value:
             plan.status = PlanStatus.executing.value
