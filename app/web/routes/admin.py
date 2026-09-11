@@ -24,8 +24,15 @@ from app.models.market import ImportRun
 from app.models.optimization import OptimizationRun
 from app.models.organization import Membership, Organization
 from app.models.station import Station
-from app.models.user import User
-from app.services import dashboard_service, device_service, organization_service, station_service
+from app.models.user import Invitation, User
+from app.services import (
+    auth_service,
+    dashboard_service,
+    device_service,
+    membership_service,
+    organization_service,
+    station_service,
+)
 from app.web.context import build_nav_context
 from app.web.templating import templates
 
@@ -108,11 +115,8 @@ def organization_detail(
     if organization is None:
         return RedirectResponse("/admin/organizations", status_code=303)
 
-    memberships = db.scalars(select(Membership).where(Membership.organization_id == organization_id)).all()
-    member_rows = []
-    for m in memberships:
-        member = db.get(User, m.user_id)
-        member_rows.append({"email": member.email if member else "?", "role": m.role})
+    member_rows = membership_service.list_members(db, organization)
+    pending_invitations = membership_service.list_pending_invitations(db, organization)
 
     station_rows = []
     for station in db.scalars(select(Station).where(Station.organization_id == organization_id).order_by(Station.name)).all():
@@ -137,9 +141,12 @@ def organization_detail(
     context = {
         "organization": organization,
         "members": member_rows,
+        "pending_invitations": pending_invitations,
+        "organization_roles": sorted(auth_service.ORGANIZATION_ROLES),
         "station_rows": station_rows,
         "recent_audit": recent_audit,
         "errors": request.query_params.getlist("error"),
+        "now": utcnow(),
         **build_nav_context(db, user),
     }
     return templates.TemplateResponse(request, "admin/organization_detail.html", context)
@@ -232,6 +239,110 @@ def restore_organization(
     try:
         organization_service.restore_organization(db, organization, user)
     except organization_service.OrganizationStateError as exc:
+        db.rollback()
+        return RedirectResponse(f"/admin/organizations/{organization_id}?error={exc}", status_code=303)
+    db.commit()
+    return RedirectResponse(f"/admin/organizations/{organization_id}", status_code=303)
+
+
+@router.post("/organizations/{organization_id}/members/{membership_id}/role", dependencies=[Depends(verify_csrf)])
+def admin_change_member_role(
+    organization_id: uuid.UUID,
+    membership_id: uuid.UUID,
+    role: str = Form(...),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Platform_admin poate atribui/revoca manageri direct din backoffice
+    (issue #23) -- fara impersonare: actioneaza explicit ca platform_admin,
+    auditat, nu "ca si cum ar fi" un membru al organizatiei."""
+    organization = db.get(Organization, organization_id)
+    membership = db.get(Membership, membership_id) if organization is not None else None
+    if organization is None or membership is None or membership.organization_id != organization_id:
+        return RedirectResponse("/admin/organizations", status_code=303)
+    try:
+        membership_service.change_role(db, organization, membership, role, user)
+    except membership_service.MembershipError as exc:
+        db.rollback()
+        return RedirectResponse(f"/admin/organizations/{organization_id}?error={exc}", status_code=303)
+    db.commit()
+    return RedirectResponse(f"/admin/organizations/{organization_id}", status_code=303)
+
+
+@router.post("/organizations/{organization_id}/members/{membership_id}/deactivate", dependencies=[Depends(verify_csrf)])
+def admin_deactivate_member(
+    organization_id: uuid.UUID,
+    membership_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    organization = db.get(Organization, organization_id)
+    membership = db.get(Membership, membership_id) if organization is not None else None
+    if organization is None or membership is None or membership.organization_id != organization_id:
+        return RedirectResponse("/admin/organizations", status_code=303)
+    try:
+        membership_service.deactivate_member(db, organization, membership, user)
+    except membership_service.MembershipError as exc:
+        db.rollback()
+        return RedirectResponse(f"/admin/organizations/{organization_id}?error={exc}", status_code=303)
+    db.commit()
+    return RedirectResponse(f"/admin/organizations/{organization_id}", status_code=303)
+
+
+@router.post("/organizations/{organization_id}/members/{membership_id}/reactivate", dependencies=[Depends(verify_csrf)])
+def admin_reactivate_member(
+    organization_id: uuid.UUID,
+    membership_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    organization = db.get(Organization, organization_id)
+    membership = db.get(Membership, membership_id) if organization is not None else None
+    if organization is None or membership is None or membership.organization_id != organization_id:
+        return RedirectResponse("/admin/organizations", status_code=303)
+    try:
+        membership_service.reactivate_member(db, organization, membership, user)
+    except membership_service.MembershipError as exc:
+        db.rollback()
+        return RedirectResponse(f"/admin/organizations/{organization_id}?error={exc}", status_code=303)
+    db.commit()
+    return RedirectResponse(f"/admin/organizations/{organization_id}", status_code=303)
+
+
+@router.post("/organizations/{organization_id}/members/{membership_id}/remove", dependencies=[Depends(verify_csrf)])
+def admin_remove_member(
+    organization_id: uuid.UUID,
+    membership_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    organization = db.get(Organization, organization_id)
+    membership = db.get(Membership, membership_id) if organization is not None else None
+    if organization is None or membership is None or membership.organization_id != organization_id:
+        return RedirectResponse("/admin/organizations", status_code=303)
+    try:
+        membership_service.remove_member(db, organization, membership, user)
+    except membership_service.MembershipError as exc:
+        db.rollback()
+        return RedirectResponse(f"/admin/organizations/{organization_id}?error={exc}", status_code=303)
+    db.commit()
+    return RedirectResponse(f"/admin/organizations/{organization_id}", status_code=303)
+
+
+@router.post("/organizations/{organization_id}/invitations/{invitation_id}/cancel", dependencies=[Depends(verify_csrf)])
+def admin_cancel_invitation(
+    organization_id: uuid.UUID,
+    invitation_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    organization = db.get(Organization, organization_id)
+    invitation = db.get(Invitation, invitation_id) if organization is not None else None
+    if organization is None or invitation is None or invitation.organization_id != organization_id:
+        return RedirectResponse("/admin/organizations", status_code=303)
+    try:
+        membership_service.cancel_invitation(db, organization, invitation, user)
+    except membership_service.MembershipError as exc:
         db.rollback()
         return RedirectResponse(f"/admin/organizations/{organization_id}?error={exc}", status_code=303)
     db.commit()
