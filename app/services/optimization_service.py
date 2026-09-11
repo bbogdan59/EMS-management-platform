@@ -28,14 +28,15 @@ from zoneinfo import ZoneInfo
 import pyomo.environ as pyo
 import structlog
 from pyomo.opt import TerminationCondition
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.core.rate_limit import get_redis
 from app.core.security import utcnow
-from app.models.enums import OptimizationRunStatus, PlanStatus
+from app.models.enums import ExecutionMode, OptimizationRunStatus, PlanStatus
 from app.models.forecast import ConsumptionForecast, PvForecast
+from app.models.market import ImportRun, MarketPriceInterval
 from app.models.optimization import OptimizationRun, Plan, PlanInterval
 from app.models.preference import PreferenceVersion
 from app.models.station import Station, StationConfigVersion
@@ -78,16 +79,26 @@ def _round_to_interval(dt: datetime, minutes: int) -> datetime:
     return dt - discard
 
 
-def _current_soc_kwh(db: Session, station: Station, available_capacity_kwh: Decimal) -> float:
+def _current_soc_kwh(db: Session, station: Station, available_capacity_kwh: Decimal) -> tuple[float, datetime | None, str]:
+    """Returneaza (soc_kwh, momentul masuratorii, calitate), calitate fiind
+    "measured" (proaspata), "stale" (mai veche decat pragul configurat, dar
+    folosita ca fiind cea mai buna informatie disponibila) sau "missing" (nicio
+    telemetrie SOC inregistrata vreodata -- valoarea e o presupunere de mijloc
+    de banda, NU o masuratoare). Apelantul decide daca o calitate sub
+    "measured" blocheaza planul LIVE; aici nu se ascunde lipsa datelor."""
     latest = db.scalar(
         select(TelemetryRaw)
         .where(TelemetryRaw.station_id == station.id, TelemetryRaw.battery_soc_percent.isnot(None))
         .order_by(TelemetryRaw.measured_at.desc())
         .limit(1)
     )
-    if latest is not None:
-        return float(latest.battery_soc_percent) / 100.0 * float(available_capacity_kwh)
-    return 0.5 * float(available_capacity_kwh)
+    if latest is None:
+        return 0.5 * float(available_capacity_kwh), None, "missing"
+
+    soc_kwh = float(latest.battery_soc_percent) / 100.0 * float(available_capacity_kwh)
+    max_age = timedelta(minutes=settings.optimization_soc_max_age_minutes)
+    quality = "measured" if (utcnow() - latest.measured_at) <= max_age else "stale"
+    return soc_kwh, latest.measured_at, quality
 
 
 def _build_pv_series(db: Session, station_id: uuid.UUID, horizon: list[datetime]) -> dict[datetime, float]:
@@ -141,28 +152,66 @@ def _fill_gaps(series: dict[datetime, float | None], fallback: float) -> dict[da
     return out
 
 
-def _ensure_forecasts(db: Session, station: Station) -> None:
+def _fill_price_gaps(prices: dict[datetime, float | None]) -> tuple[dict[datetime, float], dict[datetime, str]]:
+    """Completeaza golurile de pret prin propagare din cel mai apropiat interval
+    cunoscut in timp (inainte, apoi -- pentru golul initial -- inapoi), nu dintr-o
+    valoare oarecare disponibila oriunde in orizont. Fiecare interval e marcat
+    explicit "real" sau "estimated"; apelantul foloseste aceasta calitate pentru
+    a decide daca planul poate ramane live sau trebuie retrogradat la shadow.
+    Presupune ca cel putin o valoare reala exista (verificat de apelant)."""
+    keys = list(prices.keys())
+    filled: dict[datetime, float | None] = {}
+    quality: dict[datetime, str] = {}
+    last_known: float | None = None
+    for t in keys:
+        v = prices[t]
+        if v is not None:
+            filled[t] = v
+            quality[t] = "real"
+            last_known = v
+        else:
+            filled[t] = last_known
+            quality[t] = "estimated"
+
+    next_known: float | None = None
+    for t in reversed(keys):
+        if quality[t] == "real":
+            next_known = filled[t]
+        elif filled[t] is None:
+            filled[t] = next_known
+
+    return filled, quality
+
+
+def _ensure_forecasts(db: Session, station: Station, horizon_start: datetime, horizon_end: datetime) -> None:
     """Best-effort: reimprospateaza meteo/PV/consum. Esecurile sunt tolerate --
     optimizatorul foloseste orice date existente deja in baza, iar lipsa totala
-    declanseaza fallback-ul conservator mai jos."""
+    declanseaza fallback-ul conservator mai jos. Fiecare incercare ruleaza intr-un
+    SAVEPOINT dedicat: o exceptie (ex. o constrangere DB in timpul flush-ului)
+    invalideaza altfel intreaga tranzactie SQLAlchemy pana la rollback, ceea ce
+    ar sterge si `OptimizationRun`-ul deja adaugat de apelant in aceeasi sesiune
+    necomisa -- SAVEPOINT-ul limiteaza rollback-ul strict la incercarea esuata.
+
+    `horizon_start`/`horizon_end` sunt granitele deja aliniate la grila UTC a
+    orizontului de optimizare (vezi `_round_to_interval` in apelant) -- consumul
+    e generat pe pasi ficsi de 15 minute incepand exact de la `horizon_start`,
+    deci nealinierea acestor granite ar face ca niciun interval generat sa nu
+    se potriveasca vreodata cu orele cautate de `_build_load_series`."""
     try:
-        weather_service.refresh_weather_for_station(db, station)
-        db.flush()
+        with db.begin_nested():
+            weather_service.refresh_weather_for_station(db, station)
     except Exception as exc:
         logger.info("optimization.weather_refresh_skipped", station_id=str(station.id), reason=str(exc))
 
     try:
-        pv_forecast_service.generate_pv_forecast(db, station)
-        db.flush()
+        with db.begin_nested():
+            pv_forecast_service.generate_pv_forecast(db, station)
     except Exception as exc:
         logger.info("optimization.pv_forecast_skipped", station_id=str(station.id), reason=str(exc))
 
-    now = utcnow()
     try:
-        consumption_forecast_service.generate_consumption_forecast(
-            db, station, now, now + timedelta(hours=settings.optimization_horizon_hours + 1)
-        )
-        db.flush()
+        with db.begin_nested():
+            consumption_forecast_service.generate_consumption_forecast(db, station, horizon_start, horizon_end)
     except Exception as exc:
         logger.info("optimization.consumption_forecast_skipped", station_id=str(station.id), reason=str(exc))
 
@@ -204,9 +253,21 @@ def _explain_interval(pi_data: dict, priority: str) -> str:
 
 
 def run_optimization_for_station(db: Session, station_id: uuid.UUID, triggered_by: str, triggered_by_user_id=None) -> OptimizationRun:
+    """Achizitioneaza lock-ul Redis pe toata durata calculului SI a commit-ului
+    tranzactiei -- nu doar a calculului. Eliberarea lock-ului inainte de commit
+    (comportamentul anterior) permitea unui al doilea apel concurent sa citeasca
+    planul anterior inca necomis, sa calculeze aceeasi versiune urmatoare si sa
+    esueze cu o eroare bruta de constrangere unica la commit, in loc de un
+    `OptimizationLockedError` curat sau o serializare reala. Apelantul nu mai
+    trebuie sa comita separat rezultatul acestei functii."""
     lock = _acquire_lock(station_id)
     try:
-        return _run_locked(db, station_id, triggered_by, triggered_by_user_id)
+        run = _run_locked(db, station_id, triggered_by, triggered_by_user_id)
+        db.commit()
+        return run
+    except Exception:
+        db.rollback()
+        raise
     finally:
         with contextlib.suppress(Exception):
             lock.release()
@@ -256,7 +317,7 @@ def _run_locked(db: Session, station_id: uuid.UUID, triggered_by: str, triggered
     if config is None or preference is None:
         return _fallback(db, run, station, horizon, interval_minutes, "Statia nu are configuratie sau preferinte publicate.")
 
-    _ensure_forecasts(db, station)
+    _ensure_forecasts(db, station, start, end)
 
     pv_series_raw = _build_pv_series(db, station_id, horizon)
     load_series_raw = _build_load_series(db, station_id, horizon)
@@ -267,34 +328,46 @@ def _run_locked(db: Session, station_id: uuid.UUID, triggered_by: str, triggered
     pv_series = _fill_gaps(pv_series_raw, fallback=0.0)
     load_series = _fill_gaps(load_series_raw, fallback=max([v for v in load_series_raw.values() if v], default=0.5))
 
-    price_buy, price_sell = {}, {}
+    price_buy_raw, price_sell_raw = {}, {}
     for t in horizon:
         imp = tariff_service.get_current_tariff_version(db, station_id, "import", t)
         exp = tariff_service.get_current_tariff_version(db, station_id, "export", t)
-        from app.models.market import MarketPriceInterval
-
-        market = db.scalar(
-            select(MarketPriceInterval).where(
+        # Fixture-urile sintetice de piata (import demo/diagnostic) nu trebuie sa alimenteze
+        # niciodata un pret folosit intr-un plan live -- le tratam ca inexistente aici; golul
+        # ramas e completat mai jos explicit ca "estimated", niciodata ca pret real.
+        market_row = db.execute(
+            select(MarketPriceInterval, ImportRun.is_synthetic_fixture)
+            .join(ImportRun, ImportRun.id == MarketPriceInterval.import_run_id)
+            .where(
                 MarketPriceInterval.is_current.is_(True),
                 MarketPriceInterval.interval_start <= t,
                 MarketPriceInterval.interval_end > t,
             )
-        )
-        price_buy[t] = _resolve_price(imp, market)
-        price_sell[t] = _resolve_price(exp, market)
+        ).first()
+        market = market_row[0] if market_row and not market_row[1] else None
+        price_buy_raw[t] = _resolve_price(imp, market)
+        price_sell_raw[t] = _resolve_price(exp, market)
 
-    if all(v is None for v in price_buy.values()):
+    if all(v is None for v in price_buy_raw.values()):
         return _fallback(db, run, station, horizon, interval_minutes, "Niciun tarif de import valid pentru orizontul cerut.")
 
-    fallback_price = next((v for v in price_buy.values() if v is not None), 0.8)
-    price_buy = {t: (v if v is not None else fallback_price) for t, v in price_buy.items()}
-    price_sell = {t: (v if v is not None else 0.0) for t, v in price_sell.items()}
+    price_buy, price_buy_quality = _fill_price_gaps(price_buy_raw)
+    # Pretul de export lipsa ramane implicit 0 (nicio ipoteza de venit necunoscut), nu
+    # imprumutat de la un alt interval -- comportament conservator neschimbat.
+    price_sell = {t: (v if v is not None else 0.0) for t, v in price_sell_raw.items()}
+
+    soc_kwh, soc_measured_at, soc_quality = _current_soc_kwh(db, station, config.battery_available_capacity_kwh or Decimal(0))
+    if station.execution_mode == ExecutionMode.live.value and soc_quality != "measured":
+        return _fallback(
+            db, run, station, horizon, interval_minutes,
+            f"SOC baterie {soc_quality} (prag prospetime {settings.optimization_soc_max_age_minutes} min) -- blocheaza planul live.",
+        )
 
     try:
         result = _solve(
             station=station, config=config, preference=preference, horizon=horizon,
             interval_minutes=interval_minutes, pv_series=pv_series, load_series=load_series,
-            price_buy=price_buy, price_sell=price_sell, current_soc_kwh=_current_soc_kwh(db, station, config.battery_available_capacity_kwh or Decimal(0)),
+            price_buy=price_buy, price_sell=price_sell, current_soc_kwh=soc_kwh,
             db=db,
         )
     except Exception as exc:
@@ -311,22 +384,49 @@ def _run_locked(db: Session, station_id: uuid.UUID, triggered_by: str, triggered
         )
         return _fallback(db, run, station, horizon, interval_minutes, reason)
 
+    price_estimated_count = sum(1 for q in price_buy_quality.values() if q == "estimated")
+
     run.status = OptimizationRunStatus.succeeded.value
     run.objective_value_lei = Decimal(str(round(result["objective"], 4)))
     run.finished_at = utcnow()
     run.input_snapshot = {
+        "schema_version": 1,
+        "horizon": {
+            "start": start.isoformat(), "end": end.isoformat(),
+            "interval_minutes": interval_minutes, "n_intervals": len(horizon),
+            "station_timezone": station.timezone,
+        },
+        "soc": {
+            "kwh": round(soc_kwh, 4), "quality": soc_quality,
+            "measured_at": soc_measured_at.isoformat() if soc_measured_at else None,
+            "max_age_minutes": settings.optimization_soc_max_age_minutes,
+        },
+        "pv_forecast_kw": {t.isoformat(): v for t, v in pv_series_raw.items()},
+        "load_forecast_kw": {t.isoformat(): v for t, v in load_series_raw.items()},
+        "price_buy_lei_kwh": {t.isoformat(): v for t, v in price_buy.items()},
+        "price_buy_quality": {t.isoformat(): q for t, q in price_buy_quality.items()},
+        "price_sell_lei_kwh": {t.isoformat(): v for t, v in price_sell.items()},
         "pv_coverage": sum(1 for v in pv_series_raw.values() if v is not None),
         "load_coverage": sum(1 for v in load_series_raw.values() if v is not None),
-        "n_intervals": len(horizon),
+        "price_estimated_count": price_estimated_count,
     }
+
+    shadow_downgrade_reason = None
+    if station.execution_mode == ExecutionMode.live.value and price_estimated_count > 0:
+        shadow_downgrade_reason = (
+            f"{price_estimated_count} din {len(horizon)} intervale de pret import sunt estimate "
+            "(fara sursa reala/nesintetica) -- planul ramane shadow pana la date reale."
+        )
+
     run.explanation_summary = (
         f"Cost net estimat pe orizont: {result['objective']:.2f} lei. "
         f"Prioritate: {preference.priority}. Interval optimizat: {start:%d.%m %H:%M} - {end:%d.%m %H:%M}."
+        + (f" {shadow_downgrade_reason}" if shadow_downgrade_reason else "")
     )
     db.add(run)
     db.flush()
 
-    _publish_plan(db, run, station, result["intervals"], price_buy, preference.priority)
+    _publish_plan(db, run, station, result["intervals"], price_buy, preference.priority, shadow_downgrade_reason=shadow_downgrade_reason)
     return run
 
 
@@ -556,14 +656,24 @@ def _fallback(db: Session, run: OptimizationRun, station: Station, horizon: list
     return run
 
 
-def _publish_plan(db: Session, run: OptimizationRun, station: Station, intervals: list[dict], price_buy: dict, priority: str, fallback_reason: str | None = None) -> Plan:
+def _publish_plan(
+    db: Session, run: OptimizationRun, station: Station, intervals: list[dict], price_buy: dict, priority: str,
+    fallback_reason: str | None = None, shadow_downgrade_reason: str | None = None,
+) -> Plan:
+    # Versiunea e monotona pe TOATE planurile statiei vreodata create, indiferent de
+    # status -- un plan `completed` (executie terminata) nu mai apare in filtrul de mai
+    # jos (care cauta doar planul activ de inlocuit), dar trebuie sa ramana socotit la
+    # numerotare, altfel versiunea reincepe gresit de la 1 dupa ce planurile active se
+    # inchid.
+    max_version = db.scalar(select(func.max(Plan.version)).where(Plan.station_id == station.id))
+    next_version = (max_version or 0) + 1
+
     previous = db.scalar(
         select(Plan)
         .where(Plan.station_id == station.id, Plan.status.in_([PlanStatus.published.value, PlanStatus.accepted_by_device.value, PlanStatus.executing.value]))
         .order_by(Plan.version.desc())
         .limit(1)
     )
-    next_version = (previous.version + 1) if previous else 1
     if previous is not None:
         previous.status = PlanStatus.superseded.value
         previous.superseded_at = utcnow()
@@ -574,8 +684,9 @@ def _publish_plan(db: Session, run: OptimizationRun, station: Station, intervals
         station_id=station.id,
         version=next_version,
         status=PlanStatus.published.value,
-        # Fallback intervals are diagnostic placeholders, never physical setpoints.
-        execution_mode="shadow" if fallback_reason is not None else station.execution_mode,
+        # Fallback intervals are diagnostic placeholders, never physical setpoints; a plan
+        # built from estimated/synthetic-derived prices also stays shadow-only until real data exists.
+        execution_mode="shadow" if (fallback_reason is not None or shadow_downgrade_reason is not None) else station.execution_mode,
         published_at=utcnow(),
     )
     db.add(plan)

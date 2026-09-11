@@ -265,3 +265,78 @@ Existing UTC day/month rows are retained as legacy_day/legacy_month and excluded
   prima autentificare reusita). Fluxul clasic cu cod de asociere
   (`app/api/v1/devices.py::claim_device`, `device_service.claim_device`) nu
   a fost atins.
+
+## 15. Pregatirea inputurilor de optimizare -- prospetime, proveniență si concurenta (issue #9)
+
+Domeniul strict al acestei lucrari: `optimization_service.py` -- pregatirea
+inputurilor (`_current_soc_kwh`, `_build_pv_series`, `_build_load_series`,
+`_fill_gaps`, `_fill_price_gaps`, `_ensure_forecasts`), orchestrarea
+tranzactiei (`run_optimization_for_station`, `_run_locked`) si publicarea
+(`_publish_plan`). Modelul matematic din `_solve` (constrangerile fizice,
+formularea Pyomo) NU a fost atins -- ramane in sarcina issue-ului #12.
+
+- **SOC de pornire are acum prospetime si proveniență explicite.** O
+  telemetrie SOC mai veche decat `optimization_soc_max_age_minutes`
+  (implicit 10 min, configurabil) sau absenta totala blocheaza un plan
+  **LIVE** (`_fallback` cu motiv explicit) -- nu mai e inlocuita tacit cu o
+  presupunere de 50%. Un plan **shadow** ramane calculabil chiar cu SOC
+  invechit/lipsa, pentru vizibilitate, dar calitatea (`"measured"` /
+  `"stale"` / `"missing"`) e vizibila explicit in `OptimizationRun.input_snapshot["soc"]`,
+  niciodata ascunsa/tratata ca masuratoare reala.
+- **Golurile de pret nu mai imprumuta o valoare arbitrara din alta parte a
+  orizontului.** `_fill_price_gaps` propaga din cel mai apropiat interval
+  cunoscut in timp (inainte, apoi -- pentru golul initial -- inapoi), nu
+  dintr-o valoare oarecare gasita oriunde in orizont. Fiecare interval e
+  marcat explicit `"real"` sau `"estimated"` in
+  `input_snapshot["price_buy_quality"]`. Un plan care ar fi altfel LIVE dar
+  contine cel putin un interval de pret `"estimated"` e retrogradat automat
+  la shadow (`shadow_downgrade_reason`, vizibil in `explanation_summary`),
+  in loc sa fie publicat live pe baza unei estimari.
+- **Fixture-urile sintetice de piata (import demo/diagnostic,
+  `ImportRun.is_synthetic_fixture=True`) nu mai pot alimenta un pret folosit
+  de optimizator**, nici macar cand sunt singura sursa "disponibila" pentru
+  un interval -- sunt tratate identic cu absenta datelor (deci completate
+  prin extrapolare temporala si marcate `"estimated"`, cu efectul de
+  retrogradare la shadow de mai sus).
+- **Aliniere prognoza de consum <-> grila de optimizare.** `_ensure_forecasts`
+  primeste acum granitele orizontului deja aliniate la grila UTC a
+  optimizarii (`start`/`end`, calculate o singura data in `_run_locked`), nu
+  `utcnow()` brut. Anterior, `generate_consumption_forecast` genera intervale
+  incepand de la un moment nealiniat la sfertul de ora, deci
+  `_build_load_series` nu gasea niciodata o potrivire exacta si intregul
+  consum cadea pe valoarea implicita de fallback -- reprodus si acoperit
+  explicit de `test_consumption_forecast_alignment_matches_optimization_grid`.
+- **`input_snapshot` e acum suficient pentru replay**, nu doar contoare de
+  acoperire: contine granitele orizontului, fusul orar al statiei, SOC-ul
+  folosit cu proveniența lui, seriile complete PV/consum/pret (cu calitate
+  per interval pentru pret) -- toate cheiate ca timestamp UTC ISO 8601.
+- **Versionarea planurilor e monotona pe toate planurile statiei, indiferent
+  de status.** Anterior, cautarea "ultimului plan" se limita la statusurile
+  active (`published`/`accepted_by_device`/`executing`); un plan ajuns
+  `completed` (executie incheiata) devenea invizibil acelei cautari, iar
+  urmatoarea optimizare reincepea numerotarea de la 1 -- coliziune garantata
+  cu constrangerea unica `(station_id, version)`. Numerotarea foloseste acum
+  `MAX(version)` pe toate planurile statiei; cautarea planului activ de
+  inlocuit (superseded) ramane separata si neschimbata.
+- **Lock-ul Redis e tinut pana la commit, nu doar pana la finalul calculului.**
+  `run_optimization_for_station` comite (sau anuleaza, la exceptie)
+  tranzactia inainte sa elibereze lock-ul -- anterior, eliberarea imediata
+  dupa `_run_locked` (inainte de commit-ul facut separat de apelant) permitea
+  unui al doilea apel concurent sa citeasca starea inca necomisa si sa
+  calculeze aceeasi versiune, esuand brut la commit pe constrangerea unica in
+  loc de o serializare curata. Acoperit de un test real cu doua thread-uri /
+  sesiuni separate pe `engine`-ul de test (nu fixtura `db` cu SAVEPOINT, care
+  nu poate exercita commit-uri concurente reale).
+- **Un refresh best-effort esuat (meteo/PV/consum) nu mai poate lasa sesiunea
+  SQLAlchemy inutilizabila.** Fiecare incercare din `_ensure_forecasts` ruleaza
+  acum intr-un SAVEPOINT dedicat (`db.begin_nested()`); o exceptie in timpul
+  unui flush anterior invalida intreaga tranzactie pana la un rollback
+  complet, ceea ce ar fi sters si `OptimizationRun`-ul deja adaugat de
+  apelant in aceeasi sesiune necomisa.
+- **Neatins deliberat:** `_solve` (modelul Pyomo), API-ul device si
+  formularele de configurare a statiei/preferintelor -- conform delimitarii
+  issue-ului.
+- **Nu acopera:** un job de reconciliere real care sa marcheze planurile
+  drept `completed` pe baza telemetriei observate (folosit doar simulat in
+  testul de versionare, prin setarea manuala a statusului) -- ramane in
+  sarcina altui issue de operare/reconciliere.

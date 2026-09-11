@@ -94,6 +94,11 @@ class Settings(BaseSettings):
     optimization_interval_minutes: int = 15
     optimization_solver_timeout_seconds: float = 30.0
     optimization_shadow_mode_default: bool = True
+    # Prag de prospetime pentru ultima telemetrie SOC folosita ca punct de plecare
+    # al optimizarii. SOC lipsa/invechit peste acest prag blocheaza planul LIVE
+    # (raman doar planuri shadow, calculate cu ultima valoare cunoscuta sau o
+    # presupunere documentata drept atare).
+    optimization_soc_max_age_minutes: int = 10
 
     # --- Retention ---
     telemetry_raw_retention_days: int = 90
