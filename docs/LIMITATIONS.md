@@ -4,35 +4,51 @@ Aceasta lista e intentionat onesta: enumera ce NU e verificat/implementat
 complet, cu motivul exact, asa cum a cerut specificatia ("nu masca
 integrarile lipsa prin date fictive nemarcate").
 
-## 1. Schema CSV-ului OPCOM nu a putut fi verificata direct
+## 1. Schema CSV-ului OPCOM (verificata ulterior impotriva unui export real)
 
-Mediul in care a fost dezvoltata aceasta platforma blocheaza la nivel de
-retea accesul catre `opcom.ro` (politica organizationala a mediului de
-lucru, confirmata explicit de proxy-ul de iesire: `EGRESS_BLOCKED`). Nu am
-putut deci descarca un CSV real si verifica numele exacte ale coloanelor,
-separatorul sau encoding-ul.
+Mediul in care a fost dezvoltata initial aceasta platforma blocheaza la
+nivel de retea accesul catre `opcom.ro` (politica organizationala a
+mediului de lucru, confirmata explicit de proxy-ul de iesire:
+`EGRESS_BLOCKED`) -- initial nu s-a putut deci descarca un CSV real si
+verifica numele exacte ale coloanelor, separatorul sau encoding-ul.
 
-**Ce am facut in schimb:**
-- `app/services/opcom_schema.py` defineste o schema **configurabila** (nume
-  de coloane, delimitator, encoding-uri candidate), cu cea mai buna
-  aproximare rezonabila pentru un export CSV romanesc, dar marcata explicit
-  ca neverificata.
-- Parserul (`app/services/opcom_service.py`) **valideaza structural** ce
-  gaseste (cauta antetul dupa alias-uri cunoscute, valideaza moneda,
-  numarul de intervale, continuitatea) si arunca o eroare clara (cu
-  primele linii primite) daca nu se potriveste -- nu presupune orbeste.
-- Daca sursa reala e inaccesibila (sau schema nu se potriveste) dupa toate
-  reincercarile, importul esueaza explicit. Numai in dezvoltare/test se poate
-  activa optional un fallback cu **date sintetice generate determinist** (`app/services/opcom_fixtures.py`), marcate explicit
-  (`ImportRun.is_synthetic_fixture=True`) si vizibile ca atare in panoul de
-  administrare.
-- **Actiune recomandata inainte de productie reala:** un operator cu acces
-  la internet trebuie sa descarce manual un CSV real de pe opcom.ro, sa-l
-  compare cu schema implicita din `opcom_schema.py` si sa ajusteze
-  `interval_column`/`price_column`/`delimiter`/etc. daca difera (sau sa
-  deschida o modificare de cod daca structura reala e semnificativ
-  diferita). Testele din `tests/unit/test_opcom_parser.py` documenteaza
-  exact ce format e acceptat in acest moment.
+**Actualizare:** utilizatorul a furnizat ulterior un export CSV real
+(`rezultatePZU_PT15M_...`, rezolutie 15 minute), care a scos la iveala
+diferente reale fata de aproximarea initiala -- corectate in cod, nu doar
+documentate:
+- Fisierul foloseste **virgula** ca delimitator (nu punct-virgula, cum era
+  presupus initial), cu fiecare camp incadrat in ghilimele duble (CSV
+  standard RFC4180). Parserul folosea o simpla `line.split(delimiter)`, care
+  NU intelege ghilimelele -- orice camp care ar fi continut el insusi
+  delimitatorul (ex. un pret cu separator zecimal identic cu delimitatorul)
+  s-ar fi rupt gresit. Inlocuit cu `csv.reader`, care gestioneaza corect
+  incadrarea in ghilimele.
+- Coloana reala de pret se numeste **"Pret de Inchidere a Pietei [lei/MWh]"**,
+  nu doar "Pret" -- potrivirea antetului cerea egalitate EXACTA cu un alias
+  scurt, deci nu se potrivea niciodata. Schimbata la potrivire pe **subsir**
+  (alias continut in numele coloanei), pastrand totusi validarea structurala
+  (antetul trebuie sa aiba o coloana de interval SI o coloana de pret pe
+  indici DIFERITI -- un tabel sumar anterior in fisier, cu medii
+  Base/Peak/Off-Peak, e ignorat automat pentru ca nu are coloana de interval).
+- Fisierul are un titlu si un tabel sumar (medii Base/Peak/Off-Peak) INAINTE
+  de tabelul detaliat pe intervale -- deja gestionat corect de cautarea
+  antetului in primele `header_search_rows` linii nevide.
+- `app/services/opcom_schema.py`: delimitatorul implicit a fost schimbat la
+  virgula (era punct-virgula) sa reflecte formatul real observat; sniffer-ul
+  de delimitator ramane ca fallback daca un format viitor difera.
+- Test de regresie nou: `tests/unit/test_opcom_parser.py::test_parses_real_opcom_export_sample`,
+  ruland impotriva unei copii neschimbate a exportului real
+  (`tests/fixtures/opcom_real_sample_pt15m_2026-09-12.csv`), verificand toate
+  cele 96 de intervale si primele/ultimele preturi exact.
+
+**Ramane neverificat** (limitarea de retea originala inca se aplica in acest
+mediu sandbox): fetch-ul HTTP live catre `opcom.ro` (`_fetch_raw` in
+`app/services/opcom_service.py`) -- headerele de raspuns reale, coduri de
+eroare, comportamentul retry-ului contra serverului real. Parserul insusi
+(logica de interpretare a CSV-ului, odata continutul primit) e acum verificat
+impotriva unui esantion real, nu doar presupus. Fallback-ul cu date sintetice
+(`app/services/opcom_fixtures.py`) ramane neschimbat pentru cazul in care
+sursa reala e indisponibila.
 
 ## 2. Sursa meteo (Open-Meteo) -- acelasi tip de limitare de retea
 
@@ -359,3 +375,75 @@ Invitatiile/claim/SSE (#6) si solver-ul nu au fost atinse.
   PV sau tintele SOC -- editorul implementat e functional (adauga/sterge
   randuri, validare server-side completa, fara pierdere de date la editare),
   dar ramane un tabel HTML simplu cu JS vanilla, nu o interfata avansata.
+## 15. Pregatirea inputurilor de optimizare -- prospetime, proveniență si concurenta (issue #9)
+
+Domeniul strict al acestei lucrari: `optimization_service.py` -- pregatirea
+inputurilor (`_current_soc_kwh`, `_build_pv_series`, `_build_load_series`,
+`_fill_gaps`, `_fill_price_gaps`, `_ensure_forecasts`), orchestrarea
+tranzactiei (`run_optimization_for_station`, `_run_locked`) si publicarea
+(`_publish_plan`). Modelul matematic din `_solve` (constrangerile fizice,
+formularea Pyomo) NU a fost atins -- ramane in sarcina issue-ului #12.
+
+- **SOC de pornire are acum prospetime si proveniență explicite.** O
+  telemetrie SOC mai veche decat `optimization_soc_max_age_minutes`
+  (implicit 10 min, configurabil) sau absenta totala blocheaza un plan
+  **LIVE** (`_fallback` cu motiv explicit) -- nu mai e inlocuita tacit cu o
+  presupunere de 50%. Un plan **shadow** ramane calculabil chiar cu SOC
+  invechit/lipsa, pentru vizibilitate, dar calitatea (`"measured"` /
+  `"stale"` / `"missing"`) e vizibila explicit in `OptimizationRun.input_snapshot["soc"]`,
+  niciodata ascunsa/tratata ca masuratoare reala.
+- **Golurile de pret nu mai imprumuta o valoare arbitrara din alta parte a
+  orizontului.** `_fill_price_gaps` propaga din cel mai apropiat interval
+  cunoscut in timp (inainte, apoi -- pentru golul initial -- inapoi), nu
+  dintr-o valoare oarecare gasita oriunde in orizont. Fiecare interval e
+  marcat explicit `"real"` sau `"estimated"` in
+  `input_snapshot["price_buy_quality"]`. Un plan care ar fi altfel LIVE dar
+  contine cel putin un interval de pret `"estimated"` e retrogradat automat
+  la shadow (`shadow_downgrade_reason`, vizibil in `explanation_summary`),
+  in loc sa fie publicat live pe baza unei estimari.
+- **Fixture-urile sintetice de piata (import demo/diagnostic,
+  `ImportRun.is_synthetic_fixture=True`) nu mai pot alimenta un pret folosit
+  de optimizator**, nici macar cand sunt singura sursa "disponibila" pentru
+  un interval -- sunt tratate identic cu absenta datelor (deci completate
+  prin extrapolare temporala si marcate `"estimated"`, cu efectul de
+  retrogradare la shadow de mai sus).
+- **Aliniere prognoza de consum <-> grila de optimizare.** `_ensure_forecasts`
+  primeste acum granitele orizontului deja aliniate la grila UTC a
+  optimizarii (`start`/`end`, calculate o singura data in `_run_locked`), nu
+  `utcnow()` brut. Anterior, `generate_consumption_forecast` genera intervale
+  incepand de la un moment nealiniat la sfertul de ora, deci
+  `_build_load_series` nu gasea niciodata o potrivire exacta si intregul
+  consum cadea pe valoarea implicita de fallback -- reprodus si acoperit
+  explicit de `test_consumption_forecast_alignment_matches_optimization_grid`.
+- **`input_snapshot` e acum suficient pentru replay**, nu doar contoare de
+  acoperire: contine granitele orizontului, fusul orar al statiei, SOC-ul
+  folosit cu proveniența lui, seriile complete PV/consum/pret (cu calitate
+  per interval pentru pret) -- toate cheiate ca timestamp UTC ISO 8601.
+- **Versionarea planurilor e monotona pe toate planurile statiei, indiferent
+  de status.** Anterior, cautarea "ultimului plan" se limita la statusurile
+  active (`published`/`accepted_by_device`/`executing`); un plan ajuns
+  `completed` (executie incheiata) devenea invizibil acelei cautari, iar
+  urmatoarea optimizare reincepea numerotarea de la 1 -- coliziune garantata
+  cu constrangerea unica `(station_id, version)`. Numerotarea foloseste acum
+  `MAX(version)` pe toate planurile statiei; cautarea planului activ de
+  inlocuit (superseded) ramane separata si neschimbata.
+- **Serializarea ramane activa pana la commit fara ca serviciul sa comita
+  tranzactia apelantului.** Lock-ul Redis evita lucrul concurent obisnuit, iar
+  un advisory lock PostgreSQL transaction-scoped pe ID-ul statiei ramane activ
+  pana la commit/rollback-ul detinut de ruta sau worker. Astfel urmatoarea
+  rulare vede versiunea deja publicata, iar auditul si planul pot ramane in
+  aceeasi tranzactie. Acoperit de un test real cu doua thread-uri/sesiuni
+  separate pe `engine`-ul de test.
+- **Un refresh best-effort esuat (meteo/PV/consum) nu mai poate lasa sesiunea
+  SQLAlchemy inutilizabila.** Fiecare incercare din `_ensure_forecasts` ruleaza
+  acum intr-un SAVEPOINT dedicat (`db.begin_nested()`); o exceptie in timpul
+  unui flush anterior invalida intreaga tranzactie pana la un rollback
+  complet, ceea ce ar fi sters si `OptimizationRun`-ul deja adaugat de
+  apelant in aceeasi sesiune necomisa.
+- **Neatins deliberat:** `_solve` (modelul Pyomo), API-ul device si
+  formularele de configurare a statiei/preferintelor -- conform delimitarii
+  issue-ului.
+- **Nu acopera:** un job de reconciliere real care sa marcheze planurile
+  drept `completed` pe baza telemetriei observate (folosit doar simulat in
+  testul de versionare, prin setarea manuala a statusului) -- ramane in
+  sarcina altui issue de operare/reconciliere.
