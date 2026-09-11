@@ -27,10 +27,17 @@ class PreferenceVersion(Entity):
     doar un utilizator autorizat creeaza o versiune noua explicit.
 
     Distinctie obligatoriu vs. flexibil:
-      - constrangeri OBLIGATORII (hard, niciodata incalcate de optimizator):
-        min_reserve_soc_percent, max_normal_soc_percent, max_optimization_energy_kwh,
-        allow_grid_charge, allow_battery_export, max_efc_per_day/month, limitele
-        tehnice din StationConfigVersion.
+      - constrangeri OBLIGATORII (hard, niciodata incalcate INTENTIONAT de
+        optimizator): max_optimization_energy_kwh, allow_grid_charge,
+        allow_battery_export, max_efc_per_day/month, limitele tehnice din
+        StationConfigVersion. min_reserve_soc_percent/max_normal_soc_percent
+        sunt tot obligatorii pentru orice decizie NOUA a optimizatorului, dar
+        cu o exceptie explicita: daca SOC-ul masurat la inceputul orizontului
+        e deja in afara benzii, banda devine o tinta puternic penalizata (nu o
+        limita fizica) exact pentru intervalul de recuperare -- altfel un SOC
+        real in afara benzii ar face orice plan infezabil de la primul interval,
+        iar optimizatorul ar fi tentat sa "corecteze" artificial SOC-ul masurat
+        in loc sa raporteze corect starea si sa recupereze cat mai repede.
       - preferinte FLEXIBILE (soft, optimizatorul le urmareste dar poate devia
         cu penalizare daca intra in conflict cu o constrangere obligatorie sau
         cu obiectivul de cost): soc_targets, ev_required_energy_kwh/ev_departure_time,
