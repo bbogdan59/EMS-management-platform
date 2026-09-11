@@ -1,18 +1,20 @@
 from __future__ import annotations
 
-from datetime import UTC, timedelta
+import uuid
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 from sqlalchemy import select
 
 from app.core.security import utcnow
-from app.models.enums import OptimizationRunStatus
+from app.models.enums import ExecutionMode, OptimizationRunStatus, PlanStatus
 from app.models.forecast import ConsumptionForecast, PvForecast
 from app.models.optimization import Plan, PlanInterval
 from app.models.preference import PreferenceVersion
 from app.models.tariff import Tariff, TariffVersion
-from app.services.optimization_service import run_optimization_for_station
-from tests.factories import make_org, make_station, make_user
+from app.models.telemetry import TelemetryAggregate, TelemetryRaw
+from app.services.optimization_service import OptimizationLockedError, run_optimization_for_station
+from tests.factories import make_device, make_market_day, make_org, make_station, make_user
 
 
 def _add_tariffs(db, station, import_price="0.9", export_price="0.35"):
@@ -158,3 +160,362 @@ def test_optimization_fallback_when_no_forecasts_available(db, monkeypatch):
 
     assert run.is_fallback is True
     assert "Prognoze" in run.fallback_reason or "prognoz" in run.fallback_reason.lower()
+
+
+# --- Regresii pentru issue #9: prospetime SOC, proveniența pretului, ---
+# --- aliniere prognoza consum, snapshot reproductibil, versionare si ---
+# --- concurenta pana la commit. ------------------------------------------
+
+
+def _add_soc(db, station, *, age_minutes: float, percent: str = "60") -> TelemetryRaw:
+    device = make_device(db, station)
+    now = utcnow()
+    db.add(
+        TelemetryRaw(
+            device_id=device.id, station_id=station.id, boot_id="boot-1", sequence=1,
+            measured_at=now - timedelta(minutes=age_minutes), received_at=now,
+            battery_soc_percent=Decimal(percent),
+        )
+    )
+    db.flush()
+    return device
+
+
+def test_stale_soc_blocks_live_plan_but_not_shadow(db):
+    user = make_user(db, email="opt-soc@test.local")
+    org = make_org(db, "Opt SOC Org")
+    station = make_station(db, org, user, name="Opt SOC Station")
+    _add_tariffs(db, station)
+    _add_forecasts(db, station)
+    _add_soc(db, station, age_minutes=45)  # depaseste optimization_soc_max_age_minutes (10 implicit)
+    db.commit()
+
+    # Statia ramane in modul implicit "shadow": SOC vechi nu blocheaza planul,
+    # dar informatia trebuie sa fie vizibila in snapshot drept "stale", nu ascunsa.
+    run_shadow = run_optimization_for_station(db, station.id, triggered_by="user")
+    assert run_shadow.is_fallback is False
+    assert run_shadow.input_snapshot["soc"]["quality"] == "stale"
+
+    station.execution_mode = ExecutionMode.live.value
+    db.add(station)
+    db.commit()
+
+    run_live = run_optimization_for_station(db, station.id, triggered_by="user")
+    assert run_live.is_fallback is True
+    assert "soc" in run_live.fallback_reason.lower() or "SOC" in run_live.fallback_reason
+
+
+def test_missing_soc_blocks_live_plan(db):
+    user = make_user(db, email="opt-soc-missing@test.local")
+    org = make_org(db, "Opt SOC Missing Org")
+    station = make_station(db, org, user, name="Opt SOC Missing Station")
+    station.execution_mode = ExecutionMode.live.value
+    db.add(station)
+    _add_tariffs(db, station)
+    _add_forecasts(db, station)
+    db.commit()  # nicio telemetrie SOC inregistrata vreodata
+
+    run = run_optimization_for_station(db, station.id, triggered_by="user")
+    assert run.is_fallback is True
+    assert run.input_snapshot == {}  # fallback nu publica un snapshot de succes
+    assert "SOC" in run.fallback_reason or "soc" in run.fallback_reason.lower()
+
+
+def test_price_gaps_are_time_local_filled_and_marked_estimated(db):
+    """Reproduce exact problema semnalata: un pret disponibil undeva in orizont
+    nu trebuie folosit orb pentru toate golurile -- completarea trebuie sa fie
+    din cel mai apropiat interval cunoscut in timp, iar fiecare interval
+    completat trebuie marcat explicit "estimated" in snapshot. Ceas fix (ca la
+    testele de piata din test_market_analytics.py): orizontul de 36h trebuie sa
+    acopere exact doua zile calendaristice UTC cunoscute, nu un numar
+    nedeterminist in functie de cand ruleaza testul cu adevarat."""
+    from freezegun import freeze_time
+
+    with freeze_time("2026-03-10 08:00:00"):
+        user = make_user(db, email="opt-pricegap@test.local")
+        org = make_org(db, "Opt Pricegap Org")
+        station = make_station(db, org, user, name="Opt Pricegap Station")
+        station.execution_mode = ExecutionMode.live.value
+        db.add(station)
+        _add_soc(db, station, age_minutes=1)
+
+        tariff = Tariff(station_id=station.id, direction="import", kind="indexed_opcom", name="import-opcom")
+        db.add(tariff)
+        db.flush()
+        db.add(
+            TariffVersion(
+                tariff_id=tariff.id, valid_from=utcnow() - timedelta(days=1),
+                opcom_margin_lei_per_kwh=Decimal("0.1"), fixed_monthly_fee_lei=Decimal("0"),
+                variable_component_lei_per_kwh=Decimal("0"),
+            )
+        )
+        export_tariff = Tariff(station_id=station.id, direction="export", kind="fixed", name="export-fixed")
+        db.add(export_tariff)
+        db.flush()
+        db.add(
+            TariffVersion(
+                tariff_id=export_tariff.id, valid_from=utcnow() - timedelta(days=1),
+                fixed_price_lei_per_kwh=Decimal("0.35"), fixed_monthly_fee_lei=Decimal("0"),
+                variable_component_lei_per_kwh=Decimal("0"),
+            )
+        )
+        _add_forecasts(db, station)
+
+        # Piata reala acopera doar prima zi a orizontului (96 intervale de 15 min la 500 lei/MWh);
+        # a doua zi ramane fara nicio publicare reala -- exact scenariul "pret maine nepublicat".
+        make_market_day(db, utcnow().date(), [500.0] * 96, source="opcom_pzu_gap_test")
+        db.commit()
+
+        run = run_optimization_for_station(db, station.id, triggered_by="user")
+
+        assert run.is_fallback is False
+        quality = run.input_snapshot["price_buy_quality"]
+        assert "real" in quality.values()
+        assert "estimated" in quality.values()
+        assert run.input_snapshot["price_estimated_count"] > 0
+
+        # Planul nu poate ramane live cand contine preturi estimate: retrogradat la shadow,
+        # cu motivul documentat, in loc sa fie tratat tacit ca live.
+        plan = db.scalar(select(Plan).where(Plan.optimization_run_id == run.id))
+        assert plan.execution_mode == ExecutionMode.shadow.value
+        assert "estimat" in run.explanation_summary.lower()
+
+
+def test_synthetic_market_price_is_never_treated_as_real(db):
+    """O fixtura sintetica (demo/diagnostic) nu trebuie sa alimenteze niciodata
+    pretul folosit intr-un plan -- trebuie tratata identic cu absenta datelor,
+    nu ca sursa reala, indiferent daca e singura valoare "disponibila"."""
+    from freezegun import freeze_time
+
+    with freeze_time("2026-03-10 08:00:00"):
+        user = make_user(db, email="opt-synthetic@test.local")
+        org = make_org(db, "Opt Synthetic Org")
+        station = make_station(db, org, user, name="Opt Synthetic Station")
+        station.execution_mode = ExecutionMode.live.value
+        db.add(station)
+        _add_soc(db, station, age_minutes=1)
+
+        tariff = Tariff(station_id=station.id, direction="import", kind="indexed_opcom", name="import-opcom")
+        db.add(tariff)
+        db.flush()
+        db.add(
+            TariffVersion(
+                tariff_id=tariff.id, valid_from=utcnow() - timedelta(days=1),
+                opcom_margin_lei_per_kwh=Decimal("0.1"), fixed_monthly_fee_lei=Decimal("0"),
+                variable_component_lei_per_kwh=Decimal("0"),
+            )
+        )
+        _add_forecasts(db, station)
+
+        today_utc = utcnow().date()
+        tomorrow_utc = today_utc + timedelta(days=1)
+        # Real doar pentru prima zi; a doua zi are DOAR o fixtura sintetica -- trebuie
+        # tratata ca lipsa, deci completata prin extrapolare din ziua reala si marcata "estimated".
+        make_market_day(db, today_utc, [500.0] * 96, source="opcom_pzu_real_test")
+        make_market_day(db, tomorrow_utc, [50.0] * 96, is_synthetic=True, source="opcom_pzu_synthetic_test")
+        db.commit()
+
+        run = run_optimization_for_station(db, station.id, triggered_by="user")
+
+        assert run.is_fallback is False
+        # Daca fixtura sintetica (50 lei/MWh = 0.05+0.1 = 0.15 lei/kWh) ar fi fost folosita ca reala,
+        # ea ar fi aparut ca "real" in a doua zi in loc de "estimated" propagat din prima zi.
+        quality = run.input_snapshot["price_buy_quality"]
+        prices = run.input_snapshot["price_buy_lei_kwh"]
+        synthetic_day_keys = [k for k in quality if datetime.fromisoformat(k).astimezone(UTC).date() == tomorrow_utc]
+        assert synthetic_day_keys
+        assert all(quality[k] == "estimated" for k in synthetic_day_keys)
+        assert all(abs(prices[k] - 0.15) > 0.01 for k in synthetic_day_keys)
+
+
+def test_input_snapshot_is_sufficient_for_replay(db):
+    user = make_user(db, email="opt-snapshot@test.local")
+    org = make_org(db, "Opt Snapshot Org")
+    station = make_station(db, org, user, name="Opt Snapshot Station")
+    _add_tariffs(db, station)
+    _add_forecasts(db, station)
+    _add_soc(db, station, age_minutes=1)
+    db.commit()
+
+    run = run_optimization_for_station(db, station.id, triggered_by="user")
+
+    snap = run.input_snapshot
+    assert snap["schema_version"] == 1
+    assert snap["horizon"]["n_intervals"] == len(snap["pv_forecast_kw"]) == len(snap["load_forecast_kw"])
+    assert snap["horizon"]["interval_minutes"] == 15
+    assert snap["soc"]["quality"] == "measured"
+    assert snap["soc"]["measured_at"] is not None
+    assert snap["config"]["id"] == str(run.station_config_version_id)
+    assert snap["preference"]["id"] == str(run.preference_version_id)
+    assert set(snap["pv_forecast_raw_kw"]) == set(snap["pv_forecast_kw"])
+    assert set(snap["load_forecast_raw_kw"]) == set(snap["load_forecast_kw"])
+    assert set(snap["price_buy_lei_kwh"].keys()) == set(snap["price_buy_quality"].keys())
+    # Fiecare cheie de orizont e reproductibila ca timestamp UTC explicit.
+    for key in list(snap["pv_forecast_kw"])[:3]:
+        datetime.fromisoformat(key)
+
+
+def test_optimization_service_does_not_commit_callers_transaction(monkeypatch):
+    from unittest.mock import MagicMock
+
+    from app.services import optimization_service
+
+    db = MagicMock()
+    expected = object()
+    lock = MagicMock()
+    monkeypatch.setattr(optimization_service, "_acquire_lock", lambda _station_id: lock)
+    monkeypatch.setattr(optimization_service, "_run_locked", lambda *_args: expected)
+
+    result = run_optimization_for_station(db, uuid.uuid4(), triggered_by="user")
+
+    assert result is expected
+    db.commit.assert_not_called()
+    db.rollback.assert_not_called()
+    lock.release.assert_called_once()
+
+
+def test_plan_version_does_not_restart_after_previous_plan_completed(db):
+    user = make_user(db, email="opt-version@test.local")
+    org = make_org(db, "Opt Version Org")
+    station = make_station(db, org, user, name="Opt Version Station")
+    _add_tariffs(db, station)
+    _add_forecasts(db, station)
+    db.commit()
+
+    first_run = run_optimization_for_station(db, station.id, triggered_by="user")
+    first_plan = db.scalar(select(Plan).where(Plan.optimization_run_id == first_run.id))
+    assert first_plan.version == 1
+
+    # Simuleaza inchiderea completa a ciclului de viata al planului (executat integral).
+    first_plan.status = PlanStatus.completed.value
+    db.add(first_plan)
+    db.commit()
+
+    second_run = run_optimization_for_station(db, station.id, triggered_by="user")
+    second_plan = db.scalar(select(Plan).where(Plan.optimization_run_id == second_run.id))
+
+    assert second_plan.version == 2, "versiunea nu trebuie sa reinceapa de la 1 dupa un plan inchis (completed)"
+
+
+def test_consumption_forecast_alignment_matches_optimization_grid(db):
+    """Reproduce bug-ul: daca `_ensure_forecasts` genereaza prognoza de consum
+    pornind de la un moment nealiniat la grila de 15 minute a orizontului,
+    `_build_load_series` nu gaseste nicio potrivire exacta si intregul consum
+    cade pe valoarea implicita de fallback. Fara nicio prognoza de consum
+    pre-populata manual: se bazeaza exclusiv pe generarea reala din istoric."""
+    user = make_user(db, email="opt-align@test.local")
+    org = make_org(db, "Opt Align Org")
+    station = make_station(db, org, user, name="Opt Align Station")
+    _add_tariffs(db, station)
+
+    # Istoric de telemetrie agregata (cold-start e suficient -- doar aliniere se testeaza).
+    start = utcnow() - timedelta(days=2)
+    for q in range(4 * 24 * 2):
+        t = start + timedelta(minutes=15 * q)
+        db.add(
+            TelemetryAggregate(
+                station_id=station.id, period_type="interval_15m", period_start=t, period_end=t + timedelta(minutes=15),
+                load_energy_kwh=Decimal("0.3"), coverage={"load": 1.0},
+            )
+        )
+    db.flush()
+
+    # PV: fara istoric real, dar generarea PV e best-effort si tolerata la esec (vezi _ensure_forecasts);
+    # ce conteaza aici e coverage-ul de consum, generat exclusiv din TelemetryAggregate de mai sus.
+    db.commit()
+
+    run = run_optimization_for_station(db, station.id, triggered_by="user")
+
+    assert run.input_snapshot["load_coverage"] == run.input_snapshot["horizon"]["n_intervals"], (
+        "toate intervalele orizontului trebuie sa gaseasca o prognoza de consum aliniata exact"
+    )
+
+
+def test_forecast_refresh_failure_does_not_poison_session(db, monkeypatch):
+    """Un esec in timpul unui refresh best-effort (meteo/PV/consum) nu trebuie
+    sa lase sesiunea SQLAlchemy intr-o stare inutilizabila pentru restul
+    calculului -- vezi SAVEPOINT-urile dedicate din `_ensure_forecasts`."""
+    from sqlalchemy import text
+
+    from app.services import weather_service
+
+    def _break_transaction(*args, **kwargs):
+        db.execute(text("SELECT 1/0"))
+
+    monkeypatch.setattr(weather_service, "refresh_weather_for_station", _break_transaction)
+
+    user = make_user(db, email="opt-session@test.local")
+    org = make_org(db, "Opt Session Org")
+    station = make_station(db, org, user, name="Opt Session Station")
+    _add_tariffs(db, station)
+    _add_forecasts(db, station)
+    db.commit()
+
+    run = run_optimization_for_station(db, station.id, triggered_by="user")
+
+    assert run.status == OptimizationRunStatus.succeeded.value
+    assert run.is_fallback is False
+    # Sesiunea ramane utilizabila dupa esec: aceasta interogare ar ridica
+    # InvalidRequestError daca tranzactia ar fi ramas invalidata.
+    assert db.scalar(select(Plan).where(Plan.optimization_run_id == run.id)) is not None
+
+
+def test_concurrent_optimization_runs_serialize_until_commit(engine):
+    """Lock-ul Redis trebuie tinut pe toata durata calculului SI a commit-ului.
+    Doua apeluri concurente reale (sesiuni/conexiuni separate, engine-ul de test
+    real, nu fixtura `db` cu SAVEPOINT care nu poate exercita commit-uri
+    concurente reale) trebuie sa produca exact un plan reusit plus fie un al
+    doilea plan cu versiune secventiala corecta (daca a doua incercare a asteptat
+    si a rulat dupa commit-ul primei), fie un `OptimizationLockedError` curat --
+    niciodata o eroare bruta de constrangere unica la commit."""
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    from sqlalchemy import delete
+    from sqlalchemy.orm import Session
+
+    from app.models.organization import Organization
+    from app.models.user import User
+
+    suffix = uuid.uuid4().hex
+    with Session(engine) as setup:
+        user = make_user(setup, email=f"{suffix}@concurrency.test")
+        org = make_org(setup, f"Concurrency Opt {suffix}")
+        station = make_station(setup, org, user, name=f"Concurrency Opt Station {suffix}")
+        _add_tariffs(setup, station)
+        _add_forecasts(setup, station)
+        setup.commit()
+        station_id, user_id, org_id = station.id, user.id, org.id
+
+    barrier = Barrier(2)
+
+    def attempt():
+        with Session(engine) as session:
+            barrier.wait(timeout=5)
+            try:
+                run = run_optimization_for_station(session, station_id, triggered_by="user")
+                session.commit()
+                return ("ok", run.id)
+            except OptimizationLockedError:
+                return ("locked", None)
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            futures = [pool.submit(attempt) for _ in range(2)]
+            outcomes = [f.result(timeout=30) for f in futures]
+
+        oks = [o for o in outcomes if o[0] == "ok"]
+        assert len(oks) >= 1, "cel putin o incercare trebuie sa reuseasca"
+        assert all(o[0] in ("ok", "locked") for o in outcomes), "nicio eroare bruta de constrangere unica"
+
+        with Session(engine) as verify:
+            plans = verify.scalars(
+                select(Plan).where(Plan.station_id == station_id).order_by(Plan.version)
+            ).all()
+            versions = [p.version for p in plans]
+            assert versions == list(range(1, len(versions) + 1)), "versiunile trebuie sa fie secventiale, fara coliziuni"
+    finally:
+        with Session(engine) as cleanup:
+            cleanup.execute(delete(Organization).where(Organization.id == org_id))
+            cleanup.execute(delete(User).where(User.id == user_id))
+            cleanup.commit()
