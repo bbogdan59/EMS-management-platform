@@ -220,6 +220,65 @@ def test_seasonal_baseline_aligns_by_calendar_day_not_ordinal_day_of_year(db):
     assert predicted_by_date["2026-09-11"] == 911.0
 
 
+def test_timeline_split_stays_raw_resolution_for_short_windows(db):
+    """Fereastra implicita (30 zile, folosita de UI) trebuie sa ramana la
+    rezolutia bruta a randurilor stocate, neschimbata -- pragul de agregare
+    orara e strict PESTE 10 zile."""
+    now = utcnow()
+    day = (now - timedelta(days=1)).date()
+    make_market_day(db, day, [100.0, 200.0, 300.0, 400.0])  # 4 randuri/zi (6h fiecare)
+
+    series = market.get_timeline_split(db, now - timedelta(days=9), now + timedelta(days=1))  # fereastra = 10 zile exact
+
+    assert len(series) == 4  # nicio agregare -- un punct per rand stocat
+
+
+def test_timeline_split_aggregates_hourly_for_long_windows(db):
+    """Peste pragul de agregare (>10 zile), numarul de puncte trebuie sa
+    ramana rezonabil (pe ora, nu pe rezolutia bruta de import) indiferent
+    cat de lunga e fereastra ceruta -- reproduce exact scenariul unui an
+    intreg de istoric la 15 minute (issue #33/#35)."""
+    now = utcnow()
+    # O luna de zile la rezolutie de 15 minute (96 randuri/zi) -- ar insemna
+    # ~2880 de puncte fara agregare, pentru o fereastra de doar 30 de zile.
+    for offset in range(30):
+        day = (now - timedelta(days=offset + 5)).date()
+        make_market_day(db, day, [100.0] * 96)
+
+    series = market.get_timeline_split(db, now - timedelta(days=40), now)
+
+    assert 0 < len(series) <= 30 * 24  # cel mult un punct pe ora, nu unul pe rand brut
+    assert all(abs(p["price_lei_mwh"] - 100.0) < 0.01 for p in series)
+
+
+def test_timeline_split_hourly_aggregation_averages_within_bucket(db):
+    now = utcnow()
+    day = (now - timedelta(days=20)).date()
+    # 4 randuri de 6h fiecare in aceeasi zi, cu preturi diferite -- cel putin
+    # o "ora" din grup ramane distincta ca sa poata fi verificata media.
+    make_market_day(db, day, [100.0, 300.0, 500.0, 700.0])
+
+    series = market.get_timeline_split(db, now - timedelta(days=40), now)
+
+    assert series  # agregarea ramane in interval, chiar daca fereastra e lunga
+    prices = {p["price_lei_mwh"] for p in series}
+    assert prices == {100.0, 300.0, 500.0, 700.0}  # fara suprapunere intre bucket-ele orare distincte
+
+
+def test_timeline_split_hourly_aggregation_excludes_synthetic_by_default(db):
+    now = utcnow()
+    real_day = (now - timedelta(days=20)).date()
+    synthetic_day = (now - timedelta(days=15)).date()
+    make_market_day(db, real_day, [100.0] * 24)
+    make_market_day(db, synthetic_day, [900.0] * 24, is_synthetic=True)
+
+    series = market.get_timeline_split(db, now - timedelta(days=40), now)
+
+    assert series
+    assert all(p["price_lei_mwh"] != 900.0 for p in series)
+    assert all(p["is_synthetic"] is False for p in series)
+
+
 def test_market_status_uses_bucharest_timezone_near_midnight(db):
     """22:00 UTC in septembrie e deja 01:00 a doua zi in Bucuresti (DST activ,
     UTC+3): "azi" trebuie sa fie ziua locala, nu cea UTC."""

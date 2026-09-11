@@ -3,7 +3,9 @@ from __future__ import annotations
 from datetime import date, timedelta
 
 from app.models.enums import ImportRunStatus
+from app.services import opcom_service
 from app.services.opcom_service import (
+    OpcomFetchError,
     get_real_imported_dates,
     has_successful_real_import,
     import_opcom_day,
@@ -18,8 +20,17 @@ def test_import_unpublished_for_far_future_date(db):
     assert run.interval_count is None
 
 
-def test_import_falls_back_to_synthetic_when_source_unreachable(db):
-    # In mediul de test, opcom.ro nu e accesibil -> fallback sintetic, marcat explicit.
+def test_import_falls_back_to_synthetic_when_source_unreachable(db, monkeypatch):
+    # Sursa reala trebuie sa fie explicit indisponibila pentru acest test, nu doar
+    # "de obicei" indisponibila in mediul de rulare -- opcom.ro poate fi accesibil
+    # efectiv din unele medii CI (spre deosebire de acest sandbox), caz in care un
+    # import REAL ar reusi si ar face `is_synthetic_fixture` fals, netestand deloc
+    # fallback-ul urmarit aici. Simulam explicit indisponibilitatea.
+    def _always_unreachable(url):
+        raise OpcomFetchError("simulat indisponibil pentru test")
+
+    monkeypatch.setattr(opcom_service, "_fetch_raw", _always_unreachable)
+
     d = date.today()
     run = import_opcom_day(db, d)
     assert run.status == ImportRunStatus.succeeded.value
