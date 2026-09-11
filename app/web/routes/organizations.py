@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from decimal import Decimal, InvalidOperation
+from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import RedirectResponse
+from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -14,20 +15,12 @@ from app.core.rbac import can_manage_organization
 from app.database import get_db
 from app.models.organization import Membership
 from app.models.user import User
+from app.schemas.station_forms import StationCreateInput
 from app.services import auth_service, station_service
 from app.web.context import build_nav_context
 from app.web.templating import templates
 
 router = APIRouter()
-
-
-def _dec(value: str | None) -> Decimal | None:
-    if value is None or value.strip() == "":
-        return None
-    try:
-        return Decimal(value)
-    except InvalidOperation:
-        return None
 
 
 def _organization_context(db: Session, organization, role: str, user: User, *, invitation_token=None):
@@ -57,8 +50,18 @@ def organization_detail(
     user: User = Depends(get_current_user),
 ):
     organization, role = org_role
-    context = _organization_context(db, organization, role, user)
+    context = {
+        **_organization_context(db, organization, role, user),
+        "invite_link": request.query_params.get("invite_link"),
+        "errors": request.query_params.getlist("error"),
+    }
     return templates.TemplateResponse(request, "organizations/detail.html", context)
+
+
+def _none_if_blank(value: str | None) -> str | None:
+    if value is None or value.strip() == "":
+        return None
+    return value
 
 
 @router.post("/organizations/{organization_id}/stations", dependencies=[Depends(verify_csrf)])
@@ -66,6 +69,8 @@ def create_station(
     request: Request,
     name: str = Form(...),
     timezone: str = Form("Europe/Bucharest"),
+    latitude: str = Form(...),
+    longitude: str = Form(...),
     pv_installed_power_kw: str = Form(...),
     inverter_power_kw: str = Form(...),
     battery_reference_capacity_kwh: str | None = Form(None),
@@ -79,26 +84,48 @@ def create_station(
     user: User = Depends(get_current_user),
 ):
     organization, _role = org_role
+
+    raw = {
+        "name": name,
+        "timezone": timezone,
+        "latitude": latitude,
+        "longitude": longitude,
+        "pv_installed_power_kw": pv_installed_power_kw,
+        "inverter_power_kw": inverter_power_kw,
+        "battery_reference_capacity_kwh": _none_if_blank(battery_reference_capacity_kwh),
+        "battery_max_charge_power_kw": _none_if_blank(battery_max_charge_power_kw),
+        "battery_max_discharge_power_kw": _none_if_blank(battery_max_discharge_power_kw),
+        "grid_import_limit_kw": _none_if_blank(grid_import_limit_kw),
+        "grid_export_limit_kw": _none_if_blank(grid_export_limit_kw),
+        "ev_enabled": bool(ev_enabled),
+    }
+    try:
+        validated = StationCreateInput.model_validate(raw)
+    except ValidationError as exc:
+        errors = [f"{'.'.join(str(p) for p in e['loc']) or 'formular'}: {e['msg']}" for e in exc.errors()]
+        query = urlencode([("error", e) for e in errors])
+        return RedirectResponse(f"/organizations/{organization.id}?{query}", status_code=303)
+
     station = station_service.create_station(
         db,
         organization,
-        name=name,
-        timezone=timezone,
-        pv_installed_power_kw=_dec(pv_installed_power_kw) or Decimal("0"),
-        inverter_power_kw=_dec(inverter_power_kw) or Decimal("0"),
-        battery_reference_capacity_kwh=_dec(battery_reference_capacity_kwh),
-        battery_available_capacity_kwh=_dec(battery_reference_capacity_kwh),
-        battery_max_charge_power_kw=_dec(battery_max_charge_power_kw),
-        battery_max_discharge_power_kw=_dec(battery_max_discharge_power_kw),
+        name=validated.name,
+        timezone=validated.timezone,
+        pv_installed_power_kw=validated.pv_installed_power_kw,
+        inverter_power_kw=validated.inverter_power_kw,
+        battery_reference_capacity_kwh=validated.battery_reference_capacity_kwh,
+        battery_available_capacity_kwh=validated.battery_reference_capacity_kwh,
+        battery_max_charge_power_kw=validated.battery_max_charge_power_kw,
+        battery_max_discharge_power_kw=validated.battery_max_discharge_power_kw,
         battery_charge_efficiency=None,
         battery_discharge_efficiency=None,
-        grid_import_limit_kw=_dec(grid_import_limit_kw),
-        grid_export_limit_kw=_dec(grid_export_limit_kw),
-        ev_enabled=bool(ev_enabled),
+        grid_import_limit_kw=validated.grid_import_limit_kw,
+        grid_export_limit_kw=validated.grid_export_limit_kw,
+        ev_enabled=validated.ev_enabled,
         ev_battery_capacity_kwh=None,
         ev_max_charge_power_kw=None,
-        latitude=None,
-        longitude=None,
+        latitude=validated.latitude,
+        longitude=validated.longitude,
         created_by=user,
     )
     record_audit(

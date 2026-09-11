@@ -58,6 +58,8 @@ def test_bootstrap_login_create_org_and_station_flow(live_server, page):
 
     page.click("summary:has-text('Adauga statie')")
     page.fill("input[name=name]", "E2E Test Station")
+    page.fill("input[name=latitude]", "44.43")
+    page.fill("input[name=longitude]", "26.10")
     page.fill("input[name=pv_installed_power_kw]", "5")
     page.fill("input[name=inverter_power_kw]", "5")
     page.click("button:has-text('Creeaza statia')")

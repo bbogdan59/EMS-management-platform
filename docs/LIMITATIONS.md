@@ -282,6 +282,173 @@ Existing UTC day/month rows are retained as legacy_day/legacy_month and excluded
   (`app/api/v1/devices.py::claim_device`, `device_service.claim_device`) nu
   a fost atins.
 
+## 15. Validare configurare statie, preferinte si creare statie (issue #8)
+
+Domeniul strict: `app/web/routes/stations.py` (config/preferinte/tarife),
+doar functia `create_station` din `app/web/routes/organizations.py`,
+`app/schemas/station_forms.py` (nou), template-urile acestor formulare.
+Invitatiile/claim/SSE (#6) si solver-ul nu au fost atinse.
+
+- **Validare stricta reala, nu doar cosmetica.** Toate campurile numerice
+  trec acum prin scheme Pydantic dedicate (`app/schemas/station_forms.py`)
+  inainte sa atinga baza de date: valori nefinite (NaN/Infinity trimise ca
+  text brut de formular, ocolind constrangerile `type=number` ale
+  browser-ului) sunt respinse explicit, `pv_installed_power_kw`/
+  `inverter_power_kw` trebuie sa fie strict pozitive (zero nu mai e acceptat
+  tacit), randamentele bateriei sunt constranse la `(0, 1]`, iar SOC
+  minim/maxim la `[0, 100]` cu `min <= max` validat explicit. Anterior,
+  `_dec()` inlocuia orice input invalid cu o valoare implicita (adesea 0)
+  fara sa anunte utilizatorul -- acum orice esec de validare respinge
+  INTREAGA cerere, fara nicio versiune noua creata (verificat exact prin
+  teste care compara numarul de versiuni inainte/dupa).
+- **Grupuri PV multiple, editabile, fara pierdere de date.** Salvarea
+  configuratiei reconstruia anterior necondiționat un singur grup PV hardcodat
+  ("Grup principal", azimut 180, inclinatie 30), indiferent cate exista deja.
+  Acum orice numar de grupuri (cu nume/putere/azimut/inclinatie proprii) e
+  trimis ca JSON validat (`panel_groups_json`, populat dintr-un editor simplu
+  in JS vanilla care adauga/sterge randuri) si persistat integral la fiecare
+  versiune noua.
+- **Coordonatele statiei se colecteaza la creare.** `create_station` seta
+  anterior necondiționat `latitude=None, longitude=None` -- prognoza PV
+  (issue #8 dependent de #7/#5 anterior) nu putea functiona fara ele pentru
+  o statie noua pana la o editare manuala ulterioara, niciodata ceruta
+  explicit. Acum sunt campuri obligatorii, validate in intervalul geografic
+  valid ([-90,90]/[-180,180]).
+- **Flux complet in UI pentru tinte SOC si suspendarea automatizarii.**
+  `PreferenceVersion.soc_targets`/`automation_suspended_until` existau in
+  model si erau deja CITITE de `optimization_service`
+  (`_resolve_soc_targets`) si `command_dispatch_service`
+  (`plan_allows_dispatch`), dar formularul de preferinte nu avea niciun
+  camp pentru ele -- un admin nu putea seta niciodata o tinta SOC sau
+  suspenda automatizarea live din UI. Acum ambele au flux complet: tinte
+  SOC recurente (ora locala HH:MM, procent, zile optionale ale saptamanii,
+  validate inclusiv peste miezul noptii -- 23:45/00:15 testate explicit) si
+  suspendare pana la o data/ora locala (convertita corect in UTC prin fusul
+  orar al statiei, verificat cu un test explicit de conversie).
+- **Concurenta optimista pe versiuni.** Formularele de configurare/preferinte
+  poarta acum un camp ascuns `expected_version` (versiunea vazuta la
+  incarcarea paginii). O trimitere cu o versiune invechita (alt editor a
+  publicat intre timp) e respinsa explicit, cu mesaj clar, fara sa
+  suprascrie tacit modificarea celuilalt. Constrangerea unica existenta
+  `(station_id, version)` ramane ca ultim garant la nivel de baza de date
+  pentru o cursa reala simultana (`IntegrityError` prins si transformat in
+  acelasi mesaj clar, nu un 500 brut) -- verificat cu un test real de
+  concurenta pe doua sesiuni/thread-uri separate (fixtura `engine`, nu `db`).
+- **XSS stocat prevenit explicit la embedarea JSON in `<script>`.** Numele
+  unui grup PV sau o tinta SOC salvata anterior sunt reafisate ca JSON
+  direct intr-un bloc `<script>` (pentru editorul JS) folosind `| safe` in
+  Jinja -- `json.dumps()` nu escapeaza `<`/`>`/`&`, deci un nume de grup
+  continand literal `</script><script>...` ar fi putut rupe blocul si
+  executa cod arbitrar la urmatoarea randare a paginii. Corectat cu o
+  escapare explicita (`_safe_script_json`) inainte de orice inserare `| safe`.
+- **Bug real de infrastructura de testare gasit si corectat, nu doar
+  ocolit.** Un test RBAC pre-existent
+  (`test_org_isolation.py::test_operator_cannot_manage_station_config_but_can_view`)
+  esua intermitent in suita completa, NU izolat -- am investigat exhaustiv
+  (nu doar presupus "flaky") si am gasit cauza reala: rate limiting de login
+  e cheiat per IP client (`app/web/routes/auth.py`), iar `TestClient`
+  raporteaza mereu acelasi IP fals (`"testclient"`) pentru toate cererile;
+  Redis (spre deosebire de baza de date) nu e golit intre teste individuale
+  in cadrul unei rulari, deci contorul se acumuleaza pe TOATA sesiunea de
+  testare -- dupa exact limita implicita (10) de apeluri `login()` cumulate
+  din ORICE combinatie de teste, urmatoarele autentificari esueaza tacit cu
+  429 (fara cookie de sesiune), iar `TestClient` urmeaza automat
+  redirect-ul 401-catre-/login pana la un 200 aparent nevinovat -- usor de
+  confundat cu un bug real de autorizare (exact ce am crezut initial).
+  Reprodus determinist prin instrumentare directa (`role_at_least` niciodata
+  apelat, contor Redis exact la limita, cookie de sesiune absent) inainte de
+  a scrie orice fix. Corectat in `tests/conftest.py` (limita ridicata generos
+  doar pentru mediul de test, prin variabila de mediu deja citita de
+  `Settings`) -- nu prin golirea Redis intre teste, care ar fi sters si
+  starea pe care alte teste de rate-limiting ar vrea sa o verifice explicit.
+  Testul original devine acum determinist (verificat cu 3 rulari complete
+  succesive ale intregii suite, fara nicio recurenta a esecului), si am
+  adaugat teste RBAC proprii, deterministe, pentru criteriile acestui issue.
+- **Atins minim, in afara domeniului nominal, strict necesar:**
+  `tests/e2e/test_ui_flows.py` (adaugat completarea campurilor
+  latitudine/longitudine acum obligatorii in formularul Playwright de creare
+  statie -- fara aceasta modificare testul e2e existent ar fi esuat, intrucat
+  browserul blocheaza trimiterea formularului cu campuri `required` goale) si
+  `tests/conftest.py` (fix-ul de rate-limiting de mai sus, infrastructura
+  comuna de testare, nu specifica niciunui issue).
+- **Nu acopera:** un editor JS complet drag-and-drop/vizual pentru grupurile
+  PV sau tintele SOC -- editorul implementat e functional (adauga/sterge
+  randuri, validare server-side completa, fara pierdere de date la editare),
+  dar ramane un tabel HTML simplu cu JS vanilla, nu o interfata avansata.
+
+## 15. Pregatirea inputurilor de optimizare -- prospetime, proveniență si concurenta (issue #9)
+
+Domeniul strict al acestei lucrari: `optimization_service.py` -- pregatirea
+inputurilor (`_current_soc_kwh`, `_build_pv_series`, `_build_load_series`,
+`_fill_gaps`, `_fill_price_gaps`, `_ensure_forecasts`), orchestrarea
+tranzactiei (`run_optimization_for_station`, `_run_locked`) si publicarea
+(`_publish_plan`). Modelul matematic din `_solve` (constrangerile fizice,
+formularea Pyomo) NU a fost atins -- ramane in sarcina issue-ului #12.
+
+- **SOC de pornire are acum prospetime si proveniență explicite.** O
+  telemetrie SOC mai veche decat `optimization_soc_max_age_minutes`
+  (implicit 10 min, configurabil) sau absenta totala blocheaza un plan
+  **LIVE** (`_fallback` cu motiv explicit) -- nu mai e inlocuita tacit cu o
+  presupunere de 50%. Un plan **shadow** ramane calculabil chiar cu SOC
+  invechit/lipsa, pentru vizibilitate, dar calitatea (`"measured"` /
+  `"stale"` / `"missing"`) e vizibila explicit in `OptimizationRun.input_snapshot["soc"]`,
+  niciodata ascunsa/tratata ca masuratoare reala.
+- **Golurile de pret nu mai imprumuta o valoare arbitrara din alta parte a
+  orizontului.** `_fill_price_gaps` propaga din cel mai apropiat interval
+  cunoscut in timp (inainte, apoi -- pentru golul initial -- inapoi), nu
+  dintr-o valoare oarecare gasita oriunde in orizont. Fiecare interval e
+  marcat explicit `"real"` sau `"estimated"` in
+  `input_snapshot["price_buy_quality"]`. Un plan care ar fi altfel LIVE dar
+  contine cel putin un interval de pret `"estimated"` e retrogradat automat
+  la shadow (`shadow_downgrade_reason`, vizibil in `explanation_summary`),
+  in loc sa fie publicat live pe baza unei estimari.
+- **Fixture-urile sintetice de piata (import demo/diagnostic,
+  `ImportRun.is_synthetic_fixture=True`) nu mai pot alimenta un pret folosit
+  de optimizator**, nici macar cand sunt singura sursa "disponibila" pentru
+  un interval -- sunt tratate identic cu absenta datelor (deci completate
+  prin extrapolare temporala si marcate `"estimated"`, cu efectul de
+  retrogradare la shadow de mai sus).
+- **Aliniere prognoza de consum <-> grila de optimizare.** `_ensure_forecasts`
+  primeste acum granitele orizontului deja aliniate la grila UTC a
+  optimizarii (`start`/`end`, calculate o singura data in `_run_locked`), nu
+  `utcnow()` brut. Anterior, `generate_consumption_forecast` genera intervale
+  incepand de la un moment nealiniat la sfertul de ora, deci
+  `_build_load_series` nu gasea niciodata o potrivire exacta si intregul
+  consum cadea pe valoarea implicita de fallback -- reprodus si acoperit
+  explicit de `test_consumption_forecast_alignment_matches_optimization_grid`.
+- **`input_snapshot` e acum suficient pentru replay**, nu doar contoare de
+  acoperire: contine granitele orizontului, fusul orar al statiei, SOC-ul
+  folosit cu proveniența lui, seriile complete PV/consum/pret (cu calitate
+  per interval pentru pret) -- toate cheiate ca timestamp UTC ISO 8601.
+- **Versionarea planurilor e monotona pe toate planurile statiei, indiferent
+  de status.** Anterior, cautarea "ultimului plan" se limita la statusurile
+  active (`published`/`accepted_by_device`/`executing`); un plan ajuns
+  `completed` (executie incheiata) devenea invizibil acelei cautari, iar
+  urmatoarea optimizare reincepea numerotarea de la 1 -- coliziune garantata
+  cu constrangerea unica `(station_id, version)`. Numerotarea foloseste acum
+  `MAX(version)` pe toate planurile statiei; cautarea planului activ de
+  inlocuit (superseded) ramane separata si neschimbata.
+- **Serializarea ramane activa pana la commit fara ca serviciul sa comita
+  tranzactia apelantului.** Lock-ul Redis evita lucrul concurent obisnuit, iar
+  un advisory lock PostgreSQL transaction-scoped pe ID-ul statiei ramane activ
+  pana la commit/rollback-ul detinut de ruta sau worker. Astfel urmatoarea
+  rulare vede versiunea deja publicata, iar auditul si planul pot ramane in
+  aceeasi tranzactie. Acoperit de un test real cu doua thread-uri/sesiuni
+  separate pe `engine`-ul de test.
+- **Un refresh best-effort esuat (meteo/PV/consum) nu mai poate lasa sesiunea
+  SQLAlchemy inutilizabila.** Fiecare incercare din `_ensure_forecasts` ruleaza
+  acum intr-un SAVEPOINT dedicat (`db.begin_nested()`); o exceptie in timpul
+  unui flush anterior invalida intreaga tranzactie pana la un rollback
+  complet, ceea ce ar fi sters si `OptimizationRun`-ul deja adaugat de
+  apelant in aceeasi sesiune necomisa.
+- **Neatins deliberat:** `_solve` (modelul Pyomo), API-ul device si
+  formularele de configurare a statiei/preferintelor -- conform delimitarii
+  issue-ului.
+- **Nu acopera:** un job de reconciliere real care sa marcheze planurile
+  drept `completed` pe baza telemetriei observate (folosit doar simulat in
+  testul de versionare, prin setarea manuala a statusului) -- ramane in
+  sarcina altui issue de operare/reconciliere.
+
 ## 15. Joburi admin asincrone, CI si deploy verificabil (issue #11)
 
 **Joburi admin asincrone.** `POST /admin/operations/import-opcom` si

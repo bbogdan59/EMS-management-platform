@@ -8,6 +8,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import sessionmaker
 
+from app.core.rate_limit import reset_key
 from app.core.security import utcnow, verify_password
 from app.models.device import Device, DeviceCredential
 from app.models.enums import DeviceStatus
@@ -224,6 +225,7 @@ def test_enroll_concurrent_same_identity_creates_exactly_one_device(engine):
 
 
 def test_http_enroll_bootstrap_and_admin_allocation_full_flow(client, db):
+    reset_key("login_attempts:testclient")
     admin = make_user(db, email="enrolladmin1@test.local", password="Password1234", is_platform_admin=True)
     org = make_org(db, "Enroll HTTP Org 1")
     station = make_station(db, org, admin, name="Enroll HTTP Station 1")
@@ -280,6 +282,7 @@ def test_http_enroll_bootstrap_and_admin_allocation_full_flow(client, db):
 
 
 def test_http_pending_devices_admin_ui_requires_platform_admin(client, db):
+    reset_key("login_attempts:testclient")
     user = make_user(db, email="notadmin1@test.local", password="Password1234")
     org = make_org(db, "Enroll HTTP Org 2")
     make_station(db, org, user, name="Enroll HTTP Station 2")

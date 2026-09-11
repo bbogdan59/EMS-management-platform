@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+from app.core.rate_limit import reset_key
 from tests.factories import make_membership, make_org, make_station, make_user
 from tests.web_helpers import login
 
 
 def test_user_can_only_see_own_organization_stations(client, db):
+    reset_key("login_attempts:testclient")
     user1 = make_user(db, email="iso1@test.local", password="Password1234")
     user2 = make_user(db, email="iso2@test.local", password="Password1234")
     org1 = make_org(db, "Iso Org 1")
@@ -27,6 +29,7 @@ def test_user_can_only_see_own_organization_stations(client, db):
 
 
 def test_platform_admin_can_access_any_station(client, db):
+    reset_key("login_attempts:testclient")
     admin = make_user(db, email="platadmin@test.local", password="Password1234", is_platform_admin=True)
     org = make_org(db, "Iso Org 3")
     station = make_station(db, org, admin, name="Station Org3")
@@ -38,6 +41,7 @@ def test_platform_admin_can_access_any_station(client, db):
 
 
 def test_operator_cannot_manage_station_config_but_can_view(client, db):
+    reset_key("login_attempts:testclient")
     user = make_user(db, email="operator1@test.local", password="Password1234")
     org = make_org(db, "Iso Org 4")
     station = make_station(db, org, user, name="Station Org4")

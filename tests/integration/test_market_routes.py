@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import date
 
+from app.core.rate_limit import reset_key
 from tests.factories import make_market_day, make_user
 from tests.web_helpers import login
 
@@ -12,6 +13,7 @@ def test_market_page_requires_login(client):
 
 
 def test_market_page_renders_for_logged_in_user(client, db):
+    reset_key("login_attempts:testclient")
     make_user(db, email="market1@test.local", password="Password1234")
     make_market_day(db, date(2025, 6, 1), [200.0, 210.0])
     db.commit()
@@ -23,6 +25,7 @@ def test_market_page_renders_for_logged_in_user(client, db):
 
 
 def test_market_data_endpoints_return_json(client, db):
+    reset_key("login_attempts:testclient")
     make_user(db, email="market2@test.local", password="Password1234")
     make_market_day(db, date(2025, 6, 1), [200.0])
     make_market_day(db, date(2026, 6, 1), [220.0])
@@ -48,6 +51,7 @@ def test_market_data_endpoints_return_json(client, db):
 
 
 def test_market_export_csv(client, db):
+    reset_key("login_attempts:testclient")
     make_user(db, email="market3@test.local", password="Password1234")
     make_market_day(db, date(2025, 6, 1), [150.0, 250.0])
     db.commit()
