@@ -62,9 +62,19 @@ REDIS_URL=redis://${{Redis.RAILWAY_PRIVATE_DOMAIN}}:6379
 # apoi STERGE aceasta variabila (sau roteaz-o) ca sa nu ramana activa.
 BOOTSTRAP_ADMIN_TOKEN=<valoare unica, o singura data>
 
-EMAIL_BACKEND=console   # sau smtp + SMTP_HOST/PORT/USERNAME/PASSWORD, daca ai un provider SMTP
+EMAIL_BACKEND=smtp
+SMTP_HOST=<provider SMTP>
+SMTP_PORT=587
+SMTP_USERNAME=<utilizator SMTP>
+SMTP_PASSWORD=<secret SMTP>
+SMTP_FROM_ADDRESS=<adresa expeditor>
+SMTP_USE_TLS=true
 DEMO_MODE_ENABLED=false  # OBLIGATORIU false in productie (config.py refuza pornirea altfel)
 ```
+
+`config.py` refuza pornirea in productie daca cookie-ul de sesiune nu este
+`Secure` sau daca backend-ul de email este `console`. Backend-ul console
+redacteaza corpul mesajelor deoarece acesta contine tokenuri de invitatie/resetare.
 
 > Nota despre `DATABASE_URL`: Railway furnizeaza propriul `DATABASE_URL` in
 > formatul `postgresql://...` (fara driver). `app/config.py` normalizeaza
