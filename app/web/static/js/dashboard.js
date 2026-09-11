@@ -127,17 +127,30 @@ function emsInitDashboard(stationId) {
       empty.hidden = true;
       $("plan-status-badge").textContent = `${data.plan.status} (${data.plan.execution_mode})`;
       const chart = echarts.init(el, emsChartTheme());
+      const series = [
+        { name: "Baterie (plan)", type: "bar", data: data.intervals.map((i) => [i.t, i.battery_kw]) },
+        { name: "Retea (plan)", type: "bar", data: data.intervals.map((i) => [i.t, i.grid_kw]) },
+        { name: "SOC tinta", type: "line", yAxisIndex: 0, data: data.intervals.map((i) => [i.t, i.soc_target_pct]) },
+      ];
+      // Efectul REAL (reconciliat ulterior din telemetrie) e afisat doar daca
+      // exista deja cel putin o valoare -- altfel ar aparea o serie goala in
+      // legenda, inainte ca reconcilierea sa produca vreodata date.
+      if (data.intervals.some((i) => i.observed_battery_kw !== null)) {
+        series.push({ name: "Baterie (real)", type: "line", showSymbol: false, data: data.intervals.map((i) => [i.t, i.observed_battery_kw]) });
+      }
+      if (data.intervals.some((i) => i.observed_grid_kw !== null)) {
+        series.push({ name: "Retea (real)", type: "line", showSymbol: false, data: data.intervals.map((i) => [i.t, i.observed_grid_kw]) });
+      }
+      if (data.intervals.some((i) => i.observed_soc_pct !== null)) {
+        series.push({ name: "SOC (real)", type: "line", showSymbol: false, data: data.intervals.map((i) => [i.t, i.observed_soc_pct]) });
+      }
       chart.setOption({
         grid: { left: 48, right: 16, top: 24, bottom: 32 },
         tooltip: { trigger: "axis" },
         legend: {},
         xAxis: { type: "time" },
         yAxis: { type: "value", name: "kW / %" },
-        series: [
-          { name: "Baterie (plan)", type: "bar", data: data.intervals.map((i) => [i.t, i.battery_kw]) },
-          { name: "Retea (plan)", type: "bar", data: data.intervals.map((i) => [i.t, i.grid_kw]) },
-          { name: "SOC tinta", type: "line", yAxisIndex: 0, data: data.intervals.map((i) => [i.t, i.soc_target_pct]) },
-        ],
+        series,
       });
     } catch (e) { console.error(e); }
   }
@@ -234,11 +247,20 @@ function emsInitDashboard(stationId) {
     try {
       const savings = await fetchJson(`/stations/${stationId}/data/savings?range=30d`);
       if (savings.available) {
-        $("kpi-savings").textContent = fmt(savings.estimated_savings_lei) + " lei (30 zile)";
-        $("kpi-savings-note").textContent = savings.baseline_description;
+        $("kpi-savings").textContent = fmt(savings.whole_system_benefit_lei) + " lei (30 zile)";
+        $("kpi-savings-note").textContent = savings.whole_system_baseline_description;
+        $("kpi-ems-benefit").textContent = fmt(savings.ems_incremental_benefit_lei) + " lei (30 zile)";
+        $("kpi-ems-benefit-note").textContent = savings.ems_incremental_baseline_description;
+        const coveragePct = savings.coverage_ratio !== null ? Math.round(savings.coverage_ratio * 100) : null;
+        $("kpi-savings-coverage").textContent = coveragePct !== null
+          ? `Acoperire date: ${coveragePct}% din interval (${savings.hours_priced}/${savings.hours_expected} ore).`
+          : "";
       } else {
         $("kpi-savings").textContent = "indisponibil";
         $("kpi-savings-note").textContent = savings.reason || "";
+        $("kpi-ems-benefit").textContent = "indisponibil";
+        $("kpi-ems-benefit-note").textContent = "";
+        $("kpi-savings-coverage").textContent = "";
       }
     } catch (e) { console.error(e); }
   }
