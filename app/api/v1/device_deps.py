@@ -23,13 +23,37 @@ from app.services import device_service
 settings = get_settings()
 
 
-def enforce_payload_limit(request: Request) -> None:
+async def enforce_payload_limit(request: Request) -> None:
+    """Content-Length e doar o DECLARATIE a clientului -- un client care omite
+    header-ul (ex. transfer chunked) sau minte l-ar ocoli complet daca am
+    verifica doar atat. Citim corpul noi insine, numarand bytes-ii REALI pe
+    masura ce sosesc, si oprim cererea imediat ce depaseste limita, fara sa
+    bufferam integral un payload arbitrar de mare in memorie inainte de a
+    respinge. Rezultatul e pus in cache pe `request._body` (acelasi mecanism
+    intern folosit de Starlette in `Request.body()`) ca parsarea Pydantic de
+    mai jos sa refoloseasca acesti bytes deja validati, nu sa incerce sa
+    reciteasca un stream deja consumat."""
     content_length = request.headers.get("content-length")
-    if content_length and int(content_length) > settings.device_max_payload_bytes:
-        raise HTTPException(
-            status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail=f"Payload prea mare (max {settings.device_max_payload_bytes} bytes).",
-        )
+    if content_length is not None:
+        try:
+            declared = int(content_length)
+        except ValueError as exc:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="Header Content-Length invalid.") from exc
+        if declared > settings.device_max_payload_bytes:
+            raise HTTPException(
+                status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail=f"Payload prea mare (max {settings.device_max_payload_bytes} bytes).",
+            )
+
+    body = bytearray()
+    async for chunk in request.stream():
+        body.extend(chunk)
+        if len(body) > settings.device_max_payload_bytes:
+            raise HTTPException(
+                status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail=f"Payload prea mare (max {settings.device_max_payload_bytes} bytes).",
+            )
+    request._body = bytes(body)  # vezi docstring: cache intentionat pe atributul intern al Starlette
 
 
 def get_authenticated_device(

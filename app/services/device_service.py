@@ -37,6 +37,10 @@ class DeviceServiceError(Exception):
     pass
 
 
+class CommandExpiredError(DeviceServiceError):
+    """Semnaleaza ca tranzitia la expired trebuie pastrata de apelant."""
+
+
 def create_claim_code(db: Session, station: Station, created_by: User) -> tuple[ClaimCode, str]:
     settings = get_settings()
     raw_code, prefix = generate_claim_code()
@@ -68,7 +72,12 @@ def revoke_device(db: Session, device: Device, reason: str) -> None:
 
 def claim_device(db: Session, claim_code_raw: str, device_name: str, hardware_info: dict) -> tuple[Device, str]:
     code_hash = hash_token(claim_code_raw.strip().upper())
-    claim = db.scalar(select(ClaimCode).where(ClaimCode.code_hash == code_hash))
+    # SELECT ... FOR UPDATE serializeaza doua cereri concurente pentru acelasi
+    # cod: a doua asteapta pana cand prima isi comite (sau anuleaza) tranzactia,
+    # apoi vede starea reala (claimed) si e respinsa corect -- fara acest lock,
+    # ambele ar putea trece verificarea de status inainte ca vreuna sa scrie,
+    # creand doua device-uri din acelasi cod de unica folosinta.
+    claim = db.scalar(select(ClaimCode).where(ClaimCode.code_hash == code_hash).with_for_update())
     if claim is None or claim.status != ClaimCodeStatus.pending.value:
         raise DeviceServiceError("Cod de asociere invalid sau deja folosit.")
     if claim.expires_at < utcnow():
@@ -280,6 +289,25 @@ def acknowledge_command(db: Session, device: Device, command_id: uuid.UUID, stat
     command = db.get(Command, command_id)
     if command is None or command.device_id != device.id:
         raise DeviceServiceError("Comanda nu exista pentru acest dispozitiv.")
+
+    # Idempotenta la reincercare: un ACK deja aplicat cu ACELASI rezultat nu e o
+    # eroare -- dispozitivul poate retrimite dupa ce raspunsul s-a pierdut in
+    # retea. Un rezultat CONTRADICTORIU (ex. "rejected" dupa ce a fost deja
+    # "accepted") e respins explicit, nu suprascris tacit.
+    if command.status in (CommandStatus.accepted.value, CommandStatus.rejected.value):
+        if command.status == status_value:
+            last_event = db.scalar(
+                select(CommandEvent)
+                .where(CommandEvent.command_id == command.id, CommandEvent.event_type == status_value)
+                .order_by(CommandEvent.created_at.desc())
+                .limit(1)
+            )
+            if last_event is not None and last_event.message == reason:
+                return command
+        raise DeviceServiceError(
+            f"Comanda este deja in starea '{command.status}'; reincercarea raporteaza un rezultat contradictoriu ('{status_value}')."
+        )
+
     if command.status not in (CommandStatus.delivered.value, CommandStatus.created.value):
         raise DeviceServiceError(f"Comanda este in starea '{command.status}', nu poate fi confirmata/respinsa acum.")
     if command.valid_from > utcnow():
@@ -291,7 +319,7 @@ def acknowledge_command(db: Session, device: Device, command_id: uuid.UUID, stat
         db.add(command)
         db.add(CommandEvent(command_id=command.id, event_type="expired", source="system"))
         db.flush()
-        raise DeviceServiceError("Comanda a expirat.")
+        raise CommandExpiredError("Comanda a expirat.")
 
     if status_value == "accepted":
         command.status = CommandStatus.accepted.value
@@ -317,6 +345,26 @@ def report_command_result(
     command = db.get(Command, command_id)
     if command is None or command.device_id != device.id:
         raise DeviceServiceError("Comanda nu exista pentru acest dispozitiv.")
+
+    # Idempotenta la reincercare, simetric cu acknowledge_command: acelasi
+    # rezultat terminal retrimis (payload si mesaj identice) e succes tacit, nu
+    # eroare -- comparam impotriva ultimului CommandEvent de acest tip, nu doar
+    # a statusului, ca sa detectam un rezultat CONTRADICTORIU (alt payload/eroare
+    # pentru aceeasi comanda deja finalizata) si sa-l respingem explicit.
+    if command.status in (CommandStatus.executed.value, CommandStatus.failed.value):
+        if command.status == status_value:
+            last_event = db.scalar(
+                select(CommandEvent)
+                .where(CommandEvent.command_id == command.id, CommandEvent.event_type == status_value)
+                .order_by(CommandEvent.created_at.desc())
+                .limit(1)
+            )
+            if last_event is not None and last_event.payload == (details or {}) and last_event.message == error_message:
+                return command
+        raise DeviceServiceError(
+            f"Comanda este deja in starea '{command.status}'; reincercarea raporteaza un rezultat contradictoriu."
+        )
+
     if command.status != CommandStatus.accepted.value:
         raise DeviceServiceError(
             f"Comanda este in starea '{command.status}'; rezultatul poate fi raportat doar dupa acceptare."

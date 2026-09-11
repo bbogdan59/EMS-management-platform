@@ -44,6 +44,11 @@ def acknowledge_command(
     poate respinge orice comanda dupa propria sa validare de siguranta."""
     try:
         command = device_service.acknowledge_command(db, device, command_id, payload.status, payload.reason)
+    except device_service.CommandExpiredError as exc:
+        # Serviciul marcheaza tranzitia, dar limita tranzactiei ramane in ruta:
+        # nu permite unui helper reutilizabil sa comita alte schimbari ale apelantului.
+        db.commit()
+        raise HTTPException(status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     except device_service.DeviceServiceError as exc:
         db.rollback()
         raise HTTPException(status.HTTP_409_CONFLICT, detail=str(exc)) from exc

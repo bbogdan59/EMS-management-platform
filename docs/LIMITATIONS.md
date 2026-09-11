@@ -282,6 +282,60 @@ Existing UTC day/month rows are retained as legacy_day/legacy_month and excluded
   (`app/api/v1/devices.py::claim_device`, `device_service.claim_device`) nu
   a fost atins.
 
+## 15. Protocol web-device: atomicitate, idempotenta si limita reala a corpului (issue #10)
+
+Domeniul strict al acestei lucrari: `app/api/v1/` (in special `device_deps.py`),
+`device_service.py` (claim/ack/rezultat), `command_dispatch_service.py`
+(dispatch). UI-ul claim/invitatii detinut de #6 nu a fost atins.
+
+- **Capabilitatile raportate NU sunt folosite ca autorizare pentru comenzile
+  de baza (`set_battery_target_soc`, `hold_battery` etc.).** Verificat
+  explicit inainte de a adauga vreo poarta noua: docs/API.md documenteaza
+  deja aceasta decizie deliberata ("capabilities sunt informatii RAPORTATE
+  de dispozitiv... nu folosite implicit ca autorizare"). Singurul tip de
+  comanda unde capabilitatile chiar autorizeaza emiterea/livrarea e
+  `apply_inverter_settings` (issue #17,
+  `inverter_config_service.supports_write`), neschimbat aici. Nu am adaugat
+  o poarta similara pentru comenzile de baza -- ar fi contrazis explicit
+  contractul documentat existent, fara sa fi fost ceruta o schimbare de
+  contract.
+- **Validarea de valori finite pentru telemetrie exista deja, verificat, nu
+  adaugat de aceasta lucrare.** Pydantic v2 respinge implicit NaN/Infinity
+  atat pentru `Decimal` cat si pentru `float` (`finite_number`); confirmat
+  printr-un test direct de validare inainte de a atinge schema, ca sa nu
+  adaugam o constrangere deja existenta crezand-o lipsa.
+- **Limita reala a corpului HTTP citeste bytes-ii efectivi din stream**, nu
+  doar header-ul `Content-Length` (care poate fi omis sau minte). Header-ul
+  ramane o respingere rapida cand e prezent si valid; un header malformat
+  (`Content-Length: abc`) intoarce acum 400, nu un 500 brut in `int()`.
+- **Doua bug-uri reale de concurenta/persistenta gasite si corectate**, fiecare
+  cu test de regresie pe PostgreSQL real (nu mock): claim-ul unui cod nu
+  serializa consumarea lui (`SELECT ... FOR UPDATE` adaugat); expirarea unei
+  comenzi descoperite chiar in `acknowledge_command` se pierdea la
+  `db.rollback()`-ul facut de ruta apelanta la exceptie (`db.commit()`
+  explicit inainte de a ridica eroarea, ca sa supravietuiasca indiferent de
+  ce face apelantul).
+- **ACK/rezultat sunt acum idempotente la reincercare identica** (acelasi
+  status + acelasi payload dupa un raspuns pierdut in retea intoarce acelasi
+  succes, fara sa duplice evenimentul de audit), dar un rezultat
+  CONTRADICTORIU pentru o comanda deja finalizata e respins explicit (409),
+  niciodata suprascris tacit.
+- **Dispatch-ul izoleaza fiecare incercare de creare a unei comenzi intr-un
+  SAVEPOINT dedicat.** Constrangerea unica `(device_id, idempotency_key)`
+  exista deja in schema si preveneste duplicatele reale la nivel de baza de
+  date; problema corectata aici e ca, fara acest SAVEPOINT, o coliziune la
+  o singura statie ar fi invalidat `flush()`-ul intregului lot si ar fi
+  anulat dispatch-ul pentru TOATE celelalte statii live procesate in aceeasi
+  rulare -- nu doar pentru cea aflata in cursa.
+- **Doua teste pre-existente, negasite legate de acest issue, esueaza deja pe
+  `main` inainte de aceasta lucrare** (verificat explicit prin `git stash` /
+  checkout curat, nu presupus): `test_org_isolation.py::test_operator_cannot_manage_station_config_but_can_view`
+  (bug RBAC real in `app/web/routes/stations.py`, in domeniul issue-ului #8,
+  nu #10 -- il abordez separat, in acel issue) si
+  `test_aggregation_review.py::test_nullable_flow_and_simulated_carry_in`
+  (comportament EV in `consumption_forecast_service`, posibil sensibil la
+  ceasul real, in domeniul altui issue). Niciunul nu a fost modificat aici,
+  ca sa nu depasesc granitele acestui issue; raportate explicit, nu ascunse.
 ## 15. Validare configurare statie, preferinte si creare statie (issue #8)
 
 Domeniul strict: `app/web/routes/stations.py` (config/preferinte/tarife),
