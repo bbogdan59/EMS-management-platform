@@ -4,6 +4,7 @@
 Import central pentru ca Alembic (autogenerate) si aplicatia sa vada
 intregul metadata al bazei de date dintr-un singur punct.
 """
+from app.models.admin_job import AdminJob
 from app.models.alert import Alert
 from app.models.audit import AuditLog
 from app.models.command import Command, CommandEvent
@@ -27,6 +28,7 @@ from app.models.user import (
 )
 
 __all__ = [
+    "AdminJob",
     "Alert",
     "AuditLog",
     "ClaimCode",

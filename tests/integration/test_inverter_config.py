@@ -5,6 +5,7 @@ from decimal import Decimal
 import pytest
 from sqlalchemy import select
 
+from app.core.rate_limit import reset_key
 from app.core.security import utcnow
 from app.models.command import Command
 from app.models.inverter_config import InverterDesired, InverterReport
@@ -136,6 +137,7 @@ def test_new_configuration_supersedes_command(db, context):
 
 
 def test_web_scope_rbac_csrf_and_render(client, db, context):
+    reset_key('login_attempts:testclient')
     admin, station, device, profile = context
     viewer = make_user(db, email='viewer-config@test.local')
     make_membership(db, viewer, station.organization, role='viewer')

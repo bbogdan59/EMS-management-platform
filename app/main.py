@@ -86,8 +86,12 @@ def create_app() -> FastAPI:
         try:
             with engine.connect() as conn:
                 conn.execute(text("SELECT 1"))
-        except Exception as exc:  # pragma: no cover
-            return JSONResponse({"status": "error", "detail": str(exc)}, status_code=503)
+        except Exception as exc:
+            # Nu expunem detaliul exceptiei (host/port/user de baza de date, mesaje
+            # de driver) unui apelant neautentificat -- logam intreg detaliul doar
+            # in log-urile serverului.
+            logger.error("readiness.database_check_failed", exception_type=type(exc).__name__)
+            return JSONResponse({"status": "error", "detail": "Serviciul nu este pregatit."}, status_code=503)
         return {"status": "ready"}
 
     return app

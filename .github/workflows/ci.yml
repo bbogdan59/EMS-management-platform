@@ -65,3 +65,73 @@ jobs:
 
       # Playwright e2e needs a browser install step and is more brittle in
       # a shared CI runner; not wired in yet. See docs/CODE_STANDARDS.md.
+
+  docker-build-and-smoke-test:
+    runs-on: ubuntu-latest
+    needs: lint-and-test
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: ems
+          POSTGRES_PASSWORD: ems
+          POSTGRES_DB: ems
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ems -d ems"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: "Build imagine Docker (multi-stage: frontend + runtime)"
+        run: docker build -t ems-platform:ci .
+
+      - name: Porneste containerul (rol web, migratii la pornire)
+        run: |
+          docker run -d --name ems-web \
+            --network host \
+            -e DATABASE_URL="postgresql+psycopg://ems:ems@localhost:5432/ems" \
+            -e REDIS_URL="redis://localhost:6379/0" \
+            -e SECRET_KEY="ci-smoke-secret-not-for-production" \
+            -e ENVIRONMENT="production" \
+            -e SESSION_COOKIE_SECURE="true" \
+            -e EMAIL_BACKEND="smtp" \
+            -e RUN_MIGRATIONS_ON_START="true" \
+            -e PORT=8000 \
+            ems-platform:ci web
+
+      - name: Smoke test -- asteapta /health
+        run: |
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:8000/health; then
+              echo "Smoke test OK (incercarea $i/30)"
+              exit 0
+            fi
+            echo "Astept serverul... ($i/30)"
+            sleep 2
+          done
+          echo "Smoke test a esuat -- log-urile containerului:"
+          docker logs ems-web
+          exit 1
+
+      - name: Log-uri container (mereu, pentru diagnostic)
+        if: always()
+        run: docker logs ems-web || true
+
+      - name: Curata containerul
+        if: always()
+        run: docker rm -f ems-web || true

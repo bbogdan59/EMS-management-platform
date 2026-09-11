@@ -117,3 +117,16 @@ class OptimizationPriority(str, enum.Enum):
     cost = "cost"
     autonomy = "autonomy"
     battery_protection = "battery_protection"
+
+
+class AdminJobType(str, enum.Enum):
+    opcom_import = "opcom_import"
+    optimization = "optimization"
+
+
+class AdminJobStatus(str, enum.Enum):
+    queued = "queued"
+    running = "running"
+    succeeded = "succeeded"
+    failed = "failed"
+    skipped_locked = "skipped_locked"

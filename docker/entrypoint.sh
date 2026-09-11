@@ -20,8 +20,12 @@ for attempt in range(30):
         print("PostgreSQL disponibil.")
         sys.exit(0)
     except Exception as exc:
-        print(f"PostgreSQL indisponibil (incercarea {attempt + 1}/30): {exc}")
+        # Nu tiparim detaliul complet al exceptiei (host/port/user) la fiecare
+        # incercare -- ar ajunge repetat in log-urile persistente ale
+        # containerului. Nici mesajul final nu include detaliul exceptiei.
+        print(f"PostgreSQL indisponibil (incercarea {attempt + 1}/30): {type(exc).__name__}")
         time.sleep(2)
+print("PostgreSQL indisponibil dupa 30 de incercari.")
 sys.exit(1)
 PYEOF
 }
@@ -40,8 +44,9 @@ for attempt in range(30):
         print("Redis disponibil.")
         sys.exit(0)
     except Exception as exc:
-        print(f"Redis indisponibil (incercarea {attempt + 1}/30): {exc}")
+        print(f"Redis indisponibil (incercarea {attempt + 1}/30): {type(exc).__name__}")
         time.sleep(2)
+print("Redis indisponibil dupa 30 de incercari.")
 sys.exit(1)
 PYEOF
 }
