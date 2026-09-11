@@ -4,18 +4,22 @@ Construieste dinamic URL-ul pentru ziua de livrare ceruta, pe baza formatului
 exemplificat in cerinte:
   https://www.opcom.ro/rapoarte-pzu-raportPIP-export-csv/{dd}/{mm}/{yyyy}/ro?resolution=15
 
-LIMITARE DOCUMENTATA: schema exacta a CSV-ului (nume de coloane, separator,
-encoding) nu a putut fi verificata direct impotriva sursei reale in mediul in
-care a fost dezvoltata platforma (acces retea blocat de politica organizatiei
-gazda). Parserul valideaza EXPLICIT structura gasita si NU presupune ca se
-potriveste implicit -- daca sursa e inaccesibila sau schema nu se potriveste
-dupa toate reincercarile, se foloseste (optional doar in dezvoltare/test, implicit dezactivat) un
+Schema CSV-ului (delimitator virgula, campuri incadrate in ghilimele,
+coloana de pret "Pret de Inchidere a Pietei [lei/MWh]") e verificata
+impotriva unui export real -- vezi `app/services/opcom_schema.py` si
+`tests/unit/test_opcom_parser.py::test_parses_real_opcom_export_sample`.
+Ramane neverificat doar fetch-ul HTTP live catre sursa (vezi
+docs/LIMITATIONS.md sectiunea 1). Parserul valideaza EXPLICIT structura
+gasita si NU presupune ca se potriveste implicit -- daca sursa e
+inaccesibila sau schema nu se potriveste dupa toate reincercarile, se
+foloseste (optional doar in dezvoltare/test, implicit dezactivat) un
 fallback cu date sintetice, marcate clar ca atare in ImportRun si in UI.
 """
 from __future__ import annotations
 
 import csv as csv_module
 import hashlib
+import io
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from zoneinfo import ZoneInfo
@@ -83,49 +87,83 @@ def _parse_price(value: str) -> Decimal:
         raise OpcomParseError(f"Valoare de pret nenumerica: '{value}'") from exc
 
 
-def _find_header(lines: list[str], schema: OpcomCsvSchema) -> tuple[int, dict[str, int], str]:
-    delimiter = schema.delimiter
-    for idx, line in enumerate(lines[: schema.header_search_rows]):
-        if not line.strip():
+def _split_rows(raw_text: str, delimiter: str) -> list[list[str]]:
+    """Parseaza CSV-ul cu suport corect pentru campuri incadrate in ghilimele
+    (RFC4180) -- OPCOM incadreaza fiecare camp in ghilimele duble, deci o
+    simpla `line.split(delimiter)` ar rupe orice camp care contine el insusi
+    delimitatorul (ex. un pret cu virgula zecimala intr-un CSV separat prin
+    virgula). Rândurile complet goale sunt eliminate."""
+    reader = csv_module.reader(io.StringIO(raw_text), delimiter=delimiter)
+    rows = [[cell.strip() for cell in row] for row in reader]
+    return [row for row in rows if any(cell for cell in row)]
+
+
+def _find_header(rows: list[list[str]], schema: OpcomCsvSchema) -> tuple[int, dict[str, int]]:
+    for idx, row in enumerate(rows[: schema.header_search_rows]):
+        if len(row) < 2:
+            # Un delimitator gresit (ex. cel implicit intr-un fisier care de
+            # fapt foloseste alt separator) face ca intreaga linie sa devina
+            # o SINGURA celula -- fara acest prag, potrivirea pe subsir de mai
+            # jos ar putea gasi din greseala atat "interval" cat si "pret" in
+            # aceeasi celula concatenata si ar accepta un header fals, in loc
+            # sa lase controlul sa treaca la fallback-ul cu sniffer.
             continue
-        cells = [c.strip().lower() for c in line.split(delimiter)]
-        interval_idx = next((i for i, c in enumerate(cells) if c in schema.interval_aliases), None)
-        price_idx = next((i for i, c in enumerate(cells) if c in schema.price_aliases), None)
-        if interval_idx is not None and price_idx is not None:
-            currency_idx = next((i for i, c in enumerate(cells) if c in schema.currency_aliases), None)
+        cells = [c.lower() for c in row]
+        # Potrivire pe SUBSIR, nu exacta: coloana reala de pret se numeste
+        # "Pret de Inchidere a Pietei [lei/MWh]", nu doar "Pret" -- un tabel
+        # sumar de mai sus in fisier (medii Base/Peak/Off-Peak) are propriile
+        # coloane si e ignorat automat pentru ca nu are o coloana de interval.
+        interval_idx = next(
+            (i for i, c in enumerate(cells) if any(alias in c for alias in schema.interval_aliases)), None
+        )
+        price_idx = next(
+            (i for i, c in enumerate(cells) if any(alias in c for alias in schema.price_aliases)), None
+        )
+        if interval_idx is not None and price_idx is not None and interval_idx != price_idx:
+            currency_idx = next(
+                (i for i, c in enumerate(cells) if any(alias in c for alias in schema.currency_aliases)), None
+            )
             mapping = {"interval": interval_idx, "price": price_idx}
             if currency_idx is not None:
                 mapping["currency"] = currency_idx
-            return idx, mapping, delimiter
-
-    # Sniffer ca fallback daca delimitatorul configurat nu produce un header recunoscut.
-    sample = "\n".join(lines[: schema.header_search_rows])
-    try:
-        detected = csv_module.Sniffer().sniff(sample, delimiters=";,\t|")
-        if detected.delimiter != delimiter:
-            return _find_header(lines, OpcomCsvSchema(**{**schema.__dict__, "delimiter": detected.delimiter}))
-    except csv_module.Error:
-        pass
-
-    preview = "\n".join(lines[:5])
+            return idx, mapping
     raise OpcomParseError(
         "Nu am putut identifica antetul CSV OPCOM cu schema configurata "
         f"(coloane cautate: {schema.interval_aliases} / {schema.price_aliases}). "
-        f"Primele linii primite:\n{preview}"
+        f"Primele linii primite:\n{chr(10).join(schema.delimiter.join(r) for r in rows[:5])}"
     )
 
 
 def parse_csv(raw_text: str, delivery_date: date, schema: OpcomCsvSchema = DEFAULT_SCHEMA) -> list[dict]:
-    lines = [ln for ln in raw_text.splitlines() if ln.strip() != ""]
-    if not lines:
+    rows = _split_rows(raw_text, schema.delimiter)
+    if not rows:
         raise OpcomParseError("Raspuns OPCOM gol.")
 
-    header_idx, mapping, delimiter = _find_header(lines, schema)
-    data_lines = lines[header_idx + 1 :]
+    try:
+        header_idx, mapping = _find_header(rows, schema)
+    except OpcomParseError as original_error:
+        # Delimitatorul configurat nu a produs un header recunoscut -- incearca
+        # sa detectam automat delimitatorul real din textul brut (fallback,
+        # nu implicit), pentru cazul in care formatul sursei se schimba. Orice
+        # esec al acestui fallback pastreaza eroarea ORIGINALA (nu una despre
+        # sniffer), ca apelantii care prind explicit `OpcomParseError` (ex.
+        # fallback-ul cu date sintetice) sa continue sa functioneze.
+        try:
+            detected = csv_module.Sniffer().sniff(raw_text[:5000], delimiters=";,\t|")
+        except csv_module.Error:
+            raise original_error from None
+        if detected.delimiter == schema.delimiter:
+            raise original_error from None
+        rows = _split_rows(raw_text, detected.delimiter)
+        try:
+            header_idx, mapping = _find_header(rows, schema)
+        except OpcomParseError:
+            raise original_error from None
+
+    data_rows = rows[header_idx + 1 :]
 
     parsed: dict[int, dict] = {}
-    for line in data_lines:
-        cells = [c.strip() for c in line.split(delimiter)]
+    for cells in data_rows:
         if len(cells) <= max(mapping.values()):
             continue
         try:
