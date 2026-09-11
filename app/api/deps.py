@@ -14,6 +14,7 @@ from app.config import get_settings
 from app.core.rbac import role_at_least
 from app.core.security import hash_token, utcnow
 from app.database import get_db
+from app.models.enums import Role
 from app.models.organization import Membership, Organization
 from app.models.station import Station
 from app.models.user import Session as UserSession
@@ -82,6 +83,23 @@ def require_platform_admin(user: User = Depends(get_current_user)) -> User:
     return user
 
 
+def _check_organization_status(org: Organization, min_role: str) -> None:
+    """Aplica efectul unei organizatii suspendate/arhivate asupra accesului
+    non-platform_admin (issue #24) -- platform_admin trece mereu neafectat
+    (trebuie sa poata gestiona/reactiva organizatia din panoul de admin).
+
+    - `archived`: blocheaza TOT accesul (stare finala, apropiata de
+      offboarding) -- inclusiv citirea.
+    - `suspended`: blocheaza doar actiunile care cer mai mult decat `viewer`
+      (scriere/operare) -- citirea ramane permisa, ca un client suspendat sa
+      isi poata vedea/exporta in continuare datele inainte de reactivare.
+    - `active`: neschimbat."""
+    if org.status == "archived":
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="Organizatia este arhivata.")
+    if org.status == "suspended" and role_at_least(min_role, Role.operator):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="Organizatia este suspendata.")
+
+
 class StationAccess:
     """Rezolva statia + rolul utilizatorului in organizatia ei si verifica
     apartenenta. platform_admin are acces la orice statie (pentru panoul de
@@ -113,6 +131,9 @@ class StationAccess:
             raise HTTPException(status.HTTP_403_FORBIDDEN, detail="Nu ai acces la aceasta statie.")
         if not role_at_least(membership.role, self.min_role):
             raise HTTPException(status.HTTP_403_FORBIDDEN, detail="Rol insuficient pentru aceasta actiune.")
+        organization = db.get(Organization, station.organization_id)
+        if organization is not None:
+            _check_organization_status(organization, self.min_role)
         return station, membership.role
 
 
@@ -140,6 +161,7 @@ class OrganizationAccess:
             raise HTTPException(status.HTTP_403_FORBIDDEN, detail="Nu ai acces la aceasta organizatie.")
         if not role_at_least(membership.role, self.min_role):
             raise HTTPException(status.HTTP_403_FORBIDDEN, detail="Rol insuficient pentru aceasta actiune.")
+        _check_organization_status(org, self.min_role)
         return org, membership.role
 
 

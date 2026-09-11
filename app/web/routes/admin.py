@@ -25,7 +25,7 @@ from app.models.optimization import OptimizationRun
 from app.models.organization import Membership, Organization
 from app.models.station import Station
 from app.models.user import User
-from app.services import device_service, station_service
+from app.services import dashboard_service, device_service, organization_service, station_service
 from app.web.context import build_nav_context
 from app.web.templating import templates
 
@@ -90,6 +90,194 @@ def create_organization(
     )
     db.commit()
     return RedirectResponse("/admin/organizations", status_code=303)
+
+
+@router.get("/organizations/{organization_id}")
+def organization_detail(
+    request: Request,
+    organization_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Pagina de backoffice a organizatiei (issue #24) -- distincta de
+    `/organizations/{id}` (autoservire, pentru managerul clientului): aici
+    apar campuri cross-tenant (ultima telemetrie, alerte active) si
+    controalele de lifecycle (suspendare/arhivare), disponibile DOAR
+    platform_admin (acest router e protejat in intregime de acest rol)."""
+    organization = db.get(Organization, organization_id)
+    if organization is None:
+        return RedirectResponse("/admin/organizations", status_code=303)
+
+    memberships = db.scalars(select(Membership).where(Membership.organization_id == organization_id)).all()
+    member_rows = []
+    for m in memberships:
+        member = db.get(User, m.user_id)
+        member_rows.append({"email": member.email if member else "?", "role": m.role})
+
+    station_rows = []
+    for station in db.scalars(select(Station).where(Station.organization_id == organization_id).order_by(Station.name)).all():
+        device_count = db.scalar(select(func.count(Device.id)).where(Device.station_id == station.id))
+        open_alerts = db.scalar(
+            select(func.count(Alert.id)).where(Alert.station_id == station.id, Alert.status == AlertStatus.open.value)
+        )
+        latest_telemetry = dashboard_service.get_latest_telemetry(db, station.id)
+        station_rows.append(
+            {
+                "station": station,
+                "device_count": device_count,
+                "open_alerts": open_alerts,
+                "last_telemetry_at": latest_telemetry.measured_at if latest_telemetry else None,
+            }
+        )
+
+    recent_audit = db.scalars(
+        select(AuditLog).where(AuditLog.organization_id == organization_id).order_by(AuditLog.occurred_at.desc()).limit(20)
+    ).all()
+
+    context = {
+        "organization": organization,
+        "members": member_rows,
+        "station_rows": station_rows,
+        "recent_audit": recent_audit,
+        "errors": request.query_params.getlist("error"),
+        **build_nav_context(db, user),
+    }
+    return templates.TemplateResponse(request, "admin/organization_detail.html", context)
+
+
+@router.post("/organizations/{organization_id}/edit", dependencies=[Depends(verify_csrf)])
+def edit_organization(
+    organization_id: uuid.UUID,
+    name: str = Form(...),
+    billing_email: str = Form(""),
+    notes: str = Form(""),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    organization = db.get(Organization, organization_id)
+    if organization is None:
+        return RedirectResponse("/admin/organizations", status_code=303)
+    organization_service.update_organization_profile(
+        db, organization, user, name=name, billing_email=billing_email, notes=notes
+    )
+    db.commit()
+    return RedirectResponse(f"/admin/organizations/{organization_id}", status_code=303)
+
+
+@router.post("/organizations/{organization_id}/suspend", dependencies=[Depends(verify_csrf)])
+def suspend_organization(
+    organization_id: uuid.UUID,
+    reason: str = Form(...),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    organization = db.get(Organization, organization_id)
+    if organization is None:
+        return RedirectResponse("/admin/organizations", status_code=303)
+    try:
+        organization_service.suspend_organization(db, organization, user, reason)
+    except organization_service.OrganizationStateError as exc:
+        db.rollback()
+        return RedirectResponse(f"/admin/organizations/{organization_id}?error={exc}", status_code=303)
+    db.commit()
+    return RedirectResponse(f"/admin/organizations/{organization_id}", status_code=303)
+
+
+@router.post("/organizations/{organization_id}/reactivate", dependencies=[Depends(verify_csrf)])
+def reactivate_organization(
+    organization_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    organization = db.get(Organization, organization_id)
+    if organization is None:
+        return RedirectResponse("/admin/organizations", status_code=303)
+    try:
+        organization_service.reactivate_organization(db, organization, user)
+    except organization_service.OrganizationStateError as exc:
+        db.rollback()
+        return RedirectResponse(f"/admin/organizations/{organization_id}?error={exc}", status_code=303)
+    db.commit()
+    return RedirectResponse(f"/admin/organizations/{organization_id}", status_code=303)
+
+
+@router.post("/organizations/{organization_id}/archive", dependencies=[Depends(verify_csrf)])
+def archive_organization(
+    organization_id: uuid.UUID,
+    reason: str = Form(...),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    organization = db.get(Organization, organization_id)
+    if organization is None:
+        return RedirectResponse("/admin/organizations", status_code=303)
+    try:
+        organization_service.archive_organization(db, organization, user, reason)
+    except organization_service.OrganizationStateError as exc:
+        db.rollback()
+        return RedirectResponse(f"/admin/organizations/{organization_id}?error={exc}", status_code=303)
+    db.commit()
+    return RedirectResponse(f"/admin/organizations/{organization_id}", status_code=303)
+
+
+@router.post("/organizations/{organization_id}/restore", dependencies=[Depends(verify_csrf)])
+def restore_organization(
+    organization_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    organization = db.get(Organization, organization_id)
+    if organization is None:
+        return RedirectResponse("/admin/organizations", status_code=303)
+    try:
+        organization_service.restore_organization(db, organization, user)
+    except organization_service.OrganizationStateError as exc:
+        db.rollback()
+        return RedirectResponse(f"/admin/organizations/{organization_id}?error={exc}", status_code=303)
+    db.commit()
+    return RedirectResponse(f"/admin/organizations/{organization_id}", status_code=303)
+
+
+@router.post("/stations/{station_id}/archive", dependencies=[Depends(verify_csrf)])
+def archive_station(
+    station_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Arhivare NEDISTRUCTIVA (issue #24): doar `is_active=False`, care deja
+    blocheaza dispecerizarea de comenzi live (`command_dispatch_service`) --
+    telemetria, planurile si device-urile raman intacte, nicio stergere in
+    cascada. Reversibila prin `/restore`."""
+    station = db.get(Station, station_id)
+    if station is None:
+        return RedirectResponse("/admin/organizations", status_code=303)
+    station.is_active = False
+    db.add(station)
+    record_audit(
+        db, action="station_archived", resource_type="station", resource_id=str(station.id),
+        actor_user_id=user.id, actor_label=user.email, organization_id=station.organization_id, station_id=station.id,
+    )
+    db.commit()
+    return RedirectResponse(f"/admin/organizations/{station.organization_id}", status_code=303)
+
+
+@router.post("/stations/{station_id}/restore", dependencies=[Depends(verify_csrf)])
+def restore_station(
+    station_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    station = db.get(Station, station_id)
+    if station is None:
+        return RedirectResponse("/admin/organizations", status_code=303)
+    station.is_active = True
+    db.add(station)
+    record_audit(
+        db, action="station_restored", resource_type="station", resource_id=str(station.id),
+        actor_user_id=user.id, actor_label=user.email, organization_id=station.organization_id, station_id=station.id,
+    )
+    db.commit()
+    return RedirectResponse(f"/admin/organizations/{station.organization_id}", status_code=303)
 
 
 @router.get("/users")
