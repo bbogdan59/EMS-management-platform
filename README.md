@@ -165,6 +165,25 @@ Toate datele simulate sunt marcate explicit (`is_simulated=true` in telemetrie,
 porneste niciodata implicit si e blocat explicit daca `ENVIRONMENT=production`
 (vezi `app/config.py`).
 
+### Un singur dispozitiv simulat, configurabil (testare rapida)
+
+Pentru un test rapid al unei statii proprii create manual din UI (fara
+fisierul de seed multi-statie de mai sus):
+
+1. Creeaza o organizatie + o statie din UI (admin).
+2. Din pagina statiei, genereaza un cod de asociere pentru un dispozitiv nou.
+3. Ruleaza (din radacina proiectului, cu `.venv` activat):
+
+   ```bash
+   python -m simulator.run_mock_device --claim-code ABCD1234 \
+       --pv-kwp 5 --inverter-kw 5 --battery-kwh 10
+   ```
+
+   Toti parametrii fizici (PV/invertor/baterie/EV/consum) au valori implicite
+   rezonabile -- ruleaza si doar cu `--claim-code`. Vezi
+   `python -m simulator.run_mock_device --help` pentru lista completa.
+   Opreste cu Ctrl+C.
+
 ## Teste
 
 ```bash
