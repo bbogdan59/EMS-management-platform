@@ -32,6 +32,22 @@ def _add_tariffs(db, station, import_price="0.9", export_price="0.35"):
     db.flush()
 
 
+def _block_weather_refresh(monkeypatch):
+    """Blocheaza best-effort-ul de reimprospatare meteo/PV din `_ensure_forecasts`,
+    astfel incat datele de prognoza inserate manual de test sa ramana autoritare
+    indiferent daca mediul de rulare are sau nu acces real la reteaua externa
+    (open-meteo) -- fara asta, un mediu cu acces la retea (ex. CI) ar putea genera
+    si insera o prognoza PV noua, mai recenta, care sa inlocuiasca tacit valorile
+    sintetice ale testului (acelasi tipar ca `test_optimization_fallback_when_no_forecasts_available`)."""
+    from app.services import weather_service
+    from app.services.weather_service import WeatherUnavailableError
+
+    def _always_unavailable(*args, **kwargs):
+        raise WeatherUnavailableError("blocat explicit pentru test")
+
+    monkeypatch.setattr(weather_service, "refresh_weather_for_station", _always_unavailable)
+
+
 def _add_tariffs_with_terminal_drop(db, station, *, high_price, low_price, cutover):
     """Ca `_add_tariffs`, dar cu pretul de import scazand la `low_price` incepand
     de la `cutover`. Termenul de "valoare terminala" din obiectiv e calibrat
@@ -609,11 +625,12 @@ def test_soc_recovers_from_out_of_band_without_infeasibility_or_energy_fabricati
     assert actual_soc_kwh <= starting_soc_kwh + max_possible_increase + 0.01
 
 
-def test_ev_forecast_component_not_double_counted_in_optimizer_load(db):
+def test_ev_forecast_component_not_double_counted_in_optimizer_load(db, monkeypatch):
     """`ev_component_kw` din prognoza de consum (medie istorica pasiva) nu
     trebuie insumat in consumul folosit de optimizator -- ar insemna dubla
     numarare fata de propria variabila de decizie a optimizatorului pentru
     incarcarea EV."""
+    _block_weather_refresh(monkeypatch)
     user = make_user(db, email="opt-evdc@test.local")
     org = make_org(db, "Opt EV DC Org")
     station = make_station(db, org, user, name="Opt EV DC Station")
@@ -650,10 +667,11 @@ def test_ev_forecast_component_not_double_counted_in_optimizer_load(db):
     )
 
 
-def test_efc_daily_budget_deducts_already_realized_usage(db):
+def test_efc_daily_budget_deducts_already_realized_usage(db, monkeypatch):
     """Bugetul EFC ramas pentru ZIUA CALENDARISTICA LOCALA curenta trebuie sa
     scada utilizarea deja realizata (din TelemetryAggregate orar), nu doar
     bugetul nominal complet."""
+    _block_weather_refresh(monkeypatch)
     from zoneinfo import ZoneInfo
 
     from freezegun import freeze_time
@@ -728,11 +746,12 @@ def test_efc_daily_budget_deducts_already_realized_usage(db):
         assert today_discharge_kwh > 0.2, "testul trebuie sa exercite efectiv constrangerea EFC, nu doar sa treaca trivial"
 
 
-def test_efc_monthly_budget_uses_local_calendar_month_boundary(db):
+def test_efc_monthly_budget_uses_local_calendar_month_boundary(db, monkeypatch):
     """Bugetul EFC lunar trebuie calculat pe granita LUNII CALENDARISTICE LOCALE,
     nu pe `horizon[0].replace(day=1)` in UTC -- utilizarea din decembrie nu
     trebuie sa reduca bugetul lunii ianuarie doar pentru ca orizontul incepe
     langa miezul noptii, unde UTC si ora locala cad in luni diferite."""
+    _block_weather_refresh(monkeypatch)
     from freezegun import freeze_time
 
     frozen_at = datetime(2025, 12, 31, 22, 0, tzinfo=UTC)  # local Bucuresti: 1 ianuarie, 00:00
@@ -802,10 +821,11 @@ def test_efc_monthly_budget_uses_local_calendar_month_boundary(db):
         )
 
 
-def test_soc_target_applies_at_target_moment_not_one_interval_late(db):
+def test_soc_target_applies_at_target_moment_not_one_interval_late(db, monkeypatch):
     """O tinta SOC la ora X trebuie sa constranga starea EXISTENTA la ora X
     (sfarsitul intervalului anterior), nu sfarsitul intervalului care incepe
     la ora X (asta ar aplica tinta cu un interval intreg mai tarziu)."""
+    _block_weather_refresh(monkeypatch)
     user = make_user(db, email="opt-soctarget@test.local")
     org = make_org(db, "Opt SOC Target Org")
     station = make_station(db, org, user, name="Opt SOC Target Station")
@@ -869,10 +889,11 @@ def test_soc_target_applies_at_target_moment_not_one_interval_late(db):
     )
 
 
-def test_pv_curtailment_respects_shared_inverter_limit(db):
+def test_pv_curtailment_respects_shared_inverter_limit(db, monkeypatch):
     """PV + descarcare baterie, simultan pe partea AC, nu poate depasi puterea
     invertorului -- surplusul de PV peste aceasta limita trebuie curtailat
     (nu doar ignorat), nicaieri in bilantul energetic raportat."""
+    _block_weather_refresh(monkeypatch)
     user = make_user(db, email="opt-curtail@test.local")
     org = make_org(db, "Opt Curtail Org")
     station = make_station(db, org, user, name="Opt Curtail Station", inverter_power_kw=Decimal("3"))
@@ -930,10 +951,11 @@ def test_pv_curtailment_respects_shared_inverter_limit(db):
     assert curtailed_somewhere, "PV-ul peste limita invertorului trebuie curtailat in cel putin un interval"
 
 
-def test_infeasible_when_load_exceeds_all_available_power_sources(db):
+def test_infeasible_when_load_exceeds_all_available_power_sources(db, monkeypatch):
     """Caz de infezabilitate REALA (independenta de banda SOC): fara PV, fara
     import de retea, consum peste puterea maxima de descarcare a bateriei --
     niciun set de decizii nu poate respecta bilantul energetic."""
+    _block_weather_refresh(monkeypatch)
     user = make_user(db, email="opt-realinfeasible@test.local")
     org = make_org(db, "Opt Real Infeasible Org")
     station = make_station(db, org, user, name="Opt Real Infeasible Station", grid_import_limit_kw=Decimal("0"))
