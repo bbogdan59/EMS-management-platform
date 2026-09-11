@@ -6,6 +6,7 @@ import pytest
 from sqlalchemy import select
 
 from app.config import Settings
+from app.core.rate_limit import reset_key
 from app.models.organization import Membership
 from app.models.user import Invitation
 from app.services import auth_service
@@ -15,6 +16,7 @@ from tests.web_helpers import login
 
 
 def test_organization_invitation_rejects_global_role(client, db):
+    reset_key("login_attempts:testclient")
     manager = make_user(db, email="manager-security@test.local")
     organization = make_org(db, "Security Org")
     make_membership(db, manager, organization, role="organization_admin")
@@ -36,6 +38,7 @@ def test_organization_invitation_rejects_global_role(client, db):
 
 
 def test_claim_code_is_one_time_no_store_response_not_url(client, db):
+    reset_key("login_attempts:testclient")
     manager = make_user(db, email="claim-security@test.local")
     organization = make_org(db, "Claim Security Org")
     make_membership(db, manager, organization, role="organization_admin")
