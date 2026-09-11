@@ -307,7 +307,7 @@ def devices_page(
         "devices": devices,
         "claim_codes": claim_codes,
         "can_edit": can_manage_station_config(role),
-        "new_claim_code": request.query_params.get("new_code"),
+        "new_claim_code": None,
         **build_nav_context(db, user, station.id),
     }
     return templates.TemplateResponse(request, "stations/devices.html", context)
@@ -327,7 +327,25 @@ def create_claim_code(
         actor_user_id=user.id, actor_label=user.email, station_id=station.id,
     )
     db.commit()
-    return RedirectResponse(f"/stations/{station.id}/devices?new_code={raw_code}", status_code=303)
+    devices = db.scalars(select(Device).where(Device.station_id == station.id)).all()
+    claim_codes = db.scalars(
+        select(ClaimCode).where(ClaimCode.station_id == station.id).order_by(ClaimCode.created_at.desc()).limit(10)
+    ).all()
+    response = templates.TemplateResponse(
+        request,
+        "stations/devices.html",
+        {
+            "station": station,
+            "devices": devices,
+            "claim_codes": claim_codes,
+            "can_edit": True,
+            "new_claim_code": raw_code,
+            **build_nav_context(db, user, station.id),
+        },
+    )
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    return response
 
 
 @router.post("/stations/{station_id}/devices/{device_id}/revoke", dependencies=[Depends(verify_csrf)])

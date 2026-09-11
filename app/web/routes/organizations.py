@@ -30,6 +30,25 @@ def _dec(value: str | None) -> Decimal | None:
         return None
 
 
+def _organization_context(db: Session, organization, role: str, user: User, *, invitation_token=None):
+    memberships = db.scalars(
+        select(Membership).where(Membership.organization_id == organization.id)
+    ).all()
+    member_rows = []
+    for membership in memberships:
+        member = db.get(User, membership.user_id)
+        member_rows.append({"email": member.email if member else "?", "role": membership.role})
+    return {
+        "organization": organization,
+        "stations": organization.stations,
+        "memberships": member_rows,
+        "my_role": role,
+        "can_manage": can_manage_organization(role),
+        "invitation_token": invitation_token,
+        **build_nav_context(db, user),
+    }
+
+
 @router.get("/organizations/{organization_id}")
 def organization_detail(
     request: Request,
@@ -38,23 +57,7 @@ def organization_detail(
     user: User = Depends(get_current_user),
 ):
     organization, role = org_role
-    memberships = db.scalars(
-        select(Membership).where(Membership.organization_id == organization.id)
-    ).all()
-    member_rows = []
-    for m in memberships:
-        u = db.get(User, m.user_id)
-        member_rows.append({"email": u.email if u else "?", "role": m.role})
-
-    context = {
-        "organization": organization,
-        "stations": organization.stations,
-        "memberships": member_rows,
-        "my_role": role,
-        "can_manage": can_manage_organization(role),
-        "invite_link": request.query_params.get("invite_link"),
-        **build_nav_context(db, user),
-    }
+    context = _organization_context(db, organization, role, user)
     return templates.TemplateResponse(request, "organizations/detail.html", context)
 
 
@@ -115,8 +118,14 @@ def invite_member(
     org_role: tuple = Depends(OrganizationAccess(min_role="organization_admin")),
     user: User = Depends(get_current_user),
 ):
-    organization, _role = org_role
-    invitation, raw_token = auth_service.create_invitation(db, organization, email, role, user.id)
+    organization, current_role = org_role
+    try:
+        invitation, raw_token = auth_service.create_invitation(db, organization, email, role, user.id)
+    except auth_service.AuthError as exc:
+        db.rollback()
+        context = _organization_context(db, organization, current_role, user)
+        context["invitation_error"] = str(exc)
+        return templates.TemplateResponse(request, "organizations/detail.html", context, status_code=400)
     record_audit(
         db, action="invitation_created", resource_type="invitation", resource_id=str(invitation.id),
         actor_user_id=user.id, actor_label=user.email, organization_id=organization.id,
@@ -127,6 +136,12 @@ def invite_member(
     from app.config import get_settings
 
     settings = get_settings()
-    link = f"/accept-invitation?token={raw_token}" if settings.environment != "production" else None
-    suffix = f"&invite_link={link}" if link else ""
-    return RedirectResponse(f"/organizations/{organization.id}?x=1{suffix}", status_code=303)
+    token = raw_token if settings.environment != "production" else None
+    response = templates.TemplateResponse(
+        request,
+        "organizations/detail.html",
+        _organization_context(db, organization, current_role, user, invitation_token=token),
+    )
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    return response

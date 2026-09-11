@@ -81,6 +81,9 @@
 
     <div class="card">
       <h2 class="mb-3 font-medium">Membri</h2>
+      {% if invitation_error %}
+      <p class="mb-3 rounded-lg bg-red-50 p-3 text-sm text-red-700 dark:bg-red-900/30 dark:text-red-300">{{ invitation_error }}</p>
+      {% endif %}
       <ul class="divide-y divide-gray-100 dark:divide-gray-800">
         {% for m in memberships %}
         <li class="flex items-center justify-between py-2 text-sm">
@@ -110,10 +113,10 @@
           <button type="submit" class="btn-primary">Trimite invitatie</button>
         </form>
       </details>
-      {% if invite_link %}
+      {% if invitation_token %}
       <p class="mt-3 rounded-lg bg-brand-50 p-3 text-xs text-brand-800 dark:bg-brand-900/30 dark:text-brand-200">
-        Invitatie creata. Link (mod demo/console email): <br />
-        <code class="break-all">{{ invite_link }}</code>
+        Invitatie creata. Token afisat o singura data în mod non-productie: <br />
+        <code class="break-all">{{ invitation_token }}</code>
       </p>
       {% endif %}
       {% endif %}
