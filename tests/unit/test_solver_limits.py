@@ -22,6 +22,7 @@ def solve(**overrides):
         battery_discharge_efficiency=0.95,
         grid_import_limit_kw=10,
         grid_export_limit_kw=10,
+        inverter_power_kw=10,  # suficient de mare cat sa nu limiteze niciunul dintre scenariile de mai jos
         ev_enabled=False,
     )
     pref = SimpleNamespace(

@@ -55,6 +55,11 @@ settings = get_settings()
 DEFAULT_BATTERY_WEAR_COST_LEI_PER_KWH = Decimal("0.05")
 SOC_TARGET_PENALTY_LEI_PER_KWH = 2.0
 EV_SHORTFALL_PENALTY_LEI_PER_KWH = 5.0
+# Mult mai mare decat celelalte penalizari soft -- banda de rezerva/normal e o preferinta
+# de siguranta a bateriei, nu doar o tinta de confort ca `soc_targets`; solverul trebuie
+# sa o recupere cat mai repede posibil, oricand fizic posibil, in loc sa o lase deviata
+# pentru economii marginale de cost.
+RESERVE_BAND_PENALTY_LEI_PER_KWH = 50.0
 PRIORITY_WEIGHTS = {
     "cost": {"soc_target": 1.0, "ev": 1.0, "wear": 1.0, "terminal_value": 1.0},
     "autonomy": {"soc_target": 1.5, "ev": 1.3, "wear": 0.8, "terminal_value": 2.0},
@@ -136,7 +141,14 @@ def _build_load_series(db: Session, station_id: uuid.UUID, horizon: list[datetim
             ConsumptionForecast.station_id == station_id, ConsumptionForecast.issued_at == latest_issued
         )
     ).all()
-    by_start = {r.interval_start: float(r.base_load_kw + r.ev_component_kw + r.flexible_component_kw) for r in rows}
+    # `ev_component_kw` e o estimare istorica PASIVA (medie pe acelasi bucket
+    # de timp din trecut), folosita separat pentru compararea prognoza-vs-real
+    # din dashboard (`dashboard_service.get_forecast_vs_actual`) -- optimizatorul
+    # are propria variabila de decizie `m.ev_charge` in `_solve` pentru
+    # incarcarea EV. A include si estimarea aici ar insemna sa numere aceeasi
+    # energie EV de doua ori in bilantul energetic (o data ca "load" fix, o
+    # data ca decizie optimizata).
+    by_start = {r.interval_start: float(r.base_load_kw + r.flexible_component_kw) for r in rows}
     return {t: by_start.get(t) for t in horizon}
 
 
@@ -313,6 +325,17 @@ def _run_locked(db: Session, station_id: uuid.UUID, triggered_by: str, triggered
     if config is None or preference is None:
         return _fallback(db, run, station, horizon, interval_minutes, "Statia nu are configuratie sau preferinte publicate.")
 
+    if preference.min_reserve_soc_percent >= preference.max_normal_soc_percent:
+        # O banda de operare goala/inversata e o eroare de configurare, nu ceva de
+        # rezolvat prin solver -- semnalata explicit ca infezabila, nu ca fallback generic,
+        # la fel ca infezabilitatea reala intoarsa de solver mai jos.
+        run.status = OptimizationRunStatus.infeasible.value
+        return _fallback(
+            db, run, station, horizon, interval_minutes,
+            f"Configuratie de preferinte invalida: SOC minim de rezerva ({preference.min_reserve_soc_percent}%) "
+            f">= SOC maxim normal ({preference.max_normal_soc_percent}%) -- nicio banda de operare valida.",
+        )
+
     _ensure_forecasts(db, station, start, end)
 
     pv_series_raw = _build_pv_series(db, station_id, horizon)
@@ -484,7 +507,13 @@ def _solve(*, station, config, preference, horizon, interval_minutes, pv_series,
 
     soc_min = float(preference.min_reserve_soc_percent) / 100.0 * avail_capacity
     soc_max = float(preference.max_normal_soc_percent) / 100.0 * avail_capacity
-    current_soc_kwh = min(max(current_soc_kwh, soc_min), soc_max)
+    # Clamp doar la limitele FIZICE (0, capacitate) -- SOC-ul masurat e starea reala a
+    # bateriei si nu trebuie fortat in banda de preferinta (asta ar "sterge"/"inventa"
+    # energie care nu exista/exista cu adevarat). Banda de preferinta devine mai jos o
+    # tinta PENALIZATA (soc_reserve_shortfall/soc_ceiling_excess), nu o limita grea --
+    # altfel un SOC masurat in afara benzii ar face modelul infezabil chiar la t=0.
+    current_soc_kwh = min(max(current_soc_kwh, 0.0), avail_capacity)
+    inverter_kw = float(config.inverter_power_kw)
 
     weights = PRIORITY_WEIGHTS.get(preference.priority, PRIORITY_WEIGHTS["cost"])
 
@@ -496,28 +525,59 @@ def _solve(*, station, config, preference, horizon, interval_minutes, pv_series,
     m.grid_export = pyo.Var(m.T, domain=pyo.NonNegativeReals, bounds=(0, export_limit))
     m.batt_charge = pyo.Var(m.T, domain=pyo.NonNegativeReals, bounds=(0, max_charge_kw))
     m.batt_discharge = pyo.Var(m.T, domain=pyo.NonNegativeReals, bounds=(0, max_discharge_kw))
-    m.soc = pyo.Var(m.T, domain=pyo.NonNegativeReals, bounds=(soc_min, soc_max))
+    m.soc = pyo.Var(m.T, domain=pyo.NonNegativeReals, bounds=(0, avail_capacity))
     m.z_batt = pyo.Var(m.T, domain=pyo.Binary)
     m.z_grid = pyo.Var(m.T, domain=pyo.Binary)
 
+    def pv_curtailed_bounds(m, t):
+        return (0, pv_series[horizon[t]])
+
+    m.pv_curtailed = pyo.Var(m.T, domain=pyo.NonNegativeReals, bounds=pv_curtailed_bounds)
+
     ev_enabled = bool(config.ev_enabled and preference.ev_required_energy_kwh)
     ev_max_kw = float(config.ev_max_charge_power_kw or 0) if ev_enabled else 0.0
+    if ev_enabled and _current_ev_connected(db, station) is False:
+        # Nu se poate incarca un EV declarat explicit deconectat de la ultima telemetrie
+        # cunoscuta -- absenta oricarei informatii (None) lasa comportamentul neschimbat,
+        # ca sa nu blocheze incarcarea doar pentru ca dispozitivul nu raporteaza inca acest camp.
+        ev_max_kw = 0.0
     m.ev_charge = pyo.Var(m.T, domain=pyo.NonNegativeReals, bounds=(0, ev_max_kw))
 
     m.soc_dev_pos = pyo.Var(m.T, domain=pyo.NonNegativeReals)
     m.soc_dev_neg = pyo.Var(m.T, domain=pyo.NonNegativeReals)
     m.ev_shortfall = pyo.Var(domain=pyo.NonNegativeReals)
+    # Banda de preferinta (soc_min/soc_max) e o tinta soft, nu o limita fizica: un SOC
+    # masurat in afara benzii (sau derapajul temporar cauzat de alte constrangeri, ex.
+    # bugetul EFC) trebuie recuperat cat mai repede, dar niciodata cu pretul infezabilitatii.
+    m.soc_reserve_shortfall = pyo.Var(m.T, domain=pyo.NonNegativeReals)
+    m.soc_ceiling_excess = pyo.Var(m.T, domain=pyo.NonNegativeReals)
 
     soc_targets_kwh = _resolve_soc_targets(preference, horizon, avail_capacity, station.timezone)
 
     def balance_rule(m, t):
         tm = horizon[t]
         return (
-            pv_series[tm] + m.batt_discharge[t] + m.grid_import[t]
+            (pv_series[tm] - m.pv_curtailed[t]) + m.batt_discharge[t] + m.grid_import[t]
             == load_series[tm] + m.batt_charge[t] + m.grid_export[t] + m.ev_charge[t]
         )
 
     m.balance = pyo.Constraint(m.T, rule=balance_rule)
+
+    def inverter_limit_rule(m, t):
+        tm = horizon[t]
+        return (pv_series[tm] - m.pv_curtailed[t]) + m.batt_discharge[t] <= inverter_kw
+
+    m.inverter_limit = pyo.Constraint(m.T, rule=inverter_limit_rule)
+
+    def soc_reserve_rule(m, t):
+        return m.soc[t] >= soc_min - m.soc_reserve_shortfall[t]
+
+    m.soc_reserve = pyo.Constraint(m.T, rule=soc_reserve_rule)
+
+    def soc_ceiling_rule(m, t):
+        return m.soc[t] <= soc_max + m.soc_ceiling_excess[t]
+
+    m.soc_ceiling = pyo.Constraint(m.T, rule=soc_ceiling_rule)
 
     def soc_dynamics_rule(m, t):
         prev = current_soc_kwh if t == 0 else m.soc[t - 1]
@@ -531,7 +591,7 @@ def _solve(*, station, config, preference, horizon, interval_minutes, pv_series,
     m.no_simultaneous_grid_export = pyo.Constraint(m.T, rule=lambda m, t: m.grid_export[t] <= big_m * (1 - m.z_grid[t]))
 
     if not preference.allow_grid_charge:
-        m.no_grid_charge = pyo.Constraint(m.T, rule=lambda m, t: m.batt_charge[t] <= pv_series[horizon[t]])
+        m.no_grid_charge = pyo.Constraint(m.T, rule=lambda m, t: m.batt_charge[t] <= pv_series[horizon[t]] - m.pv_curtailed[t])
     if not preference.allow_battery_export:
         m.no_battery_export = pyo.Constraint(
             m.T, rule=lambda m, t: m.batt_discharge[t] <= load_series[horizon[t]] + m.ev_charge[t]
@@ -556,12 +616,20 @@ def _solve(*, station, config, preference, horizon, interval_minutes, pv_series,
     efc_day_groups = _group_by_local_day(horizon, station.timezone)
     if preference.max_efc_per_day is not None:
         for day, idxs in efc_day_groups.items():
+            # EFC deja consumat in ZIUA CALENDARISTICA LOCALA de pana la inceputul acestui
+            # grup din orizont (pentru prima zi, partiala, "de pana acum"; pentru o zi
+            # viitoare completa in orizont, intervalul e gol -- 0 deja consumat).
+            day_reference = horizon[idxs[0]]
+            day_start_utc = _local_day_start_utc(day_reference, station.timezone)
+            already_used_ratio = get_efc_used(db, station, config, day_start_utc, day_reference) or 0.0
+            remaining_ratio = max(float(preference.max_efc_per_day) - already_used_ratio, 0.0)
             m.add_component(
                 f"efc_day_{day}",
-                pyo.Constraint(expr=sum(m.batt_discharge[t] * dt_h for t in idxs) <= float(preference.max_efc_per_day) * ref_capacity),
+                pyo.Constraint(expr=sum(m.batt_discharge[t] * dt_h for t in idxs) <= remaining_ratio * ref_capacity),
             )
     if preference.max_efc_per_month is not None:
-        already_used = get_efc_used(db, station, config, horizon[0].replace(day=1), horizon[0]) or 0.0
+        month_start_utc = _local_month_start_utc(horizon[0], station.timezone)
+        already_used = get_efc_used(db, station, config, month_start_utc, horizon[0]) or 0.0
         remaining_budget = max(float(preference.max_efc_per_month) - already_used, 0.0)
         m.efc_month = pyo.Constraint(expr=sum(m.batt_discharge[t] * dt_h for t in T) <= remaining_budget * ref_capacity)
 
@@ -572,6 +640,7 @@ def _solve(*, station, config, preference, horizon, interval_minutes, pv_series,
         + weights["wear"] * float(DEFAULT_BATTERY_WEAR_COST_LEI_PER_KWH) * sum((m.batt_charge[t] + m.batt_discharge[t]) * dt_h for t in T)
         + weights["soc_target"] * SOC_TARGET_PENALTY_LEI_PER_KWH * sum(m.soc_dev_pos[t] + m.soc_dev_neg[t] for t in T)
         + weights["ev"] * EV_SHORTFALL_PENALTY_LEI_PER_KWH * m.ev_shortfall
+        + RESERVE_BAND_PENALTY_LEI_PER_KWH * sum(m.soc_reserve_shortfall[t] + m.soc_ceiling_excess[t] for t in T)
         - terminal_value * m.soc[T[-1]]
     )
     m.objective = pyo.Objective(expr=objective_expr, sense=pyo.minimize)
@@ -616,6 +685,14 @@ def _solve(*, station, config, preference, horizon, interval_minutes, pv_series,
 
 
 def _resolve_soc_targets(preference, horizon, avail_capacity, tz_name) -> dict[int, float]:
+    """`m.soc[idx]` reprezinta SOC-ul la SFARSITUL intervalului `idx` (vezi
+    `soc_dynamics_rule`), in timp ce `horizon[idx]` e INCEPUTUL acelui interval.
+    O tinta la ora X trebuie sa constranga starea EXISTENTA la ora X, adica
+    sfarsitul intervalului anterior (`m.soc[idx-1]`) -- nu sfarsitul
+    intervalului `idx` (care ar aplica tinta cu un interval intreg, 15 minute
+    implicit, mai tarziu decat ora ceruta). O tinta exact la inceputul
+    orizontului (idx==0) nu poate fi aplicata retroactiv -- SOC-ul curent e
+    deja o masuratoare fixa (parametru), nu o decizie a optimizatorului."""
     tz = ZoneInfo(tz_name)
     out = {}
     for idx, t in enumerate(horizon):
@@ -626,8 +703,8 @@ def _resolve_soc_targets(preference, horizon, avail_capacity, tz_name) -> dict[i
                 days = target.get("days_of_week")
                 if days is not None and local.weekday() not in days:
                     continue
-                if local.hour == int(hh) and local.minute == int(mm):
-                    out[idx] = float(target["target_soc_percent"]) / 100.0 * avail_capacity
+                if local.hour == int(hh) and local.minute == int(mm) and idx > 0:
+                    out[idx - 1] = float(target["target_soc_percent"]) / 100.0 * avail_capacity
             except (KeyError, ValueError):
                 continue
     return out
@@ -651,6 +728,41 @@ def _group_by_local_day(horizon, tz_name) -> dict[str, list[int]]:
         key = t.astimezone(tz).date().isoformat()
         groups.setdefault(key, []).append(idx)
     return groups
+
+
+def _local_day_start_utc(reference_utc: datetime, tz_name: str) -> datetime:
+    """Miezul noptii, in fusul orar LOCAL al statiei, al zilei calendaristice
+    locale careia ii apartine `reference_utc` -- convertit inapoi in UTC."""
+    tz = ZoneInfo(tz_name)
+    local = reference_utc.astimezone(tz)
+    local_midnight = local.replace(hour=0, minute=0, second=0, microsecond=0)
+    return local_midnight.astimezone(reference_utc.tzinfo or ZoneInfo("UTC"))
+
+
+def _local_month_start_utc(reference_utc: datetime, tz_name: str) -> datetime:
+    """Ca `_local_day_start_utc`, dar pentru inceputul LUNII calendaristice
+    locale -- `horizon[0].replace(day=1)` in UTC poate cadea in luna gresita
+    langa miezul noptii, daca fusul local difera suficient de UTC (ex. ora
+    01:00 la Bucuresti in ianuarie e inca 23:00 UTC in decembrie)."""
+    tz = ZoneInfo(tz_name)
+    local = reference_utc.astimezone(tz)
+    local_month_start = local.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    return local_month_start.astimezone(reference_utc.tzinfo or ZoneInfo("UTC"))
+
+
+def _current_ev_connected(db: Session, station: Station) -> bool | None:
+    """Ultima stare CUNOSCUTA de conectare a EV-ului, indiferent de vechime --
+    spre deosebire de SOC (unde o masuratoare veche poate fi complet depasita
+    de realitate), o stare boolean stagnanta ("ultima data conectat/deconectat")
+    ramane cea mai buna informatie disponibila, nu una "invechita" in acelasi
+    sens. None daca nicio telemetrie nu a populat vreodata acest camp."""
+    latest = db.scalar(
+        select(TelemetryRaw)
+        .where(TelemetryRaw.station_id == station.id, TelemetryRaw.ev_connected.isnot(None))
+        .order_by(TelemetryRaw.measured_at.desc())
+        .limit(1)
+    )
+    return latest.ev_connected if latest is not None else None
 
 
 def _fallback(db: Session, run: OptimizationRun, station: Station, horizon: list[datetime], interval_minutes: int, reason: str) -> OptimizationRun:

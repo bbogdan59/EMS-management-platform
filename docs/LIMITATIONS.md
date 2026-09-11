@@ -582,3 +582,82 @@ Contorul de rate-limit folosit de testele HTTP este resetat explicit in
 fisierul de teste al rutelor admin. Nu este ridicata global limita din
 productie, astfel incat testele de securitate continua sa exercite aceleasi
 valori implicite ca aplicatia.
+
+## 16. Solver: buget baterie/EFC, limite fizice, tinte SOC, EV (issue #12)
+
+**SOC initial recuperat, nu "teleportat" artificial in banda.** Anterior,
+`current_soc_kwh` masurat era clamp-at direct in banda de preferinta
+(`min_reserve_soc_percent`/`max_normal_soc_percent`) inainte de a intra in
+model -- daca bateria era real la 5% si rezerva minima era 15%, planul
+"pretindea" ca porneste de la 15%, inventand energie care nu exista fizic.
+Acum `current_soc_kwh` e clamp-at doar la limitele FIZICE (0, capacitate
+disponibila), iar banda de preferinta devine o tinta soft, puternic
+penalizata (`RESERVE_BAND_PENALTY_LEI_PER_KWH = 50 lei/kWh`, mult peste orice
+semnal de pret sau uzura): solverul recupereaza spre banda cat de repede
+permite fizica bateriei, fara sa fabrice sau sa stearga energie si fara sa
+faca planul infezabil doar pentru ca starea reala e in afara benzii dorite.
+Documentat explicit si in docstring-ul `PreferenceVersion` (nu mai descrie
+banda ca fiind strict hard in toate situatiile).
+
+**EV: eliminata dubla numarare, respectata starea conectat/deconectat.**
+`_build_load_series` insuma anterior `ConsumptionForecast.ev_component_kw`
+(o medie istorica pasiva) in consumul dat optimizatorului, desi optimizatorul
+are propria variabila de decizie (`m.ev_charge`) pentru incarcarea EV --
+aceeasi energie EV risca sa fie numarata de doua ori in bilant. Componenta EV
+din prognoza ramane folosita DOAR pentru compararea prognoza-vs-real din
+dashboard, niciodata ca input de consum al optimizatorului. In plus, EV-ul nu
+mai poate fi "incarcat" de plan daca ultima telemetrie cunoscuta (indiferent
+de vechime) arata explicit `ev_connected=False`; absenta oricarei informatii
+(`None`) lasa comportamentul neschimbat.
+
+**EFC zilnic/lunar scade utilizarea deja realizata, pe calendar LOCAL.**
+Bugetul EFC ramas pentru fiecare zi/luna calendaristica LOCALA (statia
+poate fi in orice fus orar) e acum `buget_nominal - deja_folosit`, unde
+`deja_folosit` vine din `get_efc_used` pe fereastra reala [inceput-zi/luna
+locala, inceput-orizont). Anterior, bugetul zilnic era intotdeauna cel
+nominal complet (ignora ce s-a descarcat deja azi), iar granita lunara
+folosea `horizon[0].replace(day=1)` in UTC -- gresit langa miezul noptii,
+unde ora locala si UTC pot cadea in luni calendaristice diferite (ex.
+00:15 la Bucuresti pe 1 ianuarie e inca 22:15 UTC pe 31 decembrie).
+
+**Curtailment PV si limita comuna a invertorului.** A fost adaugata o
+variabila noua `m.pv_curtailed` (marginita intre 0 si productia PV prezisa)
+si o constrangere noua `inverter_limit_rule`: `(PV - curtailed) + descarcare
+baterie <= StationConfigVersion.inverter_power_kw` pentru fiecare interval --
+anterior nu exista nicio limita comuna intre PV si descarcarea bateriei pe
+partea AC, desi ambele trec fizic prin acelasi invertor.
+
+**Tinta SOC aplicata la momentul corect.** O tinta la ora X se aplica acum
+starii EXISTENTE la ora X (`m.soc[idx-1]`, sfarsitul intervalului anterior),
+nu sfarsitului intervalului care INCEPE la ora X (`m.soc[idx]`, fostul
+comportament, care aplica tinta cu un interval intreg -- 15 minute implicit
+-- mai tarziu decat ora ceruta).
+
+**Configuratie SOC min >= max e semnalata explicit, inainte de solver.**
+`_run_locked` verifica acum acest caz (o eroare de configurare, nu o
+problema de rezolvat de solver) si publica direct un plan de fallback cu
+status `infeasible`, pastrand comportamentul testului existent pentru acest
+caz. Infezabilitatea REALA a solverului (ex. consum peste toate sursele de
+putere disponibile) ramane testata separat, cu un scenariu independent de
+banda SOC.
+
+**Ramane in afara scopului acestui PR (deja documentat, nu ascuns):**
+pragul minim de beneficiu de arbitraj (`arbitrage_min_benefit_lei`) inca nu
+e o constrangere explicita in model -- vezi limitarea 5 de mai sus, neschimbata.
+`max_optimization_energy_kwh` (energia gestionabila maxima autorizata de
+client per orizont) ramane de asemenea neaplicat explicit ca o constrangere
+proprie -- comportamentul actual e guvernat in continuare doar de limitele
+fizice (putere baterie/retea/invertor) si de bugetele EFC, nu de un plafon
+energetic global per rulare.
+
+**Testare.** Toate cele 6 corectii de mai sus au teste noi in
+`tests/unit/test_optimization.py`, rulate cu solverul HiGHS real (nu mock-uri):
+recuperare SOC din afara benzii fara infezabilitate/fabricare de energie,
+eliminarea dublei numarari EV, buget EFC zilnic care scade utilizarea deja
+realizata, buget EFC lunar pe granita locala (testat explicit langa o
+schimbare de an/luna UTC-vs-local), tinta SOC aplicata la intervalul corect
+(nu cu unul mai tarziu) si curtailment PV cu limita comuna a invertorului
+respectata in fiecare interval. A fost adaugat si un test de infezabilitate
+REALA a solverului (fara PV, fara import de retea, consum peste puterea
+maxima de descarcare), distinct de vechiul test care exercita acum
+pre-verificarea de configurare (banda SOC min >= max).

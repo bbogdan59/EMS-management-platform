@@ -32,6 +32,60 @@ def _add_tariffs(db, station, import_price="0.9", export_price="0.35"):
     db.flush()
 
 
+def _block_weather_refresh(monkeypatch):
+    """Blocheaza best-effort-ul de reimprospatare meteo/PV din `_ensure_forecasts`,
+    astfel incat datele de prognoza inserate manual de test sa ramana autoritare
+    indiferent daca mediul de rulare are sau nu acces real la reteaua externa
+    (open-meteo) -- fara asta, un mediu cu acces la retea (ex. CI) ar putea genera
+    si insera o prognoza PV noua, mai recenta, care sa inlocuiasca tacit valorile
+    sintetice ale testului (acelasi tipar ca `test_optimization_fallback_when_no_forecasts_available`)."""
+    from app.services import weather_service
+    from app.services.weather_service import WeatherUnavailableError
+
+    def _always_unavailable(*args, **kwargs):
+        raise WeatherUnavailableError("blocat explicit pentru test")
+
+    monkeypatch.setattr(weather_service, "refresh_weather_for_station", _always_unavailable)
+
+
+def _add_tariffs_with_terminal_drop(db, station, *, high_price, low_price, cutover):
+    """Ca `_add_tariffs`, dar cu pretul de import scazand la `low_price` incepand
+    de la `cutover`. Termenul de "valoare terminala" din obiectiv e calibrat
+    dupa pretul ULTIMULUI interval din orizont -- cu un pret CONSTANT pe tot
+    orizontul, pastrarea SOC pana la final valoreaza aproape la fel de mult cat
+    descarcarea imediata, anuland aproape complet beneficiul economic testat
+    aici. Scaderea pretului spre finalul orizontului elimina acest artefact
+    fara sa afecteze stimulentul de descarcare in perioada relevanta testului."""
+    imp = Tariff(station_id=station.id, direction="import", kind="fixed", name="t-import")
+    db.add(imp)
+    db.flush()
+    db.add(
+        TariffVersion(
+            tariff_id=imp.id, valid_from=utcnow() - timedelta(days=1),
+            fixed_price_lei_per_kwh=Decimal(high_price), fixed_monthly_fee_lei=Decimal("0"),
+            variable_component_lei_per_kwh=Decimal("0"),
+        )
+    )
+    db.add(
+        TariffVersion(
+            tariff_id=imp.id, valid_from=cutover,
+            fixed_price_lei_per_kwh=Decimal(low_price), fixed_monthly_fee_lei=Decimal("0"),
+            variable_component_lei_per_kwh=Decimal("0"),
+        )
+    )
+    exp = Tariff(station_id=station.id, direction="export", kind="fixed", name="t-export")
+    db.add(exp)
+    db.flush()
+    db.add(
+        TariffVersion(
+            tariff_id=exp.id, valid_from=utcnow() - timedelta(days=1),
+            fixed_price_lei_per_kwh=Decimal("0.1"), fixed_monthly_fee_lei=Decimal("0"),
+            variable_component_lei_per_kwh=Decimal("0"),
+        )
+    )
+    db.flush()
+
+
 def _add_forecasts(db, station, hours=40):
     start = utcnow().replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
     issued = utcnow()
@@ -179,6 +233,11 @@ def _add_soc(db, station, *, age_minutes: float, percent: str = "60") -> Telemet
     )
     db.flush()
     return device
+
+
+def _round_to_interval_for_test(dt):
+    discard = timedelta(minutes=dt.minute % 15, seconds=dt.second, microseconds=dt.microsecond)
+    return (dt - discard) + timedelta(minutes=15)
 
 
 def test_stale_soc_blocks_live_plan_but_not_shadow(db):
@@ -519,3 +578,416 @@ def test_concurrent_optimization_runs_serialize_until_commit(engine):
             cleanup.execute(delete(Organization).where(Organization.id == org_id))
             cleanup.execute(delete(User).where(User.id == user_id))
             cleanup.commit()
+
+
+# --- Regresii pentru issue #12: buget baterie/EFC, limite fizice, tinte SOC, EV. ---
+
+
+def test_soc_recovers_from_out_of_band_without_infeasibility_or_energy_fabrication(db):
+    """SOC masurat sub banda minima de rezerva (15% implicit) nu trebuie sa faca
+    planul infezabil si nu trebuie "teleportat" artificial in banda -- dinamica
+    SOC raportata trebuie sa respecte exact puterea de incarcare/descarcare
+    aleasa de solver (nicio energie inventata/disparuta)."""
+    user = make_user(db, email="opt-socband@test.local")
+    org = make_org(db, "Opt SOC Band Org")
+    station = make_station(db, org, user, name="Opt SOC Band Station")
+    _add_tariffs(db, station)
+    _add_forecasts(db, station)
+    _add_soc(db, station, age_minutes=1, percent="5")  # sub pragul minim de rezerva (15%)
+    db.commit()
+
+    run = run_optimization_for_station(db, station.id, triggered_by="user")
+    db.commit()
+
+    assert run.status == OptimizationRunStatus.succeeded.value
+    assert run.is_fallback is False
+
+    plan = db.scalar(select(Plan).where(Plan.optimization_run_id == run.id))
+    intervals = db.scalars(
+        select(PlanInterval).where(PlanInterval.plan_id == plan.id).order_by(PlanInterval.interval_start)
+    ).all()
+    first = intervals[0]
+
+    avail_capacity_kwh = 10.0  # battery_available_capacity_kwh implicit din factory
+    starting_soc_kwh = 0.05 * avail_capacity_kwh
+    eff, dt_h = 0.95, 0.25
+    batt = float(first.battery_power_target_kw)
+    expected_delta_kwh = (batt * eff if batt >= 0 else batt / eff) * dt_h
+    expected_soc_kwh = starting_soc_kwh + expected_delta_kwh
+    actual_soc_kwh = float(first.battery_soc_target_percent) / 100.0 * avail_capacity_kwh
+    assert abs(actual_soc_kwh - expected_soc_kwh) < 0.01, (
+        "SOC-ul rezultat trebuie sa respecte exact dinamica fizica declarata de puterea bateriei"
+    )
+
+    # Nicio "teleportare" instantanee in banda: cresterea intr-un singur interval e
+    # limitata fizic de puterea maxima de incarcare (3 kW implicit din factory).
+    max_possible_increase = 3.0 * eff * dt_h
+    assert actual_soc_kwh <= starting_soc_kwh + max_possible_increase + 0.01
+
+
+def test_ev_forecast_component_not_double_counted_in_optimizer_load(db, monkeypatch):
+    """`ev_component_kw` din prognoza de consum (medie istorica pasiva) nu
+    trebuie insumat in consumul folosit de optimizator -- ar insemna dubla
+    numarare fata de propria variabila de decizie a optimizatorului pentru
+    incarcarea EV."""
+    _block_weather_refresh(monkeypatch)
+    user = make_user(db, email="opt-evdc@test.local")
+    org = make_org(db, "Opt EV DC Org")
+    station = make_station(db, org, user, name="Opt EV DC Station")
+    _add_tariffs(db, station)
+
+    start = utcnow().replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+    issued = utcnow()
+    for h in range(40):
+        t = start + timedelta(hours=h)
+        db.add(
+            PvForecast(
+                station_id=station.id, issued_at=issued, interval_start=t, interval_end=t + timedelta(hours=1),
+                source="test", predicted_power_kw=Decimal("0"), scenario="expected",
+            )
+        )
+    for q in range(40 * 4):
+        t = start + timedelta(minutes=15 * q)
+        db.add(
+            ConsumptionForecast(
+                station_id=station.id, issued_at=issued, interval_start=t, interval_end=t + timedelta(minutes=15),
+                source="test", base_load_kw=Decimal("0.5"), ev_component_kw=Decimal("1.5"),
+                flexible_component_kw=Decimal("0"), is_cold_start=True,
+            )
+        )
+    db.commit()
+
+    run = run_optimization_for_station(db, station.id, triggered_by="user")
+    db.commit()
+
+    assert run.status == OptimizationRunStatus.succeeded.value
+    load_raw = run.input_snapshot["load_forecast_raw_kw"]
+    assert all(abs(v - 0.5) < 1e-6 for v in load_raw.values() if v is not None), (
+        "componenta EV pasiva din prognoza nu trebuie insumata in consumul folosit de optimizator"
+    )
+
+
+def test_efc_daily_budget_deducts_already_realized_usage(db, monkeypatch):
+    """Bugetul EFC ramas pentru ZIUA CALENDARISTICA LOCALA curenta trebuie sa
+    scada utilizarea deja realizata (din TelemetryAggregate orar), nu doar
+    bugetul nominal complet."""
+    _block_weather_refresh(monkeypatch)
+    from zoneinfo import ZoneInfo
+
+    from freezegun import freeze_time
+
+    tz = ZoneInfo("Europe/Bucharest")
+    frozen_at = datetime(2026, 3, 10, 6, 0, tzinfo=UTC)
+    with freeze_time(frozen_at):
+        user = make_user(db, email="opt-efcday@test.local")
+        org = make_org(db, "Opt EFC Day Org")
+        station = make_station(db, org, user, name="Opt EFC Day Station")
+        # Pret ridicat azi, scazut spre finalul orizontului -- vezi docstring-ul
+        # `_add_tariffs_with_terminal_drop` (neutralizeaza "valoarea terminala").
+        _add_tariffs_with_terminal_drop(db, station, high_price="2.0", low_price="0.05", cutover=utcnow() + timedelta(hours=20))
+
+        start = utcnow().replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+        issued = utcnow()
+        for h in range(40):
+            t = start + timedelta(hours=h)
+            db.add(
+                PvForecast(
+                    station_id=station.id, issued_at=issued, interval_start=t, interval_end=t + timedelta(hours=1),
+                    source="test", predicted_power_kw=Decimal("0"), scenario="expected",
+                )
+            )
+        for q in range(40 * 4):
+            t = start + timedelta(minutes=15 * q)
+            db.add(
+                ConsumptionForecast(
+                    station_id=station.id, issued_at=issued, interval_start=t, interval_end=t + timedelta(minutes=15),
+                    source="test", base_load_kw=Decimal("2.0"), ev_component_kw=Decimal("0"),
+                    flexible_component_kw=Decimal("0"), is_cold_start=True,
+                )
+            )
+
+        _add_soc(db, station, age_minutes=1, percent="90")
+
+        pref = db.scalar(select(PreferenceVersion).where(PreferenceVersion.station_id == station.id))
+        pref.max_efc_per_day = Decimal("0.3")  # buget nominal 3 kWh (0.3 * 10 kWh referinta)
+        db.add(pref)
+
+        # EFC deja consumat AZI (2.5 kWh), inainte de inceputul orizontului -- ramane
+        # doar 0.5 kWh buget pentru restul zilei calendaristice locale.
+        for hour in (2, 3, 4, 5):
+            t = datetime(2026, 3, 10, hour, tzinfo=UTC)
+            db.add(
+                TelemetryAggregate(
+                    station_id=station.id, period_type="hour", period_start=t, period_end=t + timedelta(hours=1),
+                    battery_discharge_energy_kwh=Decimal("0.625"), coverage={"battery": 1.0},
+                )
+            )
+        db.commit()
+
+        run = run_optimization_for_station(db, station.id, triggered_by="user")
+        db.commit()
+
+        assert run.status == OptimizationRunStatus.succeeded.value
+
+        plan = db.scalar(select(Plan).where(Plan.optimization_run_id == run.id))
+        intervals = db.scalars(select(PlanInterval).where(PlanInterval.plan_id == plan.id)).all()
+
+        today_local = frozen_at.astimezone(tz).replace(hour=0, minute=0, second=0, microsecond=0)
+        local_midnight_next_utc = (today_local + timedelta(days=1)).astimezone(UTC)
+        today_discharge_kwh = sum(
+            max(-float(pi.battery_power_target_kw), 0) * 0.25
+            for pi in intervals if pi.interval_start < local_midnight_next_utc
+        )
+
+        assert today_discharge_kwh <= 0.5 + 0.05, (
+            f"bugetul EFC zilnic ramas (0.5 kWh dupa scaderea utilizarii deja realizate) "
+            f"a fost depasit: {today_discharge_kwh:.3f} kWh descarcati azi"
+        )
+        assert today_discharge_kwh > 0.2, "testul trebuie sa exercite efectiv constrangerea EFC, nu doar sa treaca trivial"
+
+
+def test_efc_monthly_budget_uses_local_calendar_month_boundary(db, monkeypatch):
+    """Bugetul EFC lunar trebuie calculat pe granita LUNII CALENDARISTICE LOCALE,
+    nu pe `horizon[0].replace(day=1)` in UTC -- utilizarea din decembrie nu
+    trebuie sa reduca bugetul lunii ianuarie doar pentru ca orizontul incepe
+    langa miezul noptii, unde UTC si ora locala cad in luni diferite."""
+    _block_weather_refresh(monkeypatch)
+    from freezegun import freeze_time
+
+    frozen_at = datetime(2025, 12, 31, 22, 0, tzinfo=UTC)  # local Bucuresti: 1 ianuarie, 00:00
+    with freeze_time(frozen_at):
+        user = make_user(db, email="opt-efcmonth@test.local")
+        org = make_org(db, "Opt EFC Month Org")
+        station = make_station(db, org, user, name="Opt EFC Month Station")
+        # Pret ridicat pe aproape tot orizontul, scazut doar spre chiar finalul lui --
+        # vezi docstring-ul `_add_tariffs_with_terminal_drop` (neutralizeaza "valoarea terminala").
+        _add_tariffs_with_terminal_drop(db, station, high_price="2.0", low_price="0.05", cutover=utcnow() + timedelta(hours=34))
+
+        start = utcnow().replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+        issued = utcnow()
+        for h in range(40):
+            t = start + timedelta(hours=h)
+            db.add(
+                PvForecast(
+                    station_id=station.id, issued_at=issued, interval_start=t, interval_end=t + timedelta(hours=1),
+                    source="test", predicted_power_kw=Decimal("0"), scenario="expected",
+                )
+            )
+        for q in range(40 * 4):
+            t = start + timedelta(minutes=15 * q)
+            db.add(
+                ConsumptionForecast(
+                    station_id=station.id, issued_at=issued, interval_start=t, interval_end=t + timedelta(minutes=15),
+                    source="test", base_load_kw=Decimal("2.0"), ev_component_kw=Decimal("0"),
+                    flexible_component_kw=Decimal("0"), is_cold_start=True,
+                )
+            )
+
+        _add_soc(db, station, age_minutes=1, percent="90")
+
+        pref = db.scalar(select(PreferenceVersion).where(PreferenceVersion.station_id == station.id))
+        pref.max_efc_per_month = Decimal("1.0")  # buget nominal 10 kWh (1.0 * 10 kWh referinta)
+        db.add(pref)
+
+        # Descarcare deja realizata in DECEMBRIE (8 kWh) -- nu trebuie scazuta din bugetul
+        # lunii calendaristice LOCALE ianuarie, desi orizontul incepe la 22:00 UTC 31 dec.
+        for t, amount in [
+            (datetime(2025, 12, 30, 10, tzinfo=UTC), "4.0"),
+            (datetime(2025, 12, 31, 10, tzinfo=UTC), "4.0"),
+        ]:
+            db.add(
+                TelemetryAggregate(
+                    station_id=station.id, period_type="hour", period_start=t, period_end=t + timedelta(hours=1),
+                    battery_discharge_energy_kwh=Decimal(amount), coverage={"battery": 1.0},
+                )
+            )
+        db.commit()
+
+        run = run_optimization_for_station(db, station.id, triggered_by="user")
+        db.commit()
+
+        assert run.status == OptimizationRunStatus.succeeded.value
+
+        plan = db.scalar(select(Plan).where(Plan.optimization_run_id == run.id))
+        intervals = db.scalars(select(PlanInterval).where(PlanInterval.plan_id == plan.id)).all()
+        total_discharge_kwh = sum(max(-float(pi.battery_power_target_kw), 0) * 0.25 for pi in intervals)
+
+        # Cu bug-ul vechi (`horizon[0].replace(day=1)` in UTC), cele 8 kWh din decembrie ar fi
+        # fost scazute gresit din bugetul lunii ianuarie, limitand descarcarea la 2 kWh pe tot
+        # orizontul. Fix-ul foloseste granita LOCALA a lunii -- decembrie nu afecteaza ianuarie.
+        assert total_discharge_kwh > 2.5, (
+            f"utilizarea EFC din decembrie nu trebuie sa reduca bugetul lunii calendaristice locale "
+            f"ianuarie, dar planul a descarcat doar {total_discharge_kwh:.3f} kWh"
+        )
+
+
+def test_soc_target_applies_at_target_moment_not_one_interval_late(db, monkeypatch):
+    """O tinta SOC la ora X trebuie sa constranga starea EXISTENTA la ora X
+    (sfarsitul intervalului anterior), nu sfarsitul intervalului care incepe
+    la ora X (asta ar aplica tinta cu un interval intreg mai tarziu)."""
+    _block_weather_refresh(monkeypatch)
+    user = make_user(db, email="opt-soctarget@test.local")
+    org = make_org(db, "Opt SOC Target Org")
+    station = make_station(db, org, user, name="Opt SOC Target Station")
+    _add_tariffs(db, station)
+
+    start = utcnow().replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+    issued = utcnow()
+    for h in range(40):
+        t = start + timedelta(hours=h)
+        db.add(
+            PvForecast(
+                station_id=station.id, issued_at=issued, interval_start=t, interval_end=t + timedelta(hours=1),
+                source="test", predicted_power_kw=Decimal("0"), scenario="expected",
+            )
+        )
+    for q in range(40 * 4):
+        t = start + timedelta(minutes=15 * q)
+        db.add(
+            ConsumptionForecast(
+                station_id=station.id, issued_at=issued, interval_start=t, interval_end=t + timedelta(minutes=15),
+                source="test", base_load_kw=Decimal("0.3"), ev_component_kw=Decimal("0"),
+                flexible_component_kw=Decimal("0"), is_cold_start=True,
+            )
+        )
+    _add_soc(db, station, age_minutes=1, percent="20")
+
+    pref = db.scalar(select(PreferenceVersion).where(PreferenceVersion.station_id == station.id))
+    pref.allow_grid_charge = True  # elimina orice ambiguitate legata de disponibilitatea PV (0 aici)
+
+    from zoneinfo import ZoneInfo
+
+    tz = ZoneInfo(station.timezone)
+    horizon_start = _round_to_interval_for_test(utcnow())
+    # `soc_targets[].time` e o ora LOCALA statiei (vezi `_resolve_soc_targets`), nu UTC.
+    target_a_time = (horizon_start + timedelta(minutes=15 * 4)).astimezone(tz).strftime("%H:%M")
+    target_b_time = (horizon_start + timedelta(minutes=15 * 8)).astimezone(tz).strftime("%H:%M")
+    pref.soc_targets = [
+        {"time": target_a_time, "days_of_week": None, "target_soc_percent": 40},
+        {"time": target_b_time, "days_of_week": None, "target_soc_percent": 60},
+    ]
+    db.add(pref)
+    db.commit()
+
+    run = run_optimization_for_station(db, station.id, triggered_by="user")
+    db.commit()
+
+    assert run.status == OptimizationRunStatus.succeeded.value
+
+    plan = db.scalar(select(Plan).where(Plan.optimization_run_id == run.id))
+    intervals = db.scalars(
+        select(PlanInterval).where(PlanInterval.plan_id == plan.id).order_by(PlanInterval.interval_start)
+    ).all()
+
+    # Tinta la orizont[4] se aplica lui soc[3] (indexul 3 din plan) -- adica STARII de
+    # la orizont[4], nu sfarsitului intervalului 4. Similar pentru orizont[8] -> soc[7].
+    assert abs(float(intervals[3].battery_soc_target_percent) - 40.0) < 1.5, (
+        "tinta de 40% trebuie atinsa la momentul cerut (sfarsitul intervalului 3), nu cu un interval mai tarziu"
+    )
+    assert abs(float(intervals[7].battery_soc_target_percent) - 60.0) < 1.5, (
+        "tinta de 60% trebuie atinsa la momentul cerut (sfarsitul intervalului 7), nu cu un interval mai tarziu"
+    )
+
+
+def test_pv_curtailment_respects_shared_inverter_limit(db, monkeypatch):
+    """PV + descarcare baterie, simultan pe partea AC, nu poate depasi puterea
+    invertorului -- surplusul de PV peste aceasta limita trebuie curtailat
+    (nu doar ignorat), nicaieri in bilantul energetic raportat."""
+    _block_weather_refresh(monkeypatch)
+    user = make_user(db, email="opt-curtail@test.local")
+    org = make_org(db, "Opt Curtail Org")
+    station = make_station(db, org, user, name="Opt Curtail Station", inverter_power_kw=Decimal("3"))
+    _add_tariffs(db, station)
+
+    start = utcnow().replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+    issued = utcnow()
+    for h in range(40):
+        t = start + timedelta(hours=h)
+        db.add(
+            PvForecast(
+                station_id=station.id, issued_at=issued, interval_start=t, interval_end=t + timedelta(hours=1),
+                source="test", predicted_power_kw=Decimal("5"), scenario="expected",  # peste limita invertorului (3 kW)
+            )
+        )
+    for q in range(40 * 4):
+        t = start + timedelta(minutes=15 * q)
+        db.add(
+            ConsumptionForecast(
+                station_id=station.id, issued_at=issued, interval_start=t, interval_end=t + timedelta(minutes=15),
+                source="test", base_load_kw=Decimal("0.5"), ev_component_kw=Decimal("0"),
+                flexible_component_kw=Decimal("0"), is_cold_start=True,
+            )
+        )
+    db.commit()
+
+    run = run_optimization_for_station(db, station.id, triggered_by="user")
+    db.commit()
+
+    assert run.status == OptimizationRunStatus.succeeded.value
+
+    plan = db.scalar(select(Plan).where(Plan.optimization_run_id == run.id))
+    intervals = db.scalars(select(PlanInterval).where(PlanInterval.plan_id == plan.id)).all()
+
+    inverter_kw = 3.0
+    curtailed_somewhere = False
+    for pi in intervals:
+        pv_raw = float(pi.pv_forecast_kw)
+        load = float(pi.load_forecast_kw)
+        batt = float(pi.battery_power_target_kw)
+        grid = float(pi.grid_power_target_kw)
+        ev = float(pi.ev_charge_power_kw)
+        discharge = max(-batt, 0)
+        # Din bilantul energetic: pv_raw - curtailed + discharge + import == load + charge + export + ev
+        # => pv_efectiv (dupa curtailment) = load + batt - grid + ev
+        effective_pv = load + batt - grid + ev
+        assert effective_pv <= inverter_kw + 0.05, (
+            f"PV efectiv + descarcare baterie ({effective_pv + discharge:.2f} kW) depaseste "
+            f"limita invertorului ({inverter_kw} kW)"
+        )
+        assert effective_pv + discharge <= inverter_kw + 0.05
+        if effective_pv < pv_raw - 0.05:
+            curtailed_somewhere = True
+
+    assert curtailed_somewhere, "PV-ul peste limita invertorului trebuie curtailat in cel putin un interval"
+
+
+def test_infeasible_when_load_exceeds_all_available_power_sources(db, monkeypatch):
+    """Caz de infezabilitate REALA (independenta de banda SOC): fara PV, fara
+    import de retea, consum peste puterea maxima de descarcare a bateriei --
+    niciun set de decizii nu poate respecta bilantul energetic."""
+    _block_weather_refresh(monkeypatch)
+    user = make_user(db, email="opt-realinfeasible@test.local")
+    org = make_org(db, "Opt Real Infeasible Org")
+    station = make_station(db, org, user, name="Opt Real Infeasible Station", grid_import_limit_kw=Decimal("0"))
+    _add_tariffs(db, station)
+
+    start = utcnow().replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+    issued = utcnow()
+    for h in range(40):
+        t = start + timedelta(hours=h)
+        db.add(
+            PvForecast(
+                station_id=station.id, issued_at=issued, interval_start=t, interval_end=t + timedelta(hours=1),
+                source="test", predicted_power_kw=Decimal("0"), scenario="expected",
+            )
+        )
+    for q in range(40 * 4):
+        t = start + timedelta(minutes=15 * q)
+        db.add(
+            ConsumptionForecast(
+                station_id=station.id, issued_at=issued, interval_start=t, interval_end=t + timedelta(minutes=15),
+                source="test", base_load_kw=Decimal("10"), ev_component_kw=Decimal("0"),  # peste max_discharge (3 kW)
+                flexible_component_kw=Decimal("0"), is_cold_start=True,
+            )
+        )
+    db.commit()
+
+    run = run_optimization_for_station(db, station.id, triggered_by="user")
+    db.commit()
+
+    assert run.is_fallback is True
+    assert run.status == OptimizationRunStatus.infeasible.value
+
+    plan = db.scalar(select(Plan).where(Plan.optimization_run_id == run.id))
+    intervals = db.scalars(select(PlanInterval).where(PlanInterval.plan_id == plan.id)).all()
+    assert all(float(pi.battery_power_target_kw) == 0 for pi in intervals), "planul de fallback trebuie sa fie de asteptare (baterie in hold)"
