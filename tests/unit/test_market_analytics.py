@@ -279,6 +279,62 @@ def test_timeline_split_hourly_aggregation_excludes_synthetic_by_default(db):
     assert all(p["is_synthetic"] is False for p in series)
 
 
+def test_timeline_split_stays_hourly_at_exactly_the_daily_threshold(db):
+    """Fereastra de exact `TIMELINE_DAILY_THRESHOLD_DAYS` zile trebuie sa
+    ramana la agregare orara -- pragul de agregare zilnica e strict PESTE
+    acest numar de zile, la fel cum pragul orar e strict peste 10 zile."""
+    now = utcnow()
+    day = (now - timedelta(days=30)).date()
+    make_market_day(db, day, [100.0, 300.0, 500.0, 700.0])  # 4 randuri de 6h
+
+    series = market.get_timeline_split(
+        db, now - timedelta(days=market.TIMELINE_DAILY_THRESHOLD_DAYS), now
+    )
+
+    assert {p["price_lei_mwh"] for p in series} == {100.0, 300.0, 500.0, 700.0}  # bucket-uri orare, nu zilnice
+
+
+def test_timeline_split_aggregates_daily_for_year_long_windows(db):
+    """Reproduce exact scenariul din issue #33: un an intreg de istoric la
+    rezolutie de 15 minute (96 randuri/zi -- ~35.000 randuri fara agregare)
+    trebuie sa produca un numar de puncte in ordinul sutelor (o zi = un
+    punct), nu zeci de mii, nici macar mii (cat ar insemna agregarea orara)."""
+    now = utcnow()
+    for offset in range(120):
+        day = (now - timedelta(days=offset + 5)).date()
+        make_market_day(db, day, [100.0] * 96)
+
+    series = market.get_timeline_split(db, now - timedelta(days=365), now)
+
+    assert 0 < len(series) <= 366  # cel mult un punct pe zi
+    assert all(abs(p["price_lei_mwh"] - 100.0) < 0.01 for p in series)
+
+
+def test_timeline_split_daily_aggregation_averages_within_bucket(db):
+    now = utcnow()
+    day = (now - timedelta(days=100)).date()
+    make_market_day(db, day, [100.0, 300.0])  # doua randuri in aceeasi zi
+
+    series = market.get_timeline_split(db, now - timedelta(days=365), now)
+
+    matching = [p for p in series if abs(p["price_lei_mwh"] - 200.0) < 0.01]
+    assert matching  # media (100+300)/2 = 200, un singur punct pentru toata ziua
+
+
+def test_timeline_split_daily_aggregation_excludes_synthetic_by_default(db):
+    now = utcnow()
+    real_day = (now - timedelta(days=100)).date()
+    synthetic_day = (now - timedelta(days=90)).date()
+    make_market_day(db, real_day, [100.0] * 4)
+    make_market_day(db, synthetic_day, [900.0] * 4, is_synthetic=True)
+
+    series = market.get_timeline_split(db, now - timedelta(days=365), now)
+
+    assert series
+    assert all(p["price_lei_mwh"] != 900.0 for p in series)
+    assert all(p["is_synthetic"] is False for p in series)
+
+
 def test_market_status_uses_bucharest_timezone_near_midnight(db):
     """22:00 UTC in septembrie e deja 01:00 a doua zi in Bucuresti (DST activ,
     UTC+3): "azi" trebuie sa fie ziua locala, nu cea UTC."""
