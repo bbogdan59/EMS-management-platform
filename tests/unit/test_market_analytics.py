@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, date, datetime, timedelta
+from datetime import date, datetime, timedelta
 
 import pytest
 
@@ -11,10 +11,11 @@ from tests.factories import make_market_day
 
 
 @pytest.fixture(autouse=True)
-def fixed_market_clock(monkeypatch):
-    now = datetime(2026, 9, 10, 12, tzinfo=UTC)
-    monkeypatch.setattr(market, "utcnow", lambda: now)
-    monkeypatch.setattr(__name__ + ".utcnow", lambda: now)
+def fixed_market_clock():
+    from freezegun import freeze_time
+
+    with freeze_time("2026-09-10 12:00:00"):
+        yield
 
 
 def test_get_daily_averages_aggregates_correctly(db):
