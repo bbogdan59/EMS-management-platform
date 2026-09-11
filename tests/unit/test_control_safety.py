@@ -127,6 +127,7 @@ def test_pending_optimizer_command_is_withdrawn_when_plan_is_superseded():
     now, station, config, pref, device, plan, interval, db = context()
     plan.status = "superseded"
     command = SimpleNamespace(
+        type="hold_battery",
         id=uuid.uuid4(),
         plan_interval_id=interval.id,
         device_id=device.id,
