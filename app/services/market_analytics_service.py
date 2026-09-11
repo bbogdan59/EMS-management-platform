@@ -25,6 +25,10 @@ TREND_RATIO_MIN = 0.5
 TREND_RATIO_MAX = 2.0
 RECENT_WINDOW_DAYS = 30
 BUCHAREST = ZoneInfo("Europe/Bucharest")
+# Peste acest prag, `get_timeline_split` agrega pe ora in loc sa returneze
+# rezolutia bruta a randurilor -- un an intreg la 15 minute ar insemna
+# ~35.000 de puncte intr-un singur grafic altfel.
+TIMELINE_HOURLY_THRESHOLD_DAYS = 10
 
 
 def _today_local() -> date:
@@ -132,13 +136,29 @@ def get_monthly_averages(db: Session, years: list[int] | None = None, source: st
 def get_timeline_split(
     db: Session, start: datetime, end: datetime, source: str = SOURCE, include_synthetic: bool = False
 ) -> list[dict]:
-    """Serie pe interval de 15 minute, cu marcaj explicit `is_future` -- UI-ul
-    deseneaza portiunea viitoare (nerealizata inca, ex. 'maine') cu linie
-    punctata, iar restul (trecut/realizat) cu linie continua.
+    """Serie de preturi pentru graficul principal, cu marcaj explicit
+    `is_future` -- UI-ul deseneaza portiunea viitoare (nerealizata inca, ex.
+    'maine') cu linie punctata, iar restul (trecut/realizat) cu linie
+    continua.
+
+    Pentru o fereastra <= `TIMELINE_HOURLY_THRESHOLD_DAYS` zile, returneaza
+    rezolutia BRUTA a randurilor stocate (15/30/60 minute, dupa cum a fost
+    publicata fiecare zi -- vezi `opcom_service.parse_csv`), neschimbat fata
+    de comportamentul de dinainte. Pentru o fereastra mai mare, agrega pe ORA
+    (medie), ca numarul de puncte trimise catre grafic sa ramana rezonabil
+    indiferent cat de lung e intervalul cerut (ex. un an intreg de istoric).
 
     Implicit EXCLUDE intervalele provenite din fixture-uri sintetice, la fel
     ca `get_daily_averages` (vezi acolo motivul); fiecare punct ramas
     marcheaza `is_synthetic=False` explicit pentru claritate in consumatori."""
+    if end - start > timedelta(days=TIMELINE_HOURLY_THRESHOLD_DAYS):
+        return _get_timeline_hourly(db, start, end, source, include_synthetic)
+    return _get_timeline_raw(db, start, end, source, include_synthetic)
+
+
+def _get_timeline_raw(
+    db: Session, start: datetime, end: datetime, source: str, include_synthetic: bool
+) -> list[dict]:
     now = utcnow()
     stmt = (
         select(MarketPriceInterval, ImportRun.is_synthetic_fixture)
@@ -164,6 +184,45 @@ def get_timeline_split(
             "is_synthetic": bool(is_synthetic),
         }
         for r, is_synthetic in rows
+    ]
+
+
+def _get_timeline_hourly(
+    db: Session, start: datetime, end: datetime, source: str, include_synthetic: bool
+) -> list[dict]:
+    now = utcnow()
+    bucket = func.date_trunc("hour", MarketPriceInterval.interval_start)
+    stmt = (
+        select(
+            bucket.label("bucket_start"),
+            func.avg(MarketPriceInterval.price_lei_per_mwh).label("avg_mwh"),
+            func.avg(MarketPriceInterval.price_lei_per_kwh).label("avg_kwh"),
+            func.bool_or(MarketPriceInterval.is_negative).label("has_negative"),
+            func.bool_or(ImportRun.is_synthetic_fixture).label("has_synthetic"),
+        )
+        .join(ImportRun, ImportRun.id == MarketPriceInterval.import_run_id)
+        .where(
+            MarketPriceInterval.source == source,
+            MarketPriceInterval.is_current.is_(True),
+            MarketPriceInterval.interval_start >= start,
+            MarketPriceInterval.interval_start < end,
+        )
+        .group_by(bucket)
+        .order_by(bucket)
+    )
+    if not include_synthetic:
+        stmt = stmt.where(ImportRun.is_synthetic_fixture.is_(False))
+    rows = db.execute(stmt).all()
+    return [
+        {
+            "t": r.bucket_start.isoformat(),
+            "price_lei_mwh": float(r.avg_mwh),
+            "price_lei_kwh": float(r.avg_kwh),
+            "is_negative": bool(r.has_negative),
+            "is_future": r.bucket_start > now,
+            "is_synthetic": bool(r.has_synthetic),
+        }
+        for r in rows
     ]
 
 
