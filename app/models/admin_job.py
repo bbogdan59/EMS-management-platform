@@ -28,7 +28,7 @@ class AdminJob(Entity):
 
     params: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
     target_label: Mapped[str] = mapped_column(String(200), nullable=False)
-    station_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("stations.id", ondelete="CASCADE"), nullable=True, index=True)
+    station_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("stations.id", ondelete="SET NULL"), nullable=True, index=True)
 
     triggered_by_user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"), nullable=True)
 

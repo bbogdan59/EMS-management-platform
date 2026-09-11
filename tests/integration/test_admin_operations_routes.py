@@ -15,13 +15,20 @@ from __future__ import annotations
 
 import uuid
 
+import pytest
 from sqlalchemy import select
 
+from app.core.rate_limit import reset_key
 from app.models.admin_job import AdminJob
 from app.models.enums import AdminJobStatus
 from app.workers import tasks as tasks_module
 from tests.factories import make_org, make_station, make_user
 from tests.web_helpers import login
+
+
+@pytest.fixture(autouse=True)
+def _reset_login_rate_limit():
+    reset_key("login_attempts:testclient")
 
 
 class _FakeAsyncResult:
@@ -87,6 +94,43 @@ def test_trigger_opcom_import_rejects_duplicate_in_progress(client, db, monkeypa
 
     jobs = db.scalars(select(AdminJob).where(AdminJob.triggered_by_user_id == admin.id)).all()
     assert len(jobs) == 1
+
+
+def test_trigger_opcom_import_rejects_invalid_date(client, db):
+    make_user(db, email="opsjob-invalid-date@test.local", password="Password1234", is_platform_admin=True)
+    db.commit()
+    login(client, "opsjob-invalid-date@test.local", "Password1234")
+
+    response = client.post(
+        "/admin/operations/import-opcom",
+        data={"csrf_token": client.cookies.get("ems_csrf"), "delivery_date": "not-a-date"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/admin/operations?error=invalid_delivery_date"
+
+
+def test_enqueue_failure_marks_job_failed_and_allows_retry(client, db, monkeypatch):
+    admin = make_user(db, email="opsjob-enqueue-fail@test.local", password="Password1234", is_platform_admin=True)
+    db.commit()
+    login(client, admin.email, "Password1234")
+
+    def _fail_delay(*args, **kwargs):
+        raise RuntimeError("broker at redis://user:secret@internal unavailable")
+
+    monkeypatch.setattr(tasks_module.admin_opcom_import_job_task, "delay", _fail_delay)
+    response = client.post(
+        "/admin/operations/import-opcom",
+        data={"csrf_token": client.cookies.get("ems_csrf"), "delivery_date": "2026-02-02"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/admin/operations?error=enqueue_failed"
+    job = db.scalar(select(AdminJob).where(AdminJob.triggered_by_user_id == admin.id))
+    assert job.status == AdminJobStatus.failed.value
+    assert "secret" not in job.error_message
 
 
 def test_trigger_optimization_creates_queued_admin_job(client, db, monkeypatch):

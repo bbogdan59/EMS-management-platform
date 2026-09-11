@@ -25,7 +25,11 @@ from app.models.market import ImportRun
 from app.models.optimization import OptimizationRun
 from app.models.tariff import Tariff, TariffVersion
 from app.services import opcom_service, optimization_service
-from app.workers.tasks import admin_opcom_import_job_task, admin_optimize_station_job_task
+from app.workers.tasks import (
+    _SAFE_JOB_ERROR,
+    admin_opcom_import_job_task,
+    admin_optimize_station_job_task,
+)
 from tests.factories import make_org, make_station, make_user
 
 
@@ -106,6 +110,7 @@ def test_admin_opcom_import_job_task_succeeds(engine):
     try:
         result = admin_opcom_import_job_task(str(job_id))
         assert result["status"] == "succeeded"
+        assert admin_opcom_import_job_task(str(job_id))["status"] == "ignored"
 
         verify = Session()
         try:
@@ -164,7 +169,8 @@ def test_admin_opcom_import_job_task_failure_sets_safe_error(engine, monkeypatch
             refreshed = verify.get(AdminJob, job_id)
             assert refreshed.status == AdminJobStatus.failed.value
             assert refreshed.finished_at is not None
-            assert refreshed.error_message == "eroare simulata de import OPCOM"
+            assert refreshed.error_message == _SAFE_JOB_ERROR
+            assert "simulata" not in refreshed.error_message
             assert len(refreshed.error_message) <= 500
         finally:
             verify.close()
@@ -321,7 +327,8 @@ def test_admin_optimize_station_job_task_failure_sets_safe_error(engine, monkeyp
         try:
             refreshed = verify.get(AdminJob, job_id)
             assert refreshed.status == AdminJobStatus.failed.value
-            assert refreshed.error_message == "eroare simulata de optimizare"
+            assert refreshed.error_message == _SAFE_JOB_ERROR
+            assert "simulata" not in refreshed.error_message
         finally:
             verify.close()
     finally:

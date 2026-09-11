@@ -11,6 +11,10 @@
   <div class="badge-warn rounded p-2">Exista deja o reoptimizare in curs pentru aceasta statie.</div>
   {% elif request.query_params.get("error") == "station_not_found" %}
   <div class="badge-error rounded p-2">Statia nu a fost gasita.</div>
+  {% elif request.query_params.get("error") == "invalid_delivery_date" %}
+  <div class="badge-error rounded p-2">Data de livrare nu este valida.</div>
+  {% elif request.query_params.get("error") == "enqueue_failed" %}
+  <div class="badge-error rounded p-2">Jobul nu a putut fi trimis catre worker. Puteti incerca din nou.</div>
   {% endif %}
 
   <div class="card">

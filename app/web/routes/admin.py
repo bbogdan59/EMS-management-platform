@@ -3,6 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import timedelta
 
+import structlog
 from fastapi import APIRouter, Depends, Form, Query, Request
 from fastapi.responses import RedirectResponse
 from sqlalchemy import func, select
@@ -29,6 +30,9 @@ from app.web.context import build_nav_context
 from app.web.templating import templates
 
 router = APIRouter(dependencies=[Depends(require_platform_admin)])
+logger = structlog.get_logger(__name__)
+
+_SAFE_ENQUEUE_ERROR = "Jobul nu a putut fi trimis către worker. Încercați din nou."
 
 
 @router.get("")
@@ -129,6 +133,47 @@ def operations(request: Request, db: Session = Depends(get_db), user: User = Dep
 _ACTIVE_ADMIN_JOB_STATUSES = (AdminJobStatus.queued.value, AdminJobStatus.running.value)
 
 
+def _lock_admin_job_target(db: Session, dedupe_key: str) -> None:
+    """Serializeaza verificarea si crearea unui job pentru aceeasi tinta.
+
+    Verificarea simpla urmata de INSERT permitea doua lansari concurente.
+    Lock-ul PostgreSQL este tinut pana la commit-ul randului ``AdminJob``.
+    """
+    db.execute(select(func.pg_advisory_xact_lock(func.hashtextextended(f"admin-job:{dedupe_key}", 0))))
+
+
+def _enqueue_admin_job(db: Session, job: AdminJob, task, user: User) -> bool:
+    try:
+        async_result = task.delay(str(job.id))
+    except Exception as exc:
+        logger.error(
+            "admin_job.enqueue_failed",
+            job_id=str(job.id),
+            job_type=job.job_type,
+            exception_type=type(exc).__name__,
+        )
+        job.status = AdminJobStatus.failed.value
+        job.finished_at = utcnow()
+        job.error_message = _SAFE_ENQUEUE_ERROR
+        record_audit(
+            db,
+            action="admin_job_enqueue_failed",
+            resource_type="admin_job",
+            resource_id=str(job.id),
+            actor_user_id=user.id,
+            actor_label=user.email,
+            station_id=job.station_id,
+            metadata={"job_type": job.job_type},
+            outcome="failure",
+        )
+        db.commit()
+        return False
+
+    job.celery_task_id = async_result.id
+    db.commit()
+    return True
+
+
 @router.post("/operations/import-opcom", dependencies=[Depends(verify_csrf)])
 def trigger_opcom_import(
     request: Request,
@@ -140,7 +185,12 @@ def trigger_opcom_import(
 
     from app.workers.tasks import admin_opcom_import_job_task
 
-    d = date_cls.fromisoformat(delivery_date).isoformat()
+    try:
+        d = date_cls.fromisoformat(delivery_date).isoformat()
+    except ValueError:
+        return RedirectResponse("/admin/operations?error=invalid_delivery_date", status_code=303)
+
+    _lock_admin_job_target(db, f"opcom:{d}")
 
     existing = db.scalar(
         select(AdminJob).where(
@@ -167,9 +217,8 @@ def trigger_opcom_import(
     )
     db.commit()
 
-    async_result = admin_opcom_import_job_task.delay(str(job.id))
-    job.celery_task_id = async_result.id
-    db.commit()
+    if not _enqueue_admin_job(db, job, admin_opcom_import_job_task, user):
+        return RedirectResponse("/admin/operations?error=enqueue_failed", status_code=303)
 
     return RedirectResponse("/admin/operations", status_code=303)
 
@@ -187,6 +236,7 @@ def trigger_optimization(
     if station is None:
         return RedirectResponse("/admin/operations?error=station_not_found", status_code=303)
 
+    _lock_admin_job_target(db, f"optimization:{station_id}")
     existing = db.scalar(
         select(AdminJob).where(
             AdminJob.job_type == AdminJobType.optimization.value,
@@ -213,9 +263,8 @@ def trigger_optimization(
     )
     db.commit()
 
-    async_result = admin_optimize_station_job_task.delay(str(job.id))
-    job.celery_task_id = async_result.id
-    db.commit()
+    if not _enqueue_admin_job(db, job, admin_optimize_station_job_task, user):
+        return RedirectResponse("/admin/operations?error=enqueue_failed", status_code=303)
 
     return RedirectResponse("/admin/operations", status_code=303)
 

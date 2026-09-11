@@ -304,13 +304,12 @@ ajungea, cu detaliul brut al exceptiei, fie intr-un raspuns HTTP
 neautentificat, fie repetat in log-urile persistente ale containerului:
 - `GET /readiness` (`app/main.py`) intorcea anterior
   `{"status": "error", "detail": str(exc)}` oricui, neautentificat -- acum
-  intoarce un mesaj generic (`"Serviciul nu este pregatit."`), iar detaliul
-  complet e logat doar server-side (`structlog`).
+  intoarce un mesaj generic (`"Serviciul nu este pregatit."`), iar logul
+  server-side pastreaza doar tipul exceptiei si evenimentul structurat.
 - `docker/entrypoint.sh` (`wait_for_postgres`/`wait_for_redis`) tiparea
   `str(exc)` la FIECARE din cele pana la 30 de reincercari (la fiecare
   pornire de container) -- acum tipareste doar `type(exc).__name__` la
-  fiecare incercare, iar detaliul complet apare o singura data, doar daca
-  toate cele 30 de incercari esueaza.
+  fiecare incercare si nu mai include detaliul brut nici in mesajul final.
 
 Am verificat empiric (conexiune reala, cu parola gresita, la Postgres local)
 ca `str(exc)` pentru o eroare de autentificare psycopg contine
@@ -329,26 +328,20 @@ vizibil din fixture-ul obisnuit de test `db` (izolat printr-un SAVEPOINT pe
 o singura conexiune, niciodata comis efectiv la nivel Postgres). Din acest
 motiv NU am activat `task_always_eager` global (ar fi produs esecuri
 "job_not_found" greu de diagnosticat, din cauza acestei neconcordante de
-izolare): 
+izolare):
 - Taskurile insele sunt testate direct (apel Python direct, nu `.delay()`)
   in `tests/integration/test_admin_job_tasks.py`, cu date de test comise
   REAL prin fixture-ul `engine` (acelasi tipar folosit deja de testele de
   cursa concurenta din `test_device_enrollment.py`), inclusiv un test pentru
-  `skipped_locked` (lock Redis pre-achizitionat manual) si teste pentru
-  mesajul de eroare trunchiat/sigur la esec.
+  `skipped_locked` (lock Redis pre-achizitionat manual), redelivery
+  idempotent si mesaj generic sigur la esec.
 - Rutele HTTP (`trigger_opcom_import`/`trigger_optimization`) sunt testate
   separat in `tests/integration/test_admin_operations_routes.py`, cu
   `.delay()` inlocuit printr-un stub (fixture-ul `db`/`client` obisnuit,
   izolat prin SAVEPOINT) -- se testeaza doar crearea randului `AdminJob` si
   protectia la declansare duplicata, nu executia reala a taskului.
 
-**Fix de pre-existenta portat din PR #28 (issue #8), nu re-descoperit.**
-Rularea suitei complete a scos la iveala aceeasi problema de poluare a
-testelor prin contorul de rate-limit la login din Redis (niciodata golit
-intre teste in aceeasi rulare pytest) deja diagnosticata si corectata in
-PR #28 -- care insa nu era inca fuzionat in `main` la momentul cand acest
-branch a fost creat. Am portat acelasi fix cu o singura linie
-(`LOGIN_RATE_LIMIT_ATTEMPTS=100000` in `tests/conftest.py`, doar pentru
-mediul de test) ca sa nu lase acest PR cu esecuri CI nelegate de continutul
-lui; fix-ul devine un no-op inofensiv odata ce PR #28 se fuzioneaza si aduce
-aceeasi linie.
+Contorul de rate-limit folosit de testele HTTP este resetat explicit in
+fisierul de teste al rutelor admin. Nu este ridicata global limita din
+productie, astfel incat testele de securitate continua sa exercite aceleasi
+valori implicite ca aplicatia.

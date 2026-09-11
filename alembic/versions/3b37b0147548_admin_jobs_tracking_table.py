@@ -39,7 +39,7 @@ def upgrade() -> None:
         sa.Column("error_message", sa.String(length=500), nullable=True),
         sa.Column("started_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("finished_at", sa.DateTime(timezone=True), nullable=True),
-        sa.ForeignKeyConstraint(["station_id"], ["stations.id"], ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(["station_id"], ["stations.id"], ondelete="SET NULL"),
         sa.ForeignKeyConstraint(["triggered_by_user_id"], ["users.id"]),
         sa.PrimaryKeyConstraint("id"),
     )

@@ -20,7 +20,7 @@ from app.database import session_scope
 from app.models.admin_job import AdminJob
 from app.models.alert import Alert
 from app.models.device import Device
-from app.models.enums import AdminJobStatus, AlertSeverity, AlertStatus
+from app.models.enums import AdminJobStatus, AdminJobType, AlertSeverity, AlertStatus
 from app.models.station import Station
 from app.services import (
     aggregation_service,
@@ -182,6 +182,9 @@ def alerts_task() -> dict:
     return {"alerts_created": created}
 
 
+_SAFE_JOB_ERROR = "Operația a eșuat. Consultați logurile folosind ID-ul jobului."
+
+
 def _mark_admin_job(job_id: uuid.UUID, **fields) -> None:
     """Actualizeaza un `AdminJob` intr-o sesiune proprie, separata de sesiunea
     care a rulat munca efectiva -- astfel incat un rollback al muncii (ex. o
@@ -196,6 +199,58 @@ def _mark_admin_job(job_id: uuid.UUID, **fields) -> None:
             setattr(job, key, value)
 
 
+def _fail_admin_job(job_id: uuid.UUID, claimed: dict, action: str) -> None:
+    with session_scope() as db:
+        job = db.get(AdminJob, job_id)
+        if job is None:
+            logger.warning("admin_job.not_found", job_id=str(job_id))
+            return
+        job.status = AdminJobStatus.failed.value
+        job.finished_at = utcnow()
+        job.error_message = _SAFE_JOB_ERROR
+        record_audit(
+            db,
+            action=action,
+            resource_type="admin_job",
+            resource_id=str(job_id),
+            actor_user_id=claimed["triggered_by_user_id"],
+            actor_label="admin_job",
+            station_id=claimed["station_id"],
+            outcome="failure",
+        )
+
+
+def _claim_admin_job(job_id: uuid.UUID, expected_type: str) -> dict | None:
+    """Claim atomic pentru livrarea Celery at-least-once.
+
+    Un retry/redelivery al aceluiasi mesaj nu trebuie sa reporneasca o operatie
+    deja finalizata. ``FOR UPDATE`` serializeaza worker-ele care primesc
+    accidental acelasi task.
+    """
+    with session_scope() as db:
+        job = db.scalar(select(AdminJob).where(AdminJob.id == job_id).with_for_update())
+        if job is None:
+            logger.warning("admin_job.not_found", job_id=str(job_id))
+            return None
+        if job.status != AdminJobStatus.queued.value:
+            logger.info("admin_job.delivery_ignored", job_id=str(job_id), status=job.status)
+            return None
+        if job.job_type != expected_type:
+            job.status = AdminJobStatus.failed.value
+            job.finished_at = utcnow()
+            job.error_message = _SAFE_JOB_ERROR
+            logger.error("admin_job.type_mismatch", job_id=str(job_id))
+            return None
+
+        job.status = AdminJobStatus.running.value
+        job.started_at = utcnow()
+        return {
+            "params": dict(job.params),
+            "station_id": job.station_id,
+            "triggered_by_user_id": job.triggered_by_user_id,
+        }
+
+
 @celery_app.task(name="app.workers.tasks.admin_opcom_import_job_task")
 def admin_opcom_import_job_task(job_id: str) -> dict:
     """Executa, pe fundal, un import OPCOM declansat manual din panoul admin
@@ -203,17 +258,18 @@ def admin_opcom_import_job_task(job_id: str) -> dict:
     `AdminJob` (status=queued) si trimite acest task, ca sa nu tina cererea
     HTTP blocata pe durata importului. Nu inlocuieste `opcom_import_daily_task`
     (rularea planificata Celery beat), care ramane neschimbata."""
-    job_uuid = uuid.UUID(job_id)
-    _mark_admin_job(job_uuid, status=AdminJobStatus.running.value, started_at=utcnow())
-
-    with session_scope() as db:
-        job = db.get(AdminJob, job_uuid)
-        if job is None:
-            return {"error": "job_not_found"}
-        delivery_date = date.fromisoformat(job.params["delivery_date"])
-        triggered_by_user_id = job.triggered_by_user_id
+    try:
+        job_uuid = uuid.UUID(job_id)
+    except ValueError:
+        logger.error("admin_job.invalid_id")
+        return {"status": "ignored"}
+    claimed = _claim_admin_job(job_uuid, AdminJobType.opcom_import.value)
+    if claimed is None:
+        return {"status": "ignored"}
 
     try:
+        delivery_date = date.fromisoformat(claimed["params"]["delivery_date"])
+        triggered_by_user_id = claimed["triggered_by_user_id"]
         with session_scope() as db:
             run = opcom_service.import_opcom_day(db, delivery_date, triggered_by_user_id=triggered_by_user_id)
             run_id, run_status = run.id, run.status
@@ -223,9 +279,9 @@ def admin_opcom_import_job_task(job_id: str) -> dict:
                 metadata={"delivery_date": delivery_date.isoformat(), "status": run_status, "admin_job_id": job_id},
             )
     except Exception as exc:
-        logger.error("admin_opcom_import_job.failed", job_id=job_id, error=str(exc))
-        _mark_admin_job(job_uuid, status=AdminJobStatus.failed.value, finished_at=utcnow(), error_message=str(exc)[:500])
-        return {"status": "failed", "error": str(exc)}
+        logger.error("admin_opcom_import_job.failed", job_id=job_id, exception_type=type(exc).__name__)
+        _fail_admin_job(job_uuid, claimed, "opcom_import_failed")
+        return {"status": "failed"}
 
     _mark_admin_job(
         job_uuid,
@@ -244,17 +300,20 @@ def admin_optimize_station_job_task(job_id: str) -> dict:
     `admin_opcom_import_job_task` pentru motivatie. Nu inlocuieste
     `optimization_all_stations_task` (rularea planificata pentru toate
     statiile), care ramane neschimbata."""
-    job_uuid = uuid.UUID(job_id)
-    _mark_admin_job(job_uuid, status=AdminJobStatus.running.value, started_at=utcnow())
-
-    with session_scope() as db:
-        job = db.get(AdminJob, job_uuid)
-        if job is None:
-            return {"error": "job_not_found"}
-        station_id = job.station_id
-        triggered_by_user_id = job.triggered_by_user_id
+    try:
+        job_uuid = uuid.UUID(job_id)
+    except ValueError:
+        logger.error("admin_job.invalid_id")
+        return {"status": "ignored"}
+    claimed = _claim_admin_job(job_uuid, AdminJobType.optimization.value)
+    if claimed is None:
+        return {"status": "ignored"}
 
     try:
+        station_id = claimed["station_id"]
+        triggered_by_user_id = claimed["triggered_by_user_id"]
+        if station_id is None:
+            raise ValueError("Station missing for optimization job")
         with session_scope() as db:
             run = optimization_service.run_optimization_for_station(
                 db, station_id, triggered_by="user", triggered_by_user_id=triggered_by_user_id
@@ -269,9 +328,9 @@ def admin_optimize_station_job_task(job_id: str) -> dict:
         _mark_admin_job(job_uuid, status=AdminJobStatus.skipped_locked.value, finished_at=utcnow())
         return {"status": "skipped_locked"}
     except Exception as exc:
-        logger.error("admin_optimize_station_job.failed", job_id=job_id, error=str(exc))
-        _mark_admin_job(job_uuid, status=AdminJobStatus.failed.value, finished_at=utcnow(), error_message=str(exc)[:500])
-        return {"status": "failed", "error": str(exc)}
+        logger.error("admin_optimize_station_job.failed", job_id=job_id, exception_type=type(exc).__name__)
+        _fail_admin_job(job_uuid, claimed, "optimization_failed")
+        return {"status": "failed"}
 
     _mark_admin_job(
         job_uuid,
