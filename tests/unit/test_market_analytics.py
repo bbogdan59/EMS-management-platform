@@ -2,10 +2,20 @@ from __future__ import annotations
 
 from datetime import date, datetime, timedelta
 
+import pytest
+
 from app.core.security import utcnow
 from app.services import market_analytics_service as market
 from app.services.market_analytics_service import BUCHAREST
 from tests.factories import make_market_day
+
+
+@pytest.fixture(autouse=True)
+def fixed_market_clock():
+    from freezegun import freeze_time
+
+    with freeze_time("2026-09-10 12:00:00"):
+        yield
 
 
 def test_get_daily_averages_aggregates_correctly(db):

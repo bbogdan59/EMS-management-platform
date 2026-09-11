@@ -199,13 +199,14 @@ def get_energy_totals(db: Session, station: Station, granularity: str, periods: 
     return [
         {
             "period_start": r.period_start.isoformat(),
-            "pv_kwh": float(r.pv_energy_kwh),
-            "load_kwh": float(r.load_energy_kwh),
-            "grid_import_kwh": float(r.grid_import_energy_kwh),
-            "grid_export_kwh": float(r.grid_export_energy_kwh),
-            "battery_charge_kwh": float(r.battery_charge_energy_kwh),
-            "battery_discharge_kwh": float(r.battery_discharge_energy_kwh),
+            "pv_kwh": float(r.pv_energy_kwh) if r.pv_energy_kwh is not None else None,
+            "load_kwh": float(r.load_energy_kwh) if r.load_energy_kwh is not None else None,
+            "grid_import_kwh": float(r.grid_import_energy_kwh) if r.grid_import_energy_kwh is not None else None,
+            "grid_export_kwh": float(r.grid_export_energy_kwh) if r.grid_export_energy_kwh is not None else None,
+            "battery_charge_kwh": float(r.battery_charge_energy_kwh) if r.battery_charge_energy_kwh is not None else None,
+            "battery_discharge_kwh": float(r.battery_discharge_energy_kwh) if r.battery_discharge_energy_kwh is not None else None,
             "data_quality": r.data_quality,
+            "coverage": r.coverage,
         }
         for r in rows
     ]
@@ -224,6 +225,8 @@ def get_heatmap(db: Session, station: Station, weeks: int = 8) -> list[dict]:
     ).all()
     buckets: dict[tuple[int, int], list[float]] = {}
     for r in rows:
+        if r.load_energy_kwh is None or (r.coverage or {}).get("load", 0) < 0.9:
+            continue
         local = r.period_start.astimezone(tz)
         key = (local.weekday(), local.hour)
         buckets.setdefault(key, []).append(float(r.load_energy_kwh))
@@ -284,7 +287,7 @@ def get_forecast_vs_actual(db: Session, station: Station, metric: str, start: da
         actual_kw = None
         if actual is not None:
             energy = actual.pv_energy_kwh if metric == "pv" else actual.load_energy_kwh
-            actual_kw = float(energy) * 4  # kWh pe interval de 15 min -> kW mediu
+            actual_kw = float(energy) * 4 if energy is not None and (actual.coverage or {}).get(metric, 0) >= 0.9 else None  # kWh pe interval de 15 min -> kW mediu
         forecast_kw = float(f.predicted_power_kw) if metric == "pv" else float(f.base_load_kw + f.ev_component_kw + f.flexible_component_kw)
         out.append({"t": f.interval_start.isoformat(), "forecast_kw": forecast_kw, "actual_kw": actual_kw, "is_synthetic": f.is_synthetic})
     return out

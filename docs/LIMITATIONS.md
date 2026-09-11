@@ -174,6 +174,51 @@ Corectiile nu reprezinta certificarea modului live: validarea capabilitatilor,
 provenienta/freshness completa a intrarilor, limitele energetice si bugetele
 EFC istorice necesita in continuare lucrarile de follow-up din GitHub.
 
+## 13. Integrarea energetica a telemetriei -- conventii si asumtii documentate (issue #4)
+
+`app/services/aggregation_service.py` integreaza puterea instantanee (W) in
+energie (kWh) pe convenția "zero-order hold" (ZOH): valoarea unui esantion se
+considera valabila de la momentul lui pana la urmatorul esantion cunoscut,
+dar niciodata mai mult de `MAX_GAP_SECONDS` (implicit 300s = 5 minute, un
+multiplu generos al intervalului tipic de polling de 20s al
+simulatorului/dispozitivelor). Dincolo de acest prag, portiunea ramasa e
+NECUNOSCUTA (nu extrapolata) -- reflectata explicit in campul `coverage`
+(fractie 0..1, separat pe metrica: pv/load/battery/grid/ev/soc), iar campul
+de energie corespunzator devine `NULL` cand acoperirea e zero, nu 0.
+
+Presupunere documentata: `aggregate_day`/`aggregate_month` calculeaza
+limitele UTC din miezul de noapte local al statiei (corect pentru zile de
+23/25h la schimbarea orei), dar `aggregate_hour` foloseste limite fixe de
+ora UTC -- corect doar daca offset-ul fusului orar al statiei e un numar
+intreg de ore (adevarat pentru `Europe/Bucharest`, singurul fus folosit
+curent). Un fus cu offset de 30/45 minute ar produce ore UTC nealiniate cu
+miezul de noapte local si ar necesita o revizuire a acestei presupuneri.
+
+Contractul AC/DC pentru bateria: `battery_power_w` e raportat de dispozitiv
+la bornele DC (convenția API-ului de dispozitive), fara nicio conversie
+AC/DC suplimentara aplicata la agregare -- randamentele de
+incarcare/descarcare se aplica separat, explicit, doar in motorul de
+optimizare. EFC-ul (`dashboard_service.get_efc_used`) foloseste explicit
+`battery_reference_capacity_kwh` (nameplate) ca numitor, nu capacitatea
+disponibila (care poate scadea din degradare).
+
+`run_aggregation_task` (Celery, la fiecare 15 minute) reface automat o
+fereastra recenta (`RECENT_REAGGREGATION_LOOKBACK`, implicit 3 ore) la
+fiecare rulare, ca sa prinda telemetria usor intarziata fara interventie
+manuala. Un backfill pe un interval istoric mai vechi (ex. un dispozitiv
+offline cateva zile) necesita un apel explicit al
+`aggregation_service.reaggregate_range` (script/consola de administrare --
+nu exista inca un declansator din UI pentru asta).
+
+Schimbare de contract semnalata explicit in issue #4 pentru lucrarile in
+paralel: cele 7 coloane de energie din `TelemetryAggregate` sunt acum
+nullable (vezi migratia `a3f7c9d1e6b2`). Consumatorii care fac
+`float(rand.pv_energy_kwh)` direct, fara verificare de `None`, trebuie
+actualizati -- interogarile bazate pe `coalesce(sum(...), 0)` raman sigure
+neschimbate.
+
+### Upgrade of calendar aggregates
+Existing UTC day/month rows are retained as legacy_day/legacy_month and excluded from current rollups. Reaggregate retained lower-resolution history to populate local day/month rows. If raw/hour history expired, legacy values remain archived; do not relabel them as local days. Downgrade archives new local rows as local_day/local_month and restores legacy keys. Repeated upgrade after a downgrade requires reconciling archived local rows before rebuilding; archived periods are not queried by normal dashboards. NULL consumer support is included in this PR; forecasts reject insufficient coverage and treat absent EV as zero only when the station explicitly disables EV.
 ## 14. Enrollment automat al dispozitivelor (issue #16) -- domeniu si asumtii
 
 - **Alocarea e restransa la `platform_admin`.** Inventarul de device-uri
