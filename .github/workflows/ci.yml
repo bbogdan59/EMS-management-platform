@@ -108,6 +108,8 @@ jobs:
             -e REDIS_URL="redis://localhost:6379/0" \
             -e SECRET_KEY="ci-smoke-secret-not-for-production" \
             -e ENVIRONMENT="production" \
+            -e SESSION_COOKIE_SECURE="true" \
+            -e EMAIL_BACKEND="smtp" \
             -e RUN_MIGRATIONS_ON_START="true" \
             -e PORT=8000 \
             ems-platform:ci web
