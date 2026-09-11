@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 from itertools import pairwise
 from pathlib import Path
@@ -122,6 +122,105 @@ def test_dst_csv_ends_at_next_local_midnight(day):
     from datetime import timedelta
     from zoneinfo import ZoneInfo
     parsed = parse_csv(generate_synthetic_csv(day), day)
+    end = parsed[-1]["interval_end"].astimezone(ZoneInfo("Europe/Bucharest"))
+    assert end.date() == day + timedelta(days=1)
+    assert (end.hour, end.minute) == (0, 0)
+
+
+def _rows_with_resolution(n: int, resolution: str, delimiter: str = ";") -> str:
+    header = delimiter.join(["Interval", "Pret", "Moneda", "Rezolutie"])
+    lines = [header]
+    for i in range(1, n + 1):
+        lines.append(delimiter.join([str(i), "250,00", "RON", resolution]))
+    return "\n".join(lines)
+
+
+def test_parses_historical_hourly_resolution():
+    """Anii istorici sunt publicati de OPCOM la rezolutie ORARA (PT60M,
+    24 intervale/zi) -- inainte de acest fix, parserul presupunea orbeste
+    15 minute si respingea aceste zile (numar de intervale neasteptat)."""
+    d = date(2026, 9, 9)
+    csv_text = _rows_with_resolution(24, "PT60M")
+
+    parsed = parse_csv(csv_text, d)
+
+    assert len(parsed) == 24
+    assert parsed[0]["interval_index"] == 1
+    assert parsed[-1]["interval_index"] == 24
+    for a, b in pairwise(parsed):
+        assert a["interval_end"] == b["interval_start"]
+        assert b["interval_start"] - a["interval_start"] == timedelta(hours=1)
+    assert parsed[0]["interval_end"] - parsed[0]["interval_start"] == timedelta(hours=1)
+
+
+def test_parses_current_year_30min_resolution():
+    """Anul curent alterneaza intre PT30M (48 intervale/zi) si PT15M."""
+    d = date(2026, 9, 9)
+    csv_text = _rows_with_resolution(48, "PT30M")
+
+    parsed = parse_csv(csv_text, d)
+
+    assert len(parsed) == 48
+    for a, b in pairwise(parsed):
+        assert a["interval_end"] == b["interval_start"]
+        assert b["interval_start"] - a["interval_start"] == timedelta(minutes=30)
+
+
+def test_pt1h_alias_treated_as_60_minutes():
+    d = date(2026, 9, 9)
+    csv_text = _rows_with_resolution(24, "PT1H")
+
+    parsed = parse_csv(csv_text, d)
+
+    assert len(parsed) == 24
+    assert parsed[0]["interval_end"] - parsed[0]["interval_start"] == timedelta(hours=1)
+
+
+def test_resolution_column_absent_defaults_to_15_minutes():
+    """CSV-urile simple (fara coloana Rezolutie) trebuie sa se comporte
+    neschimbat fata de inainte -- implicit 15 minute."""
+    d = date(2026, 9, 9)
+    csv_text = generate_synthetic_csv(d)  # nu are coloana Rezolutie
+
+    parsed = parse_csv(csv_text, d)
+
+    assert len(parsed) == 96
+    assert parsed[0]["interval_end"] - parsed[0]["interval_start"] == timedelta(minutes=15)
+
+
+def test_mixed_resolution_in_same_csv_rejected():
+    d = date(2026, 9, 9)
+    rows = ["Interval;Pret;Moneda;Rezolutie"]
+    for i in range(1, 24):
+        rows.append(f"{i};250,00;RON;PT60M")
+    rows.append("24;250,00;RON;PT30M")  # rezolutie diferita in acelasi fisier
+    csv_text = "\n".join(rows)
+
+    with pytest.raises(OpcomParseError, match="rezolutii diferite"):
+        parse_csv(csv_text, d)
+
+
+def test_unsupported_resolution_rejected():
+    d = date(2026, 9, 9)
+    csv_text = _rows_with_resolution(288, "PT5M")  # rezolutie neacceptata
+
+    with pytest.raises(OpcomParseError, match="nesuportata"):
+        parse_csv(csv_text, d)
+
+
+@pytest.mark.parametrize("day,expected_count", [(date(2026, 3, 29), 23), (date(2026, 10, 25), 25)])
+def test_dst_day_with_hourly_resolution_has_correct_count(day, expected_count):
+    """Validarea numarului de intervale asteptat langa schimbarea orei trebuie
+    sa se generalizeze corect la orice rezolutie, nu doar la 15 minute (vezi
+    `test_intervals_for_spring_dst`/`test_intervals_for_autumn_dst` pentru
+    echivalentul la 15 minute)."""
+    csv_text = _rows_with_resolution(expected_count, "PT60M")
+
+    parsed = parse_csv(csv_text, day)
+
+    assert len(parsed) == expected_count
+    from zoneinfo import ZoneInfo
+
     end = parsed[-1]["interval_end"].astimezone(ZoneInfo("Europe/Bucharest"))
     assert end.date() == day + timedelta(days=1)
     assert (end.hour, end.minute) == (0, 0)

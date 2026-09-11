@@ -14,6 +14,13 @@ gasita si NU presupune ca se potriveste implicit -- daca sursa e
 inaccesibila sau schema nu se potriveste dupa toate reincercarile, se
 foloseste (optional doar in dezvoltare/test, implicit dezactivat) un
 fallback cu date sintetice, marcate clar ca atare in ImportRun si in UI.
+
+Rezolutia intervalelor NU e fixa la 15 minute: parametrul `resolution=15`
+din URL e doar o preferinta ceruta, dar OPCOM publica anii istorici la
+rezolutie ORARA (PT60M, 24 intervale/zi) si alterneaza intre PT30M/PT15M
+pentru anul curent, indiferent de parametrul cerut in URL -- `parse_csv`
+citeste rezolutia REALA din coloana "Rezolutie" a CSV-ului (cand exista) si
+valideaza numarul de intervale fata de aceasta, nu fata de o valoare fixa.
 """
 from __future__ import annotations
 
@@ -66,6 +73,24 @@ def _decode(raw: bytes, schema: OpcomCsvSchema) -> str:
         except UnicodeDecodeError:
             continue
     return raw.decode("utf-8", errors="replace")
+
+
+DEFAULT_RESOLUTION_MINUTES = 15
+# Anii istorici sunt publicati la rezolutie orara (PT60M, uneori scris PT1H);
+# anul curent alterneaza intre PT30M si PT15M. Orice alta valoare e respinsa
+# explicit, in loc sa fie interpretata tacit gresit.
+_ISO8601_DURATION_MINUTES = {"PT15M": 15, "PT30M": 30, "PT60M": 60, "PT1H": 60}
+
+
+def _resolution_minutes(raw: str) -> int:
+    key = raw.strip().upper()
+    minutes = _ISO8601_DURATION_MINUTES.get(key)
+    if minutes is None:
+        raise OpcomParseError(
+            f"Rezolutie OPCOM neasteptata/nesuportata: '{raw}' "
+            f"(acceptate: {', '.join(sorted(_ISO8601_DURATION_MINUTES))})."
+        )
+    return minutes
 
 
 def _parse_price(value: str) -> Decimal:
@@ -123,9 +148,17 @@ def _find_header(rows: list[list[str]], schema: OpcomCsvSchema) -> tuple[int, di
             currency_idx = next(
                 (i for i, c in enumerate(cells) if any(alias in c for alias in schema.currency_aliases)), None
             )
+            # Coloana de rezolutie (PT15M/PT30M/PT60M) e OPTIONALA -- CSV-urile simple
+            # folosite de teste/fixture-uri sintetice nu o au, si parserul trebuie sa
+            # continue sa functioneze neschimbat in acel caz (fallback la 15 minute).
+            resolution_idx = next(
+                (i for i, c in enumerate(cells) if any(alias in c for alias in schema.resolution_aliases)), None
+            )
             mapping = {"interval": interval_idx, "price": price_idx}
             if currency_idx is not None:
                 mapping["currency"] = currency_idx
+            if resolution_idx is not None:
+                mapping["resolution"] = resolution_idx
             return idx, mapping
     raise OpcomParseError(
         "Nu am putut identifica antetul CSV OPCOM cu schema configurata "
@@ -163,6 +196,7 @@ def parse_csv(raw_text: str, delivery_date: date, schema: OpcomCsvSchema = DEFAU
     data_rows = rows[header_idx + 1 :]
 
     parsed: dict[int, dict] = {}
+    resolutions_seen: set[int] = set()
     for cells in data_rows:
         if len(cells) <= max(mapping.values()):
             continue
@@ -180,6 +214,9 @@ def parse_csv(raw_text: str, delivery_date: date, schema: OpcomCsvSchema = DEFAU
                 raise OpcomParseError(f"Moneda neasteptata in CSV OPCOM: '{currency_raw}' (asteptat RON).")
             currency = "RON"
 
+        if "resolution" in mapping:
+            resolutions_seen.add(_resolution_minutes(cells[mapping["resolution"]]))
+
         if interval_index in parsed:
             raise OpcomParseError(f"Interval duplicat in CSV OPCOM: {interval_index}.")
         parsed[interval_index] = {"price_mwh": price_mwh, "currency": currency}
@@ -187,15 +224,24 @@ def parse_csv(raw_text: str, delivery_date: date, schema: OpcomCsvSchema = DEFAU
     if not parsed:
         raise OpcomParseError("Nicio linie de date valida gasita in CSV-ul OPCOM.")
 
+    if len(resolutions_seen) > 1:
+        raise OpcomParseError(
+            f"CSV OPCOM contine rezolutii diferite pentru aceeasi zi de livrare: "
+            f"{sorted(resolutions_seen)} minute -- asteptata o singura rezolutie uniforma."
+        )
+    # Coloana de rezolutie e absenta in CSV-urile simple (teste/fixture-uri sintetice):
+    # pastreaza comportamentul de dinainte, implicit 15 minute.
+    resolution_minutes = resolutions_seen.pop() if resolutions_seen else DEFAULT_RESOLUTION_MINUTES
+
     count = len(parsed)
     start_local = datetime.combine(delivery_date, datetime.min.time(), tzinfo=BUCHAREST)
     next_local = datetime.combine(delivery_date + timedelta(days=1), datetime.min.time(), tzinfo=BUCHAREST)
     start_utc = start_local.astimezone(UTC)
-    expected_count = int((next_local.astimezone(UTC) - start_utc).total_seconds() / 900)
+    expected_count = int((next_local.astimezone(UTC) - start_utc).total_seconds() / (resolution_minutes * 60))
     if count != expected_count:
         raise OpcomParseError(
             f"Numar neasteptat de intervale ({count}); asteptat {expected_count} "
-            f"pentru data {delivery_date.isoformat()} la rezolutie de 15 minute."
+            f"pentru data {delivery_date.isoformat()} la rezolutie de {resolution_minutes} minute."
         )
     expected_indices = set(range(1, count + 1))
     missing = expected_indices - set(parsed.keys())
@@ -205,8 +251,8 @@ def parse_csv(raw_text: str, delivery_date: date, schema: OpcomCsvSchema = DEFAU
     results = []
     for i in range(1, count + 1):
         item = parsed[i]
-        interval_start = start_utc + timedelta(minutes=15 * (i - 1))
-        interval_end = interval_start + timedelta(minutes=15)
+        interval_start = start_utc + timedelta(minutes=resolution_minutes * (i - 1))
+        interval_end = interval_start + timedelta(minutes=resolution_minutes)
         price_kwh = (item["price_mwh"] / Decimal(1000)).quantize(Decimal("0.000001"))
         results.append(
             {
