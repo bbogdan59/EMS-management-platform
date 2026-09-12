@@ -18,6 +18,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core.security import utcnow
+from app.core.units import KWH_PER_MWH
 from app.models.market import ImportRun, MarketPriceInterval
 
 SOURCE = "opcom_pzu"
@@ -92,7 +93,7 @@ def get_daily_averages(
                 "day": d.day,
                 "day_of_year": d.timetuple().tm_yday,
                 "avg_price_lei_mwh": float(avg_mwh),
-                "avg_price_lei_kwh": float(avg_mwh) / 1000.0,
+                "avg_price_lei_kwh": float(avg_mwh) / float(KWH_PER_MWH),
                 "min_price_lei_mwh": float(min_mwh),
                 "max_price_lei_mwh": float(max_mwh),
                 "sample_count": n,
@@ -303,7 +304,7 @@ def get_forecast_to_year_end(db: Session, target_year: int | None = None, source
             predicted = flat_value
 
         if predicted is not None:
-            points.append({"date": d.isoformat(), "predicted_price_lei_mwh": round(predicted, 2), "predicted_price_lei_kwh": round(predicted / 1000.0, 5)})
+            points.append({"date": d.isoformat(), "predicted_price_lei_mwh": round(predicted, 2), "predicted_price_lei_kwh": round(predicted / float(KWH_PER_MWH), 5)})
         d += timedelta(days=1)
 
     return {

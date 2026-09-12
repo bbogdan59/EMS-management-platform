@@ -39,6 +39,7 @@ from tenacity import Retrying, retry_if_exception_type, stop_after_attempt, wait
 
 from app.config import get_settings
 from app.core.security import utcnow
+from app.core.units import mwh_to_kwh
 from app.models.alert import Alert
 from app.models.enums import AlertSeverity, ImportRunStatus
 from app.models.market import ImportRun, MarketPriceInterval
@@ -253,7 +254,7 @@ def parse_csv(raw_text: str, delivery_date: date, schema: OpcomCsvSchema = DEFAU
         item = parsed[i]
         interval_start = start_utc + timedelta(minutes=resolution_minutes * (i - 1))
         interval_end = interval_start + timedelta(minutes=resolution_minutes)
-        price_kwh = (item["price_mwh"] / Decimal(1000)).quantize(Decimal("0.000001"))
+        price_kwh = mwh_to_kwh(item["price_mwh"]).quantize(Decimal("0.000001"))
         results.append(
             {
                 "interval_index": i,

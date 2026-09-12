@@ -122,6 +122,7 @@ class OptimizationPriority(str, enum.Enum):
 class AdminJobType(str, enum.Enum):
     opcom_import = "opcom_import"
     optimization = "optimization"
+    market_retention = "market_retention"
 
 
 class AdminJobStatus(str, enum.Enum):

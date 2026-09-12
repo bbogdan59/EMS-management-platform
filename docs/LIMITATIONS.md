@@ -853,3 +853,76 @@ PV/consum/baterie/pret pe ACELASI grafic (in prezent, `chart-power` si
 `chart-prices` raman grafice separate, fiecare cu axa lui) -- o redesenare
 de UI mai ampla, neceruta explicit in criteriile testabile numeric ale
 acestui issue; jobul de reconciliere `observed_*` mentionat mai sus.
+
+
+## 18. Retentie revizii OPCOM (max. active/zi) si contract explicit de unitati (issue #51)
+
+**O revizie de pret e strict un `ImportRun` cu `status=succeeded`.** Fiecare
+incercare de import (`opcom_service.import_opcom_day`) primeste un numar de
+revizie nou, INDIFERENT daca reuseste sau esueaza -- deci `revision` singur
+nu distinge o versiune reala de pret de o tentativa esuata/metadata de
+audit. Politica de retentie noua (`app/services/market_retention_service.py`)
+numara si arhiveaza EXCLUSIV revizii reusite; tentativele esuate sunt
+ignorate complet (nu conteaza la prag, nu sunt niciodata arhivate).
+
+**Arhivare STRICT NEDISTRUCTIVA, nu stergere.** Peste
+`DEFAULT_MAX_ACTIVE_REVISIONS` (5) revizii reusite pastrate active per zi de
+livrare, cele mai vechi capata `ImportRun.is_archived=True` +
+`archived_at`/`archived_reason` (migratia `b7d3f6a9c1e4`) -- randul si toate
+`MarketPriceInterval` asociate raman intacte in baza de date, interogabile
+oricand (verificat explicit intr-un test). Revizia CURENTA
+(`is_current=True`) nu e niciodata arhivata, indiferent de varsta -- e
+singura referinta "vie" folosita de restul platformei; asta satisface
+cerinta ca "revizia folosita de un optimization run/factura ramane
+referentiabila" fara sa fie nevoie de o legatura FK explicita (nu exista
+inca niciun cod care sa retina un FK catre o revizie specifica -- toate
+calculele istorice folosesc intervalele stocate direct, pe interval de
+timp, nu pe numar de revizie).
+
+**Stergerea DEFINITIVA (hard-delete) NU e implementata automat, deliberat**
+-- necesita aprobare legal/ops explicita, in afara acestui cod (identic cu
+decizia din issue #24 pentru organizatii/statii). Retentia planificata
+(Celery beat, zilnic la 03:30, `market_revision_retention_task`) si
+declansarea manuala din admin (`POST /admin/operations/market-retention`,
+prin fluxul `AdminJob` din issue #11) fac ACEEASI operatie idempotenta si
+concurrent-safe (lock advisory PostgreSQL, cheiat pe sursa) -- rulata de
+doua ori fara nimic nou intre timp nu arhiveaza nimic suplimentar. Ambele
+suporta `dry_run` (implicit BIFAT in formularul admin -- utilizatorul
+trebuie sa debifeze explicit pentru o rulare reala).
+
+**Contract explicit de unitati, centralizat.** Inainte existau 3 locuri
+separate care converteau intre lei/MWh si lei/kWh, fiecare cu propriul
+`*1000`/`/1000` scris ad-hoc (`opcom_service.parse_csv`,
+`market_analytics_service.get_daily_averages`/`get_forecast_to_year_end`).
+Noul modul `app/core/units.py` (`KWH_PER_MWH`, `mwh_to_kwh`, `kwh_to_mwh`)
+e singurul loc care stie factorul de conversie -- toate cele 3 locuri il
+folosesc acum, eliminand riscul unei conversii gresite scrise independent
+in viitor. API-ul canonic (JSON) continua sa expuna EXPLICIT ambele unitati
+pe fiecare punct (`price_lei_mwh`/`price_lei_kwh`, `avg_price_lei_mwh`/
+`avg_price_lei_kwh` etc.) -- deja asa inainte de acest issue, verificat, nu
+schimbat.
+
+**Spot OPCOM vs. cost efectiv contractual -- clarificat explicit in UI.**
+Dashboard-ul statiei (`dashboard/station.html`) avea doua notiuni de "pret"
+etichetate identic ("lei/kWh") dar DIFERITE: KPI-urile "Pret cumparare"/
+"Pret vanzare" (costul EFECTIV, din tariful contractual al statiei) si
+graficul "Preturi PZU" (pretul SPOT OPCOM brut). Etichetele KPI devin
+explicit "Cost efectiv import"/"Venit efectiv export" (cu tooltip catre
+pagina de tarife), iar graficul devine "Pret spot OPCOM PZU" cu o nota text
+ca nu e neaparat costul efectiv al clientului.
+
+**Teste:** `tests/unit/test_market_retention_service.py` (arhivare peste
+prag, niciodata revizia curenta, ignora tentative esuate, dry-run
+nemodificator, idempotenta la a doua rulare, nicio stergere de rand/interval,
+prag invalid respins, date/surse independente), `tests/unit/test_units.py`
+(conversie round-trip, semn negativ, zero), `tests/integration/test_admin_job_tasks.py`
+(taskul Celery real arhiveaza corect printr-o sesiune separata),
+`tests/integration/test_admin_operations_routes.py` (ruta HTTP, dry-run
+implicit, respinge prag invalid, protectie impotriva declansarii duble).
+
+**Ramas in afara scopului (deliberat, nu ascuns):** stergerea definitiva
+efectiva (vezi mai sus -- pas manual, cu aprobare, in afara acestui cod);
+o pagina UI dedicata de rasfoire a reviziilor arhivate (in prezent doar
+badge-ul "arhivat" in tabelul de import-uri din `/admin/operations`);
+o formula completa de contract tarifar (componente separate distributie/
+transport/taxe/TVA) -- ramane in scopul issue #46, coordonat separat.

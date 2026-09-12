@@ -205,3 +205,91 @@ def test_operations_page_renders_admin_jobs(client, db, monkeypatch):
     resp = client.get("/admin/operations")
     assert resp.status_code == 200
     assert "Import OPCOM 2026-03-01" in resp.text
+
+
+def test_trigger_market_retention_creates_queued_admin_job_defaulting_to_dry_run(client, db, monkeypatch):
+    admin = make_user(db, email="opsjob-retention1@test.local", password="Password1234", is_platform_admin=True)
+    db.commit()
+
+    calls: list = []
+    _stub_delay(monkeypatch, tasks_module.admin_market_retention_job_task, calls)
+
+    login(client, admin.email, "Password1234")
+    csrf = client.cookies.get("ems_csrf")
+
+    resp = client.post(
+        "/admin/operations/market-retention",
+        data={"csrf_token": csrf, "max_active_revisions": "5", "dry_run": "true"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    assert resp.headers["location"] == "/admin/operations"
+    assert len(calls) == 1
+
+    job = db.scalar(select(AdminJob).where(AdminJob.triggered_by_user_id == admin.id))
+    assert job is not None
+    assert job.job_type == "market_retention"
+    assert job.params["dry_run"] is True
+    assert job.params["max_active_revisions"] == 5
+
+
+def test_trigger_market_retention_without_dry_run_checkbox_runs_for_real(client, db, monkeypatch):
+    admin = make_user(db, email="opsjob-retention2@test.local", password="Password1234", is_platform_admin=True)
+    db.commit()
+
+    calls: list = []
+    _stub_delay(monkeypatch, tasks_module.admin_market_retention_job_task, calls)
+
+    login(client, admin.email, "Password1234")
+    csrf = client.cookies.get("ems_csrf")
+
+    resp = client.post(
+        "/admin/operations/market-retention",
+        data={"csrf_token": csrf, "max_active_revisions": "5"},  # fara "dry_run" -- checkbox nebifat
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+
+    job = db.scalar(select(AdminJob).where(AdminJob.triggered_by_user_id == admin.id))
+    assert job.params["dry_run"] is False
+
+
+def test_trigger_market_retention_rejects_invalid_max_active_revisions(client, db):
+    make_user(db, email="opsjob-retention3@test.local", password="Password1234", is_platform_admin=True)
+    db.commit()
+    login(client, "opsjob-retention3@test.local", "Password1234")
+
+    resp = client.post(
+        "/admin/operations/market-retention",
+        data={"csrf_token": client.cookies.get("ems_csrf"), "max_active_revisions": "0", "dry_run": "true"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    assert resp.headers["location"] == "/admin/operations?error=invalid_max_active_revisions"
+
+
+def test_trigger_market_retention_rejects_duplicate_in_progress(client, db, monkeypatch):
+    admin = make_user(db, email="opsjob-retention4@test.local", password="Password1234", is_platform_admin=True)
+    db.commit()
+
+    calls: list = []
+    _stub_delay(monkeypatch, tasks_module.admin_market_retention_job_task, calls)
+
+    login(client, admin.email, "Password1234")
+    csrf = client.cookies.get("ems_csrf")
+
+    resp1 = client.post(
+        "/admin/operations/market-retention",
+        data={"csrf_token": csrf, "max_active_revisions": "5", "dry_run": "true"},
+        follow_redirects=False,
+    )
+    assert resp1.status_code == 303
+
+    resp2 = client.post(
+        "/admin/operations/market-retention",
+        data={"csrf_token": csrf, "max_active_revisions": "5", "dry_run": "true"},
+        follow_redirects=False,
+    )
+    assert resp2.status_code == 303
+    assert resp2.headers["location"] == "/admin/operations?error=market_retention_in_progress"
+    assert len(calls) == 1
