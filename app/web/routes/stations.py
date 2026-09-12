@@ -14,8 +14,10 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api.deps import StationAccess, get_current_user
+from app.config import get_settings
 from app.core.audit import record_audit
 from app.core.csrf import verify_csrf
+from app.core.rate_limit import RateLimitExceeded, check_fixed_window
 from app.core.rbac import can_manage_station_config, can_modify_operational_settings
 from app.database import get_db
 from app.models.device import ClaimCode, Device
@@ -544,6 +546,39 @@ def devices_page(
         **build_nav_context(db, user, station.id),
     }
     return templates.TemplateResponse(request, "stations/devices.html", context)
+
+
+@router.post("/stations/{station_id}/devices/activate", dependencies=[Depends(verify_csrf)])
+def activate_device_code(
+    request: Request,
+    activation_code: str = Form(...),
+    db: Session = Depends(get_db),
+    station_role: tuple = Depends(StationAccess(min_role="organization_admin")),
+    user: User = Depends(get_current_user),
+):
+    station, _role = station_role
+    try:
+        check_fixed_window(
+            f"device_activation:{user.id}:{station.id}",
+            get_settings().device_activation_attempts_per_hour,
+            3600,
+        )
+    except RateLimitExceeded:
+        return RedirectResponse(f"/stations/{station.id}/devices?error=too_many_attempts", status_code=303)
+
+    try:
+        device = device_service.activate_device_for_station(db, activation_code, station, user)
+    except device_service.DeviceServiceError:
+        db.rollback()
+        return RedirectResponse(f"/stations/{station.id}/devices?error=invalid_device_code", status_code=303)
+
+    record_audit(
+        db, action="device_activated_by_customer", resource_type="device", resource_id=str(device.id),
+        actor_user_id=user.id, actor_label=user.email, station_id=station.id,
+        metadata={"serial_number": device.serial_number},
+    )
+    db.commit()
+    return RedirectResponse(f"/stations/{station.id}/devices?linked=1", status_code=303)
 
 
 @router.post("/stations/{station_id}/claim-codes", dependencies=[Depends(verify_csrf)])

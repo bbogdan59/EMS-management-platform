@@ -85,10 +85,11 @@ poate fi folosit o singura data. Un cod expirat sau deja folosit returneaza
 POST /api/v1/devices/enroll
 ```
 
-Flux DISTINCT de asocierea cu cod (sectiunea 1 de mai sus, neschimbata):
-dispozitivul se prezinta singur, cu o identitate PROPRIE (nu i-o da
-serverul), fara sa aleaga nicio statie/tenant -- un administrator aloca
-explicit statia mai tarziu, din UI (`/admin/devices/pending`).
+Flux DISTINCT de asocierea legacy cu cod temporar (sectiunea 1): dispozitivul
+se prezinta singur, cu o identitate PROPRIE (nu i-o da serverul), fara sa
+aleaga nicio statie/tenant. Clientul il poate asocia ulterior cu Device Code
+sigilat; platform-adminul pastreaza si fluxul operational din
+`/admin/devices/pending`.
 
 **Nu necesita header `Authorization`** -- dispozitivul nu are inca nicio
 credentiala emisa de server. Dovada de identitate e `provisioning_secret`,
@@ -101,9 +102,17 @@ Cererea (idempotenta -- vezi mai jos):
 {
   "installation_uuid": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
   "provisioning_secret": "un-secret-lung-generat-si-pastrat-local-de-device",
+  "serial_number": "EMS-ABCD-EFGH-IJKL-MNOP",
+  "activation_code": "ACT-ABCDE-FGHIJ-KLMNO-PQRST-UVWXY-Z",
   "hardware_info": { "model": "raspberry-pi-4", "firmware": "0.1.0" }
 }
 ```
+
+`serial_number` si `activation_code` sunt optionale numai pentru agentii
+legacy. Unitatile noi le trimit impreuna. Serverul stocheaza seria publica si
+doar SHA-256-ul codului de activare; codul in clar nu este stocat in baza de
+date, log sau audit. Codul este un bearer secret cu entropie mare, livrat
+sigilat clientului, nu seria publica.
 
 Raspuns `200 OK`, inainte de alocare:
 
@@ -150,10 +159,24 @@ configurabil prin `DEVICE_ENROLLMENT_TTL_HOURS`), deja alocat, sau revocat
 e respinsa explicit de server (nu se produce silentios o schimbare de
 tenant sau o realocare).
 
-`installation_uuid` e DOAR o cheie de corelare pentru operator (ex. transmis
-verbal/prin alt canal de instalator catre administrator) -- NU autorizeaza
-singur nicio statie/organizatie. Alocarea e intotdeauna o actiune explicita
-de administrator, auditata (`device_allocated` in jurnalul de audit).
+Un enrollment pending expirat se reinnoieste cand device-ul reapare cu
+`installation_uuid` si `provisioning_secret` corecte. Astfel, o unitate poate
+sta oprita in depozit mai mult de 72h fara reprovisionare.
+
+### Asociere self-service de catre client
+
+Un `organization_admin` deschide `/stations/{station_id}/devices` si introduce
+Device Code de pe eticheta sigilata. Ruta web `POST
+/stations/{station_id}/devices/activate` consuma codul atomic, leaga device-ul
+pending de acea statie si nu afiseaza credentiala device-ului utilizatorului.
+Agentul o recupereaza prin urmatorul `POST /api/v1/devices/enroll` autentificat
+cu secretul de provisioning. Raspunsurile pentru cod necunoscut, expirat sau
+deja folosit sunt identice, iar incercarile sunt limitate per utilizator si
+statie.
+
+`installation_uuid` si seria publica sunt DOAR chei de corelare -- NU
+autorizeaza singure nicio statie/organizatie. Alocarea self-service necesita
+Device Code-ul separat si este auditata (`device_activated_by_customer`).
 
 ## 2. Heartbeat si capabilitati
 

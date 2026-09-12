@@ -11,6 +11,29 @@
   ]) }}
   <h1 class="text-xl font-semibold">Dispozitive - {{ station.name }}</h1>
 
+  {% if request.query_params.get("linked") %}
+  <div class="badge-ok rounded p-3">Device-ul a fost asociat. Poate dura pana la urmatorul polling pentru a aparea online.</div>
+  {% elif request.query_params.get("error") == "invalid_device_code" %}
+  <div class="badge-error rounded p-3">Cod invalid, expirat sau deja folosit.</div>
+  {% elif request.query_params.get("error") == "too_many_attempts" %}
+  <div class="badge-error rounded p-3">Prea multe incercari. Reincearca mai tarziu.</div>
+  {% endif %}
+
+  {% if can_edit %}
+  <div class="card border-brand-300">
+    <h2 class="mb-2 font-medium">Adauga device-ul EMS</h2>
+    <p class="mb-3 text-sm text-gray-500 dark:text-gray-400">Conecteaza device-ul la alimentare si internet, apoi introdu Device Code de pe eticheta sigilata. Nu trebuie sa modifici nimic pe Raspberry Pi.</p>
+    <form method="post" action="/stations/{{ station.id }}/devices/activate" class="flex flex-wrap items-end gap-3">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}" />
+      <div>
+        <label class="label">Device Code</label>
+        <input class="input font-mono uppercase" name="activation_code" minlength="20" maxlength="64" autocomplete="one-time-code" required />
+      </div>
+      <button type="submit" class="btn-primary">Asociaza device</button>
+    </form>
+  </div>
+  {% endif %}
+
   {% if new_claim_code %}
   <div class="card border-brand-300 bg-brand-50 dark:bg-brand-900/20">
     <p class="text-sm font-medium">Cod de asociere generat (afisat o singura data):</p>
@@ -26,7 +49,7 @@
       <tbody>
         {% for d in devices %}
         <tr class="border-t border-gray-100 dark:border-gray-800">
-          <td class="py-1"><a href="/stations/{{ station.id }}/devices/{{ d.id }}/configuration">{{ d.name }} — configuratie</a></td>
+          <td class="py-1"><a href="/stations/{{ station.id }}/devices/{{ d.id }}/configuration">{{ d.name }} — configuratie</a>{% if d.serial_number %}<div class="font-mono text-xs text-gray-500">{{ d.serial_number }}</div>{% endif %}</td>
           <td>
             {% if d.status == "active" %}<span class="badge-ok">activ</span>
             {% elif d.status == "revoked" %}<span class="badge-error">revocat</span>
@@ -52,8 +75,8 @@
 
   {% if can_edit %}
   <div class="card">
-    <h2 class="mb-2 font-medium">Genereaza cod de asociere</h2>
-    <p class="mb-3 text-sm text-gray-500 dark:text-gray-400">Codul e valabil o perioada limitata si poate fi folosit o singura data de dispozitiv (sau simulator) pentru a se asocia acestei statii.</p>
+    <h2 class="mb-2 font-medium">Flux legacy pentru simulator/dezvoltare</h2>
+    <p class="mb-3 text-sm text-gray-500 dark:text-gray-400">Codul temporar este pastrat momentan pentru simulatoare si device-uri vechi. Unitățile noi folosesc Device Code de pe eticheta sigilata.</p>
     <form method="post" action="/stations/{{ station.id }}/claim-codes">
       <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}" />
       <button type="submit" class="btn-primary">Genereaza cod nou</button>
