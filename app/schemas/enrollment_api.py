@@ -7,7 +7,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class EnrollRequest(BaseModel):
@@ -23,6 +23,14 @@ class EnrollRequest(BaseModel):
         ..., min_length=16, max_length=128,
         description="Secret generat si pastrat LOCAL de dispozitiv (nu de server). Dovada de posesie la reincercari.",
     )
+    serial_number: str | None = Field(
+        default=None, min_length=8, max_length=64,
+        description="Serial public de inventar, imprimat pe eticheta unitatii; nu este secret.",
+    )
+    activation_code: str | None = Field(
+        default=None, min_length=20, max_length=64,
+        description="Device Code cu entropie mare, livrat sigilat clientului si consumat o singura data.",
+    )
     hardware_info: dict = Field(default_factory=dict, description="Informatii libere despre hardware (model, serie, IMEI daca exista).")
 
     @field_validator("installation_uuid")
@@ -33,6 +41,17 @@ class EnrollRequest(BaseModel):
         except ValueError as exc:
             raise ValueError("installation_uuid trebuie sa fie un UUID valid.") from exc
         return v
+
+    @field_validator("serial_number", "activation_code")
+    @classmethod
+    def _normalize_code(cls, value: str | None) -> str | None:
+        return value.strip().upper() if value is not None else None
+
+    @model_validator(mode="after")
+    def _activation_pair(self):
+        if (self.serial_number is None) != (self.activation_code is None):
+            raise ValueError("serial_number si activation_code trebuie trimise impreuna.")
+        return self
 
 
 class EnrollResponse(BaseModel):

@@ -1,7 +1,7 @@
 """equipment catalog
 
 Revision ID: edc1804cd699
-Revises: e2a4c8f1d9b3
+Revises: c4e8a1b2d6f0
 Create Date: 2026-09-12T14:14:28.000000
 
 Part of issue #42: catalog administrabil de invertoare/baterii/panouri
@@ -23,7 +23,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "edc1804cd699"
-down_revision = "e2a4c8f1d9b3"
+down_revision = "c4e8a1b2d6f0"
 branch_labels = None
 depends_on = None
 

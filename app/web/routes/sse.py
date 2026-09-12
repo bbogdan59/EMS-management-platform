@@ -12,7 +12,7 @@ from sse_starlette.sse import EventSourceResponse
 from app.api.deps import AuthContext, StationAccess, get_current_context
 from app.core.rbac import role_at_least
 from app.core.security import utcnow
-from app.database import SessionLocal
+from app.database import SessionLocal, get_db
 from app.models.organization import Membership
 from app.models.station import Station
 from app.models.user import Session as UserSession
@@ -128,12 +128,25 @@ async def station_live_stream(
     request: Request,
     station_role: tuple = Depends(StationAccess(min_role="viewer")),
     auth_context: AuthContext = Depends(get_current_context),
+    db: Session = Depends(get_db),
 ):
     """Flux SSE cu valorile live ale statiei (issue #6, extins la un contract
     per-metrica versionat de issue #50 -- vezi `docs/adr/0001-realtime-dashboard-transport.md`).
     Clientul (app.js) se reconecteaza automat cu backoff exponential daca
-    fluxul se intrerupe."""
+    fluxul se intrerupe.
+
+    `db` (dependinta `get_db()`) e inchisa explicit AICI, inainte de a intra
+    in fluxul de lunga durata -- FastAPI nu inchide o dependinta `yield` decat
+    dupa ce raspunsul e trimis INTEGRAL, ceea ce pentru `EventSourceResponse`
+    inseamna "niciodata, cat timp clientul ramane conectat". Fara aceasta
+    inchidere explicita, fiecare tab de dashboard deschis ar tine ocupata cate
+    o conexiune din pool-ul PostgreSQL pe toata durata vizionarii (autorizarea
+    per-tur de mai jos isi deschide oricum propria sesiune, scurta, prin
+    `SessionLocal()`/`_load_authorized_live_metrics`)."""
     station, _role = station_role
+    user_id = auth_context.user.id
+    session_id = auth_context.session.id
+    db.close()
     return EventSourceResponse(
-        live_metric_events(request, station.id, auth_context.user.id, auth_context.session.id)
+        live_metric_events(request, station.id, user_id, session_id)
     )
