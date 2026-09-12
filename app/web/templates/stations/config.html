@@ -31,6 +31,32 @@
         <label class="label">Putere invertor (kW)</label>
         <input class="input" type="number" step="0.001" min="0.001" name="inverter_power_kw" value="{{ config.inverter_power_kw if config }}" required />
       </div>
+    </div>
+
+    <fieldset class="rounded-lg border border-gray-200 p-3 dark:border-gray-800">
+      <legend class="px-1 text-sm font-medium">Model invertor (catalog)</legend>
+      <p class="mb-2 text-xs text-gray-500 dark:text-gray-400">
+        Cauta un model din catalogul administrabil pentru precompletare, sau declara un model care lipseste --
+        o declaratie custom NU implica activarea automata a controlului fizic prin RS485.
+      </p>
+      <div class="grid gap-2 sm:grid-cols-2">
+        <div>
+          <label class="label">Cauta in catalog</label>
+          <input class="input equipment-search" type="text" list="inverter-model-options" data-equipment-type="inverter"
+                 data-hidden="inverter_model_id" data-custom="inverter_custom_label_input"
+                 value="{{ inverter_model_label or '' }}" placeholder="ex: Deye SUN-10K-SG04LP3" />
+          <datalist id="inverter-model-options"></datalist>
+        </div>
+        <div>
+          <label class="label">Sau model custom (daca lipseste din catalog)</label>
+          <input class="input" type="text" id="inverter_custom_label_input" name="inverter_custom_label"
+                 value="{{ inverter_custom_label or '' }}" placeholder="nume model custom" />
+        </div>
+      </div>
+      <input type="hidden" id="inverter_model_id" name="inverter_model_id" value="{{ inverter_model_id or '' }}" />
+    </fieldset>
+
+    <div class="grid gap-4 sm:grid-cols-2">
       <div>
         <label class="label">Capacitate referinta baterie (kWh)</label>
         <input class="input" type="number" step="0.001" min="0" name="battery_reference_capacity_kwh" value="{{ config.battery_reference_capacity_kwh if config }}" />
@@ -66,6 +92,25 @@
     </div>
 
     <fieldset class="rounded-lg border border-gray-200 p-3 dark:border-gray-800">
+      <legend class="px-1 text-sm font-medium">Model baterie (catalog)</legend>
+      <div class="grid gap-2 sm:grid-cols-2">
+        <div>
+          <label class="label">Cauta in catalog</label>
+          <input class="input equipment-search" type="text" list="battery-model-options" data-equipment-type="battery"
+                 data-hidden="battery_model_id" data-custom="battery_custom_label_input"
+                 value="{{ battery_model_label or '' }}" placeholder="ex: Deye SE-G5.1-Pro" />
+          <datalist id="battery-model-options"></datalist>
+        </div>
+        <div>
+          <label class="label">Sau model custom (daca lipseste din catalog)</label>
+          <input class="input" type="text" id="battery_custom_label_input" name="battery_custom_label"
+                 value="{{ battery_custom_label or '' }}" placeholder="nume model custom" />
+        </div>
+      </div>
+      <input type="hidden" id="battery_model_id" name="battery_model_id" value="{{ battery_model_id or '' }}" />
+    </fieldset>
+
+    <fieldset class="rounded-lg border border-gray-200 p-3 dark:border-gray-800">
       <legend class="px-1 text-sm font-medium">Statie de incarcare EV (optional)</legend>
       <label class="flex items-center gap-2 text-sm">
         <input type="checkbox" name="ev_enabled" value="true" {% if config and config.ev_enabled %}checked{% endif %} /> EV prezent
@@ -89,10 +134,14 @@
       </p>
       <table class="w-full text-sm" id="panel-groups-table">
         <thead class="text-left text-gray-500">
-          <tr><th class="py-1">Nume</th><th>Putere (kWp)</th><th>Azimut (grade, 0=N 180=S)</th><th>Inclinatie (grade)</th><th></th></tr>
+          <tr>
+            <th class="py-1">Nume</th><th>Putere (kWp)</th><th>Azimut (grade, 0=N 180=S)</th><th>Inclinatie (grade)</th>
+            <th>Model panou (catalog sau custom)</th><th>Nr. module</th><th></th>
+          </tr>
         </thead>
         <tbody id="panel-groups-body"></tbody>
       </table>
+      <datalist id="pv_module-model-options"></datalist>
       <button type="button" id="add-panel-group" class="btn-secondary mt-2">+ Adauga grup</button>
     </fieldset>
 
@@ -129,21 +178,76 @@
   var initial = {{ panel_groups_json | safe }};
   var body = document.getElementById("panel-groups-body");
 
+  // Catalog administrabil de echipamente (issue #42): search-as-you-type
+  // pe /equipment/search, cu fallback la o eticheta custom cand textul
+  // introdus nu se potriveste exact cu niciun rezultat din catalog.
+  function initEquipmentSearch(input, onResolve) {
+    var type = input.dataset.equipmentType;
+    var customInput = input.dataset.custom ? document.getElementById(input.dataset.custom) : null;
+    var lastResults = [];
+
+    function runSearch() {
+      var q = input.value.trim();
+      fetch("/equipment/search?equipment_type=" + encodeURIComponent(type) + "&q=" + encodeURIComponent(q))
+        .then(function (r) { return r.json(); })
+        .then(function (results) {
+          lastResults = results;
+          input.list.innerHTML = "";
+          results.forEach(function (m) {
+            var opt = document.createElement("option");
+            opt.value = m.manufacturer + " " + m.model_name;
+            input.list.appendChild(opt);
+          });
+        })
+        .catch(function () {});
+    }
+
+    input.addEventListener("input", function () {
+      var match = lastResults.find(function (m) { return (m.manufacturer + " " + m.model_name) === input.value; });
+      if (match) {
+        onResolve(match.id);
+        if (customInput) customInput.value = "";
+      } else {
+        onResolve("");
+      }
+      runSearch();
+    });
+    if (input.value) runSearch();
+  }
+
+  initEquipmentSearch(document.querySelector('.equipment-search[data-equipment-type="inverter"]'), function (id) {
+    document.getElementById("inverter_model_id").value = id;
+  });
+  initEquipmentSearch(document.querySelector('.equipment-search[data-equipment-type="battery"]'), function (id) {
+    document.getElementById("battery_model_id").value = id;
+  });
+
   function addRow(group) {
-    group = group || { name: "", power_kwp: "", azimuth_degrees: "180", tilt_degrees: "30" };
+    group = group || {
+      name: "", power_kwp: "", azimuth_degrees: "180", tilt_degrees: "30",
+      pv_module_model_id: null, pv_module_label: null, pv_module_count: null,
+    };
     var tr = document.createElement("tr");
     tr.className = "border-t border-gray-100 dark:border-gray-800";
+    tr.dataset.pvModuleModelId = group.pv_module_model_id || "";
     tr.innerHTML =
       '<td class="py-1"><input class="input" data-field="name" value="" required /></td>' +
       '<td><input class="input" type="number" step="0.001" min="0.001" data-field="power_kwp" value="" required /></td>' +
       '<td><input class="input" type="number" step="0.1" min="0" max="359.9" data-field="azimuth_degrees" value="" required /></td>' +
       '<td><input class="input" type="number" step="0.1" min="0" max="90" data-field="tilt_degrees" value="" required /></td>' +
+      '<td><input class="input equipment-search" type="text" list="pv_module-model-options" data-equipment-type="pv_module" data-field="pv_module_label" placeholder="model panou (catalog sau custom)" /></td>' +
+      '<td><input class="input" type="number" step="1" min="1" data-field="pv_module_count" value="" /></td>' +
       '<td><button type="button" class="btn-danger remove-row">Sterge</button></td>';
     body.appendChild(tr);
     tr.querySelector('[data-field="name"]').value = group.name;
     tr.querySelector('[data-field="power_kwp"]').value = group.power_kwp;
     tr.querySelector('[data-field="azimuth_degrees"]').value = group.azimuth_degrees;
     tr.querySelector('[data-field="tilt_degrees"]').value = group.tilt_degrees;
+    tr.querySelector('[data-field="pv_module_label"]').value = group.pv_module_label || "";
+    tr.querySelector('[data-field="pv_module_count"]').value = group.pv_module_count || "";
+    initEquipmentSearch(tr.querySelector('[data-field="pv_module_label"]'), function (id) {
+      tr.dataset.pvModuleModelId = id;
+    });
     tr.querySelector(".remove-row").addEventListener("click", function () {
       if (body.children.length > 1) tr.remove();
     });
@@ -158,11 +262,16 @@
   document.getElementById("config-form").addEventListener("submit", function () {
     var groups = [];
     body.querySelectorAll("tr").forEach(function (tr) {
+      var moduleLabelInput = tr.querySelector('[data-field="pv_module_label"]');
+      var modelId = tr.dataset.pvModuleModelId || "";
       groups.push({
         name: tr.querySelector('[data-field="name"]').value,
         power_kwp: tr.querySelector('[data-field="power_kwp"]').value,
         azimuth_degrees: tr.querySelector('[data-field="azimuth_degrees"]').value,
         tilt_degrees: tr.querySelector('[data-field="tilt_degrees"]').value,
+        pv_module_model_id: modelId || null,
+        pv_module_custom_label: (!modelId && moduleLabelInput.value.trim()) ? moduleLabelInput.value.trim() : null,
+        pv_module_count: tr.querySelector('[data-field="pv_module_count"]').value || null,
       });
     });
     document.getElementById("panel_groups_json").value = JSON.stringify(groups);
