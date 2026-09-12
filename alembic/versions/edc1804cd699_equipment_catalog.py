@@ -4,7 +4,7 @@ Revision ID: edc1804cd699
 Revises: c4e8a1b2d6f0
 Create Date: 2026-09-12T14:14:28.000000
 
-Part of issue #42: catalog administrabil de invertoare/baterii/panouri
+Follows the device activation migration to preserve a single Alembic head.\n\nPart of issue #42: catalog administrabil de invertoare/baterii/panouri
 (`EquipmentManufacturer`/`EquipmentModel`), cu versionare de specificatii
 (`spec_revision`) si activare/dezactivare nedistructiva.
 
