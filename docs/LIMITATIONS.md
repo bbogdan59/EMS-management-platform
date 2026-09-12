@@ -1242,3 +1242,52 @@ SSE deschis). Regresie acoperita si de
 `tests/integration/test_auth_session_lock_regression.py` (doua conexiuni
 Postgres reale, nu fixture-ul `db` cu SAVEPOINT, care nu poate exercita
 contentie de lock reala).
+
+## 20. Design system minim: breadcrumb, grupuri de campuri, focus pe eroare (issue #48)
+
+Issue #48 cerea un "design system" pentru UI -- domeniu larg, care poate
+insemna orice, de la un ghid de stil complet cu componente reutilizabile pana
+la teste de regresie vizuala automate. Ce s-a implementat efectiv, cu scop
+explicit limitat la ce era fezabil si verificabil in acest repo:
+
+- **Breadcrumb semantic** (`partials/_breadcrumb.html`, macro `trail`) adaugat
+  pe 8 pagini (configurare, preferinte, dispozitive, tarife, configurare
+  invertor, dashboard statie, detaliu organizatie self-service, detaliu
+  organizatie admin) -- `<nav aria-label="breadcrumb">` cu `aria-current="page"`
+  pe elementul curent, link-uri construite EXCLUSIV din ID-uri deja
+  autorizate din context (niciodata din query-uri neverificate), verificat
+  cu test dedicat ca nu exista risc de open-redirect.
+- **Grupuri de campuri corelate** (`_field_group.html`) -- `<fieldset>`
+  semantic cu `<legend>`, folosit pentru a grupa vizual campuri care se
+  citesc impreuna (locatie lat/lng, sistem PV/invertor, capacitate/putere
+  baterie, SOC).
+- **Input numeric cu sufix de unitate** (`_numeric_input.html`) -- sufixul
+  (`kW`, `kWh`, `%`) e strict decorativ (`aria-hidden`, in afara `name`-ului
+  campului), nu modifica valoarea trimisa la server.
+- **Progressive disclosure** prin `<details>/<summary>` native pentru
+  campuri avansate/rar-modificate (limite retea, preferinte flexibile EV).
+- **Focus + evidentiere pe primul camp invalid dupa un submit respins**
+  (`form-errors.js`) -- contract HTML generic (`data-error-summary`/
+  `data-error-field`), functioneaza pe orice pagina care foloseste macro-ul
+  `_form_errors.html`, verificat atat cu teste de integrare (maparea
+  `data-error-field` -> `name`) cat si cu un test Playwright pe browser real
+  (`document.activeElement`, imposibil de verificat doar din HTML static).
+
+**Explicit in afara scopului acestei implementari** (nu exista infrastructura
+in acest repo si nu a fost construita acum, ca sa nu se pretinda o acoperire
+care nu exista):
+
+- **Teste de regresie vizuala/snapshot** (comparatie pixel-cu-pixel intre
+  randari) -- nu exista in acest repo (nici pentru codul preexistent). Ce
+  exista sunt capturi de ecran facute manual in timpul dezvoltarii pentru
+  verificare vizuala punctuala si teste Playwright care verifica marcaj/
+  comportament (prezenta claselor, focus, continut), nu aspectul vizual
+  pixel-cu-pixel.
+- **Ghid de stil/catalog de componente formal** (ex. Storybook sau
+  echivalent) -- componentele noi sunt macro-uri Jinja documentate prin
+  comentarii, nu un catalog navigabil separat.
+- **Acoperire completa a tuturor paginilor** -- breadcrumb-ul si grupurile de
+  campuri au fost aplicate pe paginile de configurare/preferinte/admin cele
+  mai relevante (unde exista formulare cu mai multe campuri corelate), nu
+  literal pe fiecare pagina din aplicatie (ex. paginile de listare simple nu
+  au fost modificate, intrucat nu au campuri de grupat).

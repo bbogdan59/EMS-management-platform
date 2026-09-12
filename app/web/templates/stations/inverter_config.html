@@ -1,7 +1,15 @@
 {% extends "base.html" %}
+{% from "partials/_breadcrumb.html" import trail as breadcrumb %}
 {% block title %}Configuratie invertor — {{ device.name }}{% endblock %}
 {% block content %}
 <div class="space-y-6">
+{{ breadcrumb([
+  {"label": "Dashboard", "url": "/"},
+  {"label": station.organization.name, "url": "/organizations/" ~ station.organization_id},
+  {"label": station.name, "url": "/?station_id=" ~ station.id},
+  {"label": "Dispozitive", "url": "/stations/" ~ station.id ~ "/devices"},
+  {"label": device.name, "url": None},
+]) }}
 <h1 class="text-xl font-semibold">Configuratie invertor — {{ device.name }}</h1>
 <p>Stare: <strong>{{ state.status }}</strong>. Salvarea unei configuratii nu confirma aplicarea in invertor.</p>
 {% if not device.capabilities.get('inverter_settings_v1') %}<p class="badge-warn">Agentul nu declara executia setarilor. Configuratia ramane in asteptare; nu se emit comenzi fizice.</p>{% endif %}
