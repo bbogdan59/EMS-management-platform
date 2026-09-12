@@ -4,7 +4,7 @@ Revision ID: b7d3f6a9c1e4
 Revises: f1c7a9e2b4d6
 Create Date: 2026-09-12T04:00:00.000000
 
-Part of issue #51: arhivare nedistructiva a reviziilor OPCOM excedentare
+Follows the membership migration to preserve a single Alembic head.\nPart of issue #51: arhivare nedistructiva a reviziilor OPCOM excedentare
 (peste pragul de revizii active/zi) -- `is_archived`/`archived_at`/
 `archived_reason` pe `import_runs`. Coloana `is_archived` are default de
 server (false) ca sa ramana NOT NULL fara sa rupa randurile existente
