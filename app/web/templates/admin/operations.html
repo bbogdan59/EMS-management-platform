@@ -19,6 +19,10 @@
   <div class="badge-warn rounded p-2">Exista deja o retentie de preturi OPCOM in curs.</div>
   {% elif request.query_params.get("error") == "invalid_max_active_revisions" %}
   <div class="badge-error rounded p-2">Numarul maxim de revizii active trebuie sa fie cel putin 1.</div>
+  {% elif request.query_params.get("error") == "optimization_confirmation_required" %}
+  <div class="badge-error rounded p-2">Statia are un plan activ -- reexecutarea trebuie confirmata explicit din pagina de confirmare.</div>
+  {% elif request.query_params.get("error") == "optimization_run_not_found" %}
+  <div class="badge-error rounded p-2">Rularea de optimizare nu a fost gasita.</div>
   {% endif %}
 
   <div class="card">
@@ -29,7 +33,7 @@
         {% for j in admin_jobs %}
         <tr class="border-t border-gray-100 dark:border-gray-800">
           <td class="py-1">{{ j.job_type }}</td>
-          <td>{{ j.target_label }}</td>
+          <td>{{ j.target_label }}{% if j.params.reason %} <span class="text-gray-400" title="Motiv reexecutare: {{ j.params.reason }}">(motiv)</span>{% endif %}</td>
           <td>
             {% if j.status == "succeeded" %}<span class="badge-ok">succes</span>
             {% elif j.status in ("failed",) %}<span class="badge-error">esuat</span>
@@ -40,7 +44,7 @@
             {% if j.result_resource_type == "import_run" and j.result_resource_id %}
               <a class="text-brand-700 hover:underline dark:text-brand-300" href="/admin/operations#import-runs">import #{{ j.result_resource_id }}</a>
             {% elif j.result_resource_type == "optimization_run" and j.result_resource_id %}
-              <a class="text-brand-700 hover:underline dark:text-brand-300" href="/admin/operations#optimization-runs">optimizare #{{ j.result_resource_id }}</a>
+              <a class="text-brand-700 hover:underline dark:text-brand-300" href="/admin/operations/optimization-runs/{{ j.result_resource_id }}">plan explicabil &rarr;</a>
             {% elif j.job_type == "market_retention" and j.params.result %}
               <a class="text-brand-700 hover:underline dark:text-brand-300" href="/admin/operations#market-retention">
                 {{ j.params.result.archived_count }} arhivate{% if j.params.result.dry_run %} (simulare){% endif %}
@@ -112,19 +116,22 @@
 
     <div class="card" id="optimization-runs">
       <h2 class="mb-2 font-medium">Reexecutare optimizare</h2>
-      <form method="post" action="" id="optimize-form" class="flex items-end gap-3">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}" />
+      <p class="mb-2 text-xs text-gray-500 dark:text-gray-400">
+        Deschide un rezumat al configuratiei, preferintelor si modului shadow/live care vor fi folosite
+        inainte de a inlocui un plan activ (vezi "Reexecuta&hellip;" mai jos).
+      </p>
+      <form method="get" action="/admin/operations/optimize-confirm" class="flex items-end gap-3">
         <div>
           <label class="label">Statie</label>
-          <select class="input" name="station_id" onchange="document.getElementById('optimize-form').action = '/admin/operations/optimize/' + this.value">
+          <select class="input" name="station_id" required>
             <option value="">Selecteaza...</option>
             {% for s in stations %}<option value="{{ s.id }}">{{ s.name }}</option>{% endfor %}
           </select>
         </div>
-        <button type="submit" class="btn-primary">Ruleaza</button>
+        <button type="submit" class="btn-primary">Reexecuta&hellip;</button>
       </form>
       <table class="mt-4 w-full text-sm">
-        <thead class="text-left text-gray-500"><tr><th class="py-1">Data</th><th>Status</th><th>Cost (lei)</th></tr></thead>
+        <thead class="text-left text-gray-500"><tr><th class="py-1">Data</th><th>Status</th><th>Cost net (lei)</th><th></th></tr></thead>
         <tbody>
           {% for r in optimization_runs %}
           <tr class="border-t border-gray-100 dark:border-gray-800">
@@ -136,6 +143,7 @@
               {% if r.is_fallback %}<span class="badge-warn" title="{{ r.fallback_reason }}">fallback</span>{% endif %}
             </td>
             <td>{{ r.objective_value_lei | lei if r.objective_value_lei is not none else "-" }}</td>
+            <td><a class="text-brand-700 hover:underline dark:text-brand-300" href="/admin/operations/optimization-runs/{{ r.id }}">plan explicabil &rarr;</a></td>
           </tr>
           {% endfor %}
         </tbody>
