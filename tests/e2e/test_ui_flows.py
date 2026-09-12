@@ -92,3 +92,45 @@ def test_dark_mode_toggle_persists(live_server, page):
     page.click("button[title='Comuta tema']")
     html_classes_after = page.eval_on_selector("html", "el => el.className")
     assert html_classes_before != html_classes_after
+
+
+def test_dashboard_sse_connection_reaches_live_status(live_server, page):
+    """Issue #50: verifica pe un browser real ca EventSource se conecteaza,
+    primeste `snapshot`-ul initial si badge-ul de stare a conexiunii
+    (`#sse-status`) trece de la "conectare..." la "live" -- fara asta,
+    testele Python (care nu deschid un `EventSource` real) nu pot confirma
+    ca fluxul chiar functioneaza end-to-end intr-un browser.
+
+    Isi creeaza propriile date direct in baza `live_server` (nu reutilizeaza
+    fluxul UI din `test_bootstrap_login_create_org_and_station_flow`) ca sa
+    ramana independent -- acel test navigheaza prin pagina de backoffice
+    admin, care nu (mai) expune formularul de creare statie (regresie
+    preexistenta, neinrudita cu issue #50, confirmata identic pe `main`)."""
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import Session
+
+    from tests.factories import make_membership, make_org, make_station, make_user
+
+    engine = create_engine("postgresql+psycopg://ems:ems@localhost:5432/ems_e2e")
+    with Session(engine) as db:
+        user = make_user(db, email="sse-e2e@test.local", password="SseE2ePassword123")
+        org = make_org(db, "SSE E2E Org")
+        make_membership(db, user, org, role="organization_admin")
+        station = make_station(db, org, user, name="SSE E2E Station")
+        db.commit()
+        station_id = station.id
+    engine.dispose()
+
+    base = live_server
+    page.goto(f"{base}/login")
+    page.fill("#email", "sse-e2e@test.local")
+    page.fill("#password", "SseE2ePassword123")
+    page.click("button[type=submit]")
+    expect(page).to_have_url(f"{base}/")
+
+    page.goto(f"{base}/?station_id={station_id}")
+    expect(page.locator("h1")).to_contain_text("SSE E2E Station")
+
+    expect(page.locator("#sse-status")).to_have_text("live", timeout=10000)
+    # Snapshot-ul initial trebuie sa fi populat cel putin un KPI (nu ramane "-").
+    expect(page.locator("#kpi-quality")).not_to_have_text("-")

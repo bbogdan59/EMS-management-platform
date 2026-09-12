@@ -265,12 +265,54 @@ function emsInitDashboard(stationId) {
     } catch (e) { console.error(e); }
   }
 
+  // Actualizare live (issue #50): fiecare eveniment SSE poarta o lista de
+  // metrici versionate (metric/value/unit/measured_at/received_at/quality/
+  // source), nu un rezumat monolitic -- vezi docs/adr/0001-realtime-dashboard-transport.md.
+  // `snapshot` inlocuieste tot starea locala; `delta` doar suprascrie
+  // metricile schimbate. Un `snapshot` soseste la FIECARE (re)conectare
+  // (nu doar prima data) -- serverul nu promite continuitate de secventa
+  // peste o reconectare.
+  let liveMetrics = {};
+  let lastMessageAt = null;
+  const STALE_AFTER_MS = 3 * 5000; // 3 x POLL_INTERVAL_SECONDS (server)
+
+  function setConnectionStatus(status) {
+    const el = $("sse-status");
+    if (!el) return;
+    const labels = { connecting: "conectare...", live: "live", stale: "intarziat", offline: "deconectat" };
+    const classes = { connecting: "badge-warn", live: "badge-ok", stale: "badge-warn", offline: "badge-error" };
+    el.textContent = labels[status] || status;
+    el.className = classes[status] || "badge-muted";
+  }
+
+  function applyMetrics(metrics, { replace = false } = {}) {
+    if (replace) liveMetrics = {};
+    for (const m of metrics) liveMetrics[m.metric] = m.value;
+    setKpis(liveMetrics);
+    lastMessageAt = Date.now();
+    setConnectionStatus("live");
+  }
+
   function initSSE() {
+    setConnectionStatus("connecting");
     emsConnectSSE(`/stations/${stationId}/sse`, {
+      onopen: () => setConnectionStatus("connecting"), // devine "live" abia la primul snapshot
+      onerror: () => setConnectionStatus("connecting"),
       events: {
-        summary: (ev) => setKpis(JSON.parse(ev.data)),
+        snapshot: (ev) => applyMetrics(JSON.parse(ev.data).metrics, { replace: true }),
+        delta: (ev) => applyMetrics(JSON.parse(ev.data).metrics),
+        heartbeat: () => { lastMessageAt = Date.now(); setConnectionStatus("live"); },
       },
     });
+
+    setInterval(() => {
+      if (lastMessageAt !== null && Date.now() - lastMessageAt > STALE_AFTER_MS) {
+        setConnectionStatus("stale");
+      }
+    }, 5000);
+
+    window.addEventListener("offline", () => setConnectionStatus("offline"));
+    window.addEventListener("online", () => setConnectionStatus("connecting"));
   }
 
   // Bootstrap initial
