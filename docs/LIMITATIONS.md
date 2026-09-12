@@ -1201,3 +1201,44 @@ independent de acest flux stricat.
   acest caz, la un cost comparabil.
 - Reparatia testului e2e preexistent stricat mentionat mai sus -- afara
   din scopul acestui issue.
+
+## Addendum: Blocaj real raportat local -- fluxul SSE bloca orice alta cerere (fix critic)
+
+**Simptom raportat.** Rularea locala a serverului si deschiderea fluxului
+`GET /stations/{id}/sse` (issue #50) bloca NEDEFINIT orice alta cerere care
+folosea acelasi cookie de sesiune (ex. reincarcarea dashboard-ului intr-un alt
+tab al aceluiasi browser) -- "totul altceva ramane blocat, la infinit".
+
+**Cauza reala, reprodusa si confirmata cu `py-spy dump` pe procesul blocat.**
+`get_current_context` (`app/api/deps.py`) actualiza `Session.last_seen_at`
+doar cu `db.flush()`, fara `db.commit()`. `db` provine din `get_db()`, o
+dependinta FastAPI cu `yield` -- Starlette/FastAPI NU inchide/rollback-uieste
+o astfel de dependinta decat DUPA ce raspunsul e trimis INTEGRAL. Pentru un
+raspuns in flux lung (`EventSourceResponse`), "trimis integral" inseamna
+"niciodata cat timp clientul ramane conectat" -- deci UPDATE-ul necomis tinea
+un row lock PostgreSQL deschis pe randul `sessions` pe TOATA durata conexiunii
+SSE. Orice alta cerere autentificata cu acelasi cookie (acelasi rand
+`sessions`) bloca la randul ei nedefinit, incercand acelasi UPDATE in propria
+ei rulare a `get_current_context` -- exact simptomul raportat.
+
+**Fix (doua parti, ambele necesare):**
+1. `get_current_context` acum face `db.commit()` imediat dupa actualizarea
+   `last_seen_at`, nu doar `flush()` -- elibereaza lock-ul in momentul
+   actualizarii, indiferent cat dureaza restul cererii (fix sistemic: se
+   aplica oricarui raspuns lent/in flux, nu doar SSE).
+2. `station_live_stream` (`app/web/routes/sse.py`) inchide explicit `db`
+   (dependinta `get_db()`) INAINTE de a construi `EventSourceResponse` --
+   altfel conexiunea Postgres din pool ar ramane ocupata (desi fara lock,
+   dupa fix-ul 1) pe toata durata vizionarii de catre fiecare tab de
+   dashboard deschis, un risc real de epuizare a pool-ului cu mai multi
+   vizitatori simultani.
+
+**Verificat end-to-end** cu un server real (nu doar teste): reprodus blocajul
+cu `curl` (doua conexiuni separate, acelasi cookie -- deci nu era o limitare
+de conexiuni per-origine a unui singur browser), confirmat cauza cu
+`py-spy dump` (un thread `AnyIO worker` blocat in `psycopg` `wait()` pe un
+UPDATE), verificat rezolvarea (cereri concurente raspund in <25ms cu fluxul
+SSE deschis). Regresie acoperita si de
+`tests/integration/test_auth_session_lock_regression.py` (doua conexiuni
+Postgres reale, nu fixture-ul `db` cu SAVEPOINT, care nu poate exercita
+contentie de lock reala).

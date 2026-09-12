@@ -50,7 +50,17 @@ def get_current_context(
 
     sess.last_seen_at = utcnow()
     db.add(sess)
-    db.flush()
+    db.commit()
+    # `db.commit()`, nu doar `flush()`, e deliberat aici: `get_db()` (dependinta
+    # FastAPI cu `yield`) nu inchide/rollback-uieste sesiunea decat DUPA ce
+    # raspunsul e trimis integral -- pentru un raspuns in flux lung (SSE,
+    # `EventSourceResponse`) asta ar insemna sa tina un UPDATE necomis (deci
+    # un row lock Postgres pe acest rand `user_sessions`) deschis cat timp
+    # conexiunea de streaming ramane deschisa. Orice ALTA cerere autentificata
+    # cu ACELASI cookie de sesiune (acelasi rand) ar bloca la randul ei
+    # nedefinit pe acelasi UPDATE, cat timp fluxul ramane deschis -- exact
+    # cauza raportata a blocajului "infinit". Commit imediat elibereaza
+    # lock-ul in momentul actualizarii, indiferent cat dureaza restul cererii.
 
     request.state.auth_user = user
     request.state.auth_session = sess
