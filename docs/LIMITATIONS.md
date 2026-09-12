@@ -1142,3 +1142,62 @@ noi de mutatie cer CSRF.
 - Migrarea/backfill-ul datelor existente pentru `Membership.is_active` --
   `server_default=true` acopera deja toate randurile existente, identic cu
   starea dinainte de acest issue.
+
+## Addendum: Actualizare live a dashboard-ului (issue #50)
+
+**Decizie de transport: SSE, nu WebSocket** -- vezi
+`docs/adr/0001-realtime-dashboard-transport.md`. Fluxul SSE existent
+(issue #6) e extins la un contract per-metrica versionat
+(`metric`/`value`/`unit`/`measured_at`/`received_at`/`quality`/`source`),
+nu inlocuit cu un transport nou. `dashboard_service.get_summary` (randarea
+HTTP initiala) ramane NESCHIMBAT -- `get_live_metrics` e o functie noua,
+separata, verificat explicit prin
+`test_get_summary_output_unchanged_alongside_new_live_metrics`.
+
+**Contract de resume, fara jurnal de evenimente.** Serverul NU pastreaza
+un buffer de evenimente trecute pentru replay dupa o reconectare. Prima
+emisie a FIECAREI conexiuni (initiala sau reconectare) e intotdeauna un
+eveniment `snapshot` complet -- verificat
+(`test_first_event_is_always_a_snapshot`). Acesta ESTE mecanismul de
+"refresh la gap" cerut de issue: reconectarea aduce starea completa prin
+insusi fluxul SSE, fara o cerere HTTP separata. Un jurnal real de
+evenimente pentru replay partial peste un gap de minute a fost evaluat si
+respins deliberat -- ar fi la fel de costisitor ca un `snapshot` complet,
+fara niciun beneficiu practic aici.
+
+**Coalescing, nu token-bucket separat.** Fiecare tur de polling (5s)
+retrimite DOAR metricile schimbate fata de ultima emisie
+(`sse.diff_metrics`, testat direct cu mai multe cazuri, inclusiv
+schimbari multiple intre doua tururi care se contopesc intr-un singur
+`delta`). Intervalul de 5s e deja bugetul de rata -- nu a fost nevoie de
+un mecanism suplimentar de backpressure pentru acest volum de date
+(cateva zeci de metrici per statie, nu telemetrie bruta la fiecare
+esantion).
+
+**Stari de conexiune** (`connecting`/`live`/`stale`/`offline`) afisate in
+UI (`#sse-status`, `dashboard.js`) -- derivate din callback-urile
+`emsConnectSSE` plus un watchdog client-side (`stale` daca nu s-a primit
+niciun mesaj in ultimele `3 x POLL_INTERVAL_SECONDS`). Verificat end-to-end
+intr-un browser real (Playwright, `test_dashboard_sse_connection_reaches_live_status`)
+-- singurul mod fiabil de a confirma ca `EventSource` chiar se conecteaza
+si primeste `snapshot`-ul initial, fara sa mocuiasca transportul.
+
+**Regresie preexistenta descoperita (neinrudita, nu introdusa aici):**
+`test_bootstrap_login_create_org_and_station_flow` (issue #14) navigheaza
+prin `/admin/organizations/{id}` (backoffice-ul introdus de issue #24) si
+asteapta acolo formularul "+ Adauga statie", care exista DOAR pe pagina de
+autoservire `/organizations/{id}` (paginile s-au despartit intre timp).
+Confirmat identic pe `main`, inainte de orice schimbare din acest PR --
+documentat aici, nu reparat (in afara scopului issue #50); testul nou de
+SSE isi creeaza propriile date direct in baza de date ca sa ramana
+independent de acest flux stricat.
+
+**Ramas in afara scopului (deliberat, nu ascuns):**
+- Un canal WebSocket real -- evaluat explicit si respins (vezi ADR 0001);
+  ramane o optiune viitoare STRICT daca apare o cerere reala de control
+  bidirectional prin dashboard.
+- Jurnal de evenimente persistat pentru replay partial peste un gap lung
+  de reconectare -- `snapshot`-ul complet la reconectare acopera deja
+  acest caz, la un cost comparabil.
+- Reparatia testului e2e preexistent stricat mentionat mai sus -- afara
+  din scopul acestui issue.

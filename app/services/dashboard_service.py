@@ -100,6 +100,101 @@ def get_summary(db: Session, station: Station) -> dict:
     }
 
 
+def get_live_metrics(db: Session, station: Station) -> list[dict]:
+    """Contract per-metrica versionat pentru fluxul SSE (issue #50): fiecare
+    intrare descrie explicit `metric`/`value`/`unit`/`measured_at`/
+    `received_at`/`quality`/`source`, distinct de `get_summary` (folosit
+    NESCHIMBAT pentru randarea initiala HTTP a paginii, ca sa nu riste nicio
+    regresie pe testele deja existente ale acelui contract).
+
+    Metricile derivate din ultima telemetrie bruta (`pv_power_kw` etc.)
+    poarta `measured_at`/`received_at` reale ale masuratorii si calitatea
+    per-rand (`data_quality`, identic cu `get_summary`); metricile derivate
+    din stare evaluata "acum" (pret efectiv, plan, status device) poarta
+    `measured_at`=acum si `received_at`=None (nu sunt masuratori telemetrice)."""
+    latest = get_latest_telemetry(db, station.id)
+    now = utcnow()
+
+    data_quality = "missing"
+    measured_at_iso: str | None = None
+    received_at_iso: str | None = None
+    if latest is not None:
+        measured_at_iso = latest.measured_at.isoformat()
+        received_at_iso = latest.received_at.isoformat()
+        if latest.is_simulated:
+            data_quality = "simulated"
+        elif (now - latest.measured_at) > STALE_AFTER:
+            data_quality = "stale"
+        else:
+            data_quality = "measured"
+
+    import_tariff = tariff_service.get_current_tariff_version(db, station.id, "import", now)
+    export_tariff = tariff_service.get_current_tariff_version(db, station.id, "export", now)
+    market_price = db.scalar(
+        select(MarketPriceInterval)
+        .where(
+            MarketPriceInterval.is_current.is_(True),
+            MarketPriceInterval.interval_start <= now,
+            MarketPriceInterval.interval_end > now,
+        )
+        .order_by(MarketPriceInterval.interval_start.desc())
+        .limit(1)
+    )
+    price_buy = _effective_price(import_tariff, market_price)
+    price_sell = _effective_price(export_tariff, market_price)
+
+    plan = db.scalar(
+        select(Plan)
+        .where(Plan.station_id == station.id, Plan.status.in_([PlanStatus.published.value, PlanStatus.accepted_by_device.value, PlanStatus.executing.value]))
+        .order_by(Plan.version.desc())
+        .limit(1)
+    )
+    device_online = db.scalar(
+        select(Device.id).where(Device.station_id == station.id, Device.last_heartbeat_at.isnot(None), Device.last_heartbeat_at > now - timedelta(minutes=5))
+    ) is not None
+
+    now_iso = now.isoformat()
+
+    def _telemetry_metric(name: str, value, unit: str | None) -> dict:
+        return {
+            "metric": name, "value": value, "unit": unit,
+            "measured_at": measured_at_iso, "received_at": received_at_iso,
+            "quality": data_quality, "source": "telemetry",
+        }
+
+    def _evaluated_metric(name: str, value, unit: str | None, *, quality: str = "measured", source: str) -> dict:
+        return {
+            "metric": name, "value": value, "unit": unit,
+            "measured_at": now_iso, "received_at": None,
+            "quality": quality, "source": source,
+        }
+
+    return [
+        _telemetry_metric("pv_power_kw", _w_to_kw(latest.pv_power_w) if latest else None, "kW"),
+        _telemetry_metric("load_power_kw", _w_to_kw(latest.load_power_w) if latest else None, "kW"),
+        _telemetry_metric("battery_power_kw", _w_to_kw(latest.battery_power_w) if latest else None, "kW"),
+        _telemetry_metric("grid_power_kw", _w_to_kw(latest.grid_power_w) if latest else None, "kW"),
+        _telemetry_metric(
+            "battery_soc_percent",
+            float(latest.battery_soc_percent) if latest and latest.battery_soc_percent is not None else None,
+            "%",
+        ),
+        _telemetry_metric("ev_connected", latest.ev_connected if latest else None, None),
+        _telemetry_metric("ev_power_kw", _w_to_kw(latest.ev_power_w) if latest else None, "kW"),
+        # Duplica in `value` propriul `quality`/`measured_at` -- clientul (dashboard.js)
+        # citeste aceste doua metrici pentru badge-ul global de prospetime,
+        # separat de KPI-urile individuale de mai sus.
+        _telemetry_metric("data_quality", data_quality, None),
+        _telemetry_metric("last_update", measured_at_iso, None),
+        _evaluated_metric("price_buy_lei_kwh", price_buy, "lei/kWh", quality="measured" if price_buy is not None else "missing", source="tariff"),
+        _evaluated_metric("price_sell_lei_kwh", price_sell, "lei/kWh", quality="measured" if price_sell is not None else "missing", source="tariff"),
+        _evaluated_metric("execution_mode", station.execution_mode, None, source="plan"),
+        _evaluated_metric("has_active_plan", plan is not None, None, source="plan"),
+        _evaluated_metric("plan_status", plan.status if plan else None, None, source="plan"),
+        _evaluated_metric("device_online", device_online, None, source="device"),
+    ]
+
+
 def _w_to_kw(value: Decimal | None) -> float | None:
     if value is None:
         return None
