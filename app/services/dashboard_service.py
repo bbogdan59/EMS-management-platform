@@ -17,7 +17,7 @@ from app.models.optimization import Plan, PlanInterval
 from app.models.station import Station, StationConfigVersion
 from app.models.tariff import Tariff, TariffVersion
 from app.models.telemetry import TelemetryAggregate, TelemetryRaw
-from app.services import tariff_service
+from app.services import chart_aggregation, tariff_service
 
 STALE_AFTER = timedelta(minutes=10)
 
@@ -266,7 +266,10 @@ def _effective_price_at(tariff_versions: list[TariffVersion], market_intervals: 
     return _effective_price(tariff, market)
 
 
-def get_timeseries(db: Session, station: Station, start: datetime, end: datetime) -> list[dict]:
+def _query_telemetry_rows(db: Session, station: Station, start: datetime, end: datetime) -> list[dict]:
+    """Randuri brute de telemetrie, cu `t` ca `datetime` (nu string inca) --
+    folosit atat de exportul CSV (rezolutie bruta, neschimbata) cat si de
+    agregarea pentru chart (issue #33), ca sa nu se duplice interogarea."""
     rows = db.scalars(
         select(TelemetryRaw)
         .where(TelemetryRaw.station_id == station.id, TelemetryRaw.measured_at >= start, TelemetryRaw.measured_at <= end)
@@ -274,7 +277,7 @@ def get_timeseries(db: Session, station: Station, start: datetime, end: datetime
     ).all()
     return [
         {
-            "t": r.measured_at.isoformat(),
+            "t": r.measured_at,
             "pv_kw": _w_to_kw(r.pv_power_w),
             "load_kw": _w_to_kw(r.load_power_w),
             "battery_kw": _w_to_kw(r.battery_power_w),
@@ -285,6 +288,69 @@ def get_timeseries(db: Session, station: Station, start: datetime, end: datetime
         }
         for r in rows
     ]
+
+
+def get_timeseries_raw(db: Session, station: Station, start: datetime, end: datetime) -> list[dict]:
+    """Telemetrie bruta (fara agregare), folosita de exportul CSV -- un
+    export explicit e presupus sa vrea datele exact cum au fost masurate,
+    nu o versiune redusa pentru afisare grafica."""
+    rows = _query_telemetry_rows(db, station, start, end)
+    for r in rows:
+        r["t"] = r["t"].isoformat()
+    return rows
+
+
+_TIMESERIES_METRICS: dict[str, str] = {
+    "pv_kw": "mean",
+    "load_kw": "mean",
+    "battery_kw": "mean",
+    "grid_kw": "mean",
+    # SOC e un procent -- NICIODATA insumat, doar mediat pe bucket. Vezi
+    # `chart_aggregation.aggregate_series`, care ar refuza oricum "sum" aici.
+    "soc_pct": "mean",
+}
+
+
+def get_timeseries_chart(db: Session, station: Station, start: datetime, end: datetime, range_key: str) -> dict:
+    """Seria pentru graficele de putere/SOC ale dashboard-ului (issue #33):
+    rezolutie aleasa server-side dupa `range_key` (contract in
+    `chart_aggregation.choose_resolution`), agregare metric-aware (medie
+    pentru putere/SOC, niciodata suma pe SOC), plus metadate explicite
+    (rezolutie, metoda de agregare per metrica, fus orar, acoperire) --
+    clientul nu mai trebuie sa ghiceasca nimic din forma raspunsului."""
+    rows = _query_telemetry_rows(db, station, start, end)
+    resolution = chart_aggregation.choose_resolution(range_key)
+    bucket_seconds = chart_aggregation.RESOLUTION_SECONDS[resolution]
+
+    aggregated = chart_aggregation.aggregate_series(
+        rows, timestamp_key="t", bucket_seconds=bucket_seconds, metrics=_TIMESERIES_METRICS
+    )
+    coverage = chart_aggregation.compute_coverage(
+        rows, timestamp_key="t", start=start, end=end, bucket_seconds=bucket_seconds
+    )
+
+    # Steaguri de calitate: "orice punct brut din bucket e simulat/intarziat"
+    # -- pastrate separat de metricile numerice (nu au sens mediate).
+    quality_by_bucket: dict[datetime, dict[str, bool]] = {}
+    for row in rows:
+        bucket_ts = chart_aggregation.bucket_start(row["t"], bucket_seconds)
+        q = quality_by_bucket.setdefault(bucket_ts, {"is_simulated": False, "is_late": False})
+        q["is_simulated"] = q["is_simulated"] or bool(row["is_simulated"])
+        q["is_late"] = q["is_late"] or bool(row["is_late"])
+
+    points = []
+    for point in aggregated:
+        bucket_ts = point["t"]
+        q = quality_by_bucket.get(bucket_ts, {"is_simulated": False, "is_late": False})
+        points.append({**point, "t": bucket_ts.isoformat(), **q})
+
+    return {
+        "resolution": resolution,
+        "aggregation": dict(_TIMESERIES_METRICS),
+        "timezone": station.timezone,
+        "coverage": round(coverage, 4),
+        "points": points,
+    }
 
 
 def get_prices(db: Session, station: Station, day: date) -> list[dict]:
