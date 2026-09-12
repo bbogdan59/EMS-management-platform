@@ -38,12 +38,27 @@ class Tariff(Entity):
 class TariffVersion(Entity):
     """O versiune cu valabilitate determinata a unui tarif.
 
-    Pentru `kind=fixed`: se foloseste `fixed_price_lei_per_kwh`.
-    Pentru `kind=indexed_opcom`: pretul efectiv = pret_OPCOM + `opcom_margin_lei_per_kwh`
-    (marja poate fi negativa). Daca formula contractuala reala nu e implementata
-    (ex. formule cu componente reglementate variabile complexe), seteaza
+    Pentru `kind=fixed`: se foloseste `fixed_price_lei_per_kwh` (costul MARGINAL
+    de energie, constant -- separat de `fixed_monthly_fee_lei`, care e un cost
+    FIX, independent de consum). Pentru `kind=indexed_opcom`: pretul de energie
+    efectiv = pret_OPCOM + `opcom_margin_lei_per_kwh` (marja poate fi negativa).
+    Daca formula contractuala reala nu e implementata (ex. formule cu
+    componente reglementate variabile complexe), seteaza
     `economic_calculation_disabled=True` si documenteaza in `limitation_note`.
-    """
+
+    Componentele de retea/taxe (issue #51/#46) sunt distincte de pretul de
+    energie -- `distribution_lei_per_kwh`/`transport_lei_per_kwh`/
+    `other_regulated_lei_per_kwh` -- fiecare 0 implicit (backward-compatibil
+    cu versiunile existente, care foloseau doar `variable_component_lei_per_kwh`
+    ca "gaura neagra" pentru orice cost variabil suplimentar; acel camp ramane
+    disponibil pentru compatibilitate/simplitate, dar versiunile noi ar trebui
+    sa foloseasca componentele explicite de mai jos cand contractul le separa).
+    `vat_rate_percent=None` inseamna explicit "TVA nu e inclus in aceasta
+    formula" (nu 0% -- diferenta conteaza pentru un audit financiar), nu o
+    presupunere implicita despre legislatia romaneasca -- operatorul introduce
+    cota reala din contractul/factura lui. Vezi
+    `tariff_service.compute_effective_price_lei_per_kwh` pentru formula exacta,
+    documentata acolo cu sursa/data introducerii (acest PR)."""
 
     __tablename__ = "tariff_versions"
 
@@ -58,6 +73,11 @@ class TariffVersion(Entity):
 
     fixed_monthly_fee_lei: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=0, nullable=False)
     variable_component_lei_per_kwh: Mapped[Decimal] = mapped_column(Numeric(10, 5), default=0, nullable=False)
+
+    distribution_lei_per_kwh: Mapped[Decimal] = mapped_column(Numeric(10, 5), default=0, nullable=False)
+    transport_lei_per_kwh: Mapped[Decimal] = mapped_column(Numeric(10, 5), default=0, nullable=False)
+    other_regulated_lei_per_kwh: Mapped[Decimal] = mapped_column(Numeric(10, 5), default=0, nullable=False)
+    vat_rate_percent: Mapped[Decimal | None] = mapped_column(Numeric(5, 2), nullable=True)
 
     settlement_method: Mapped[str] = mapped_column(String(64), default="net_metering_15min", nullable=False)
     settlement_interval_days: Mapped[int] = mapped_column(default=30, nullable=False)
