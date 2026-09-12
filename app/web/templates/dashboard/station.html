@@ -52,6 +52,35 @@
     </div>
   </div>
 
+  <!-- Detaliere financiara (issue #49): valoare bruta PV / economie autoconsum /
+       venit export, fiecare cu formula proprie, ca sa nu fie confundate cu o
+       singura cifra de "economie totala". A NU se insuma orbeste cele trei
+       numere -- fiecare are propriul reper, vezi tooltip-urile. -->
+  <div class="card">
+    <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
+      <h2 class="font-medium">Detaliere valoare PV si export (30 zile)</h2>
+      <span id="kpi-tariff-provenance" class="badge-muted" title="Daca pretul de import folosit e din contract/piata reala (masurat) sau dintr-un fixture de test/demo (estimat)">-</span>
+    </div>
+    <div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
+      <div>
+        <p class="label !mb-1" id="kpi-gross-pv-value-label" title="">Valoare bruta PV</p>
+        <p id="kpi-gross-pv-value" class="text-sm font-medium">-</p>
+      </div>
+      <div>
+        <p class="label !mb-1" id="kpi-self-consumption-label" title="">Economie autoconsum</p>
+        <p id="kpi-self-consumption" class="text-sm font-medium">-</p>
+      </div>
+      <div>
+        <p class="label !mb-1" id="kpi-export-revenue-label" title="">Venit export</p>
+        <p id="kpi-export-revenue" class="text-sm font-medium">-</p>
+      </div>
+    </div>
+    <p id="kpi-financial-breakdown-note" class="mt-2 text-xs text-gray-500">
+      Valoarea bruta PV = cost de cumparare potential evitat, NU economie totala realizata --
+      autoconsumul si exportul efectiv conteaza separat (vezi tooltip-urile de mai sus).
+    </p>
+  </div>
+
   <!-- Diagrama fluxuri -->
   <div class="card">
     <h2 class="mb-3 font-medium">Fluxuri de energie</h2>

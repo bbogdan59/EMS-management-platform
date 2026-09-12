@@ -7,7 +7,7 @@ from decimal import Decimal
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import func, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.core.security import utcnow
 from app.models.device import Device
@@ -233,8 +233,12 @@ def _tariff_versions_for_range(db: Session, station_id: uuid.UUID, direction: st
 
 
 def _market_intervals_for_range(db: Session, source: str, start: datetime, end: datetime) -> list[MarketPriceInterval]:
+    """`import_run` e incarcat eager (`selectinload`) -- necesar pentru
+    `_price_provenance` (issue #49), care citeste `import_run.is_synthetic_fixture`
+    pentru fiecare interval folosit; fara asta ar fi un N+1 lazy-load per ora."""
     return db.scalars(
         select(MarketPriceInterval)
+        .options(selectinload(MarketPriceInterval.import_run))
         .where(
             MarketPriceInterval.source == source,
             MarketPriceInterval.is_current.is_(True),
@@ -264,6 +268,35 @@ def _effective_price_at(tariff_versions: list[TariffVersion], market_intervals: 
     tariff = _lookup_at(tariff_versions, at, "valid_from", "valid_to")
     market = _lookup_at(market_intervals, at, "interval_start", "interval_end")
     return _effective_price(tariff, market)
+
+
+def _price_provenance_at(tariff_versions: list[TariffVersion], market_intervals: list[MarketPriceInterval], at: datetime) -> str:
+    """Clasifica provenienta pretului efectiv folosit intr-o ora (issue #49,
+    "measured/modelled/estimated ... vizibile") -- NU introduce o sursa noua
+    de date, doar citeste semnale deja existente in schema:
+
+    - `"fixed_contract"`: tarif cu `fixed_price_lei_per_kwh` setat -- pretul e
+      cunoscut EXACT din contract pentru orice ora, nu depinde de nicio
+      prognoza sau piata (echivalent "measured", in sensul ca nu e o estimare).
+    - `"indexed_settled"`: tarif indexat OPCOM, iar intervalul PZU folosit
+      provine dintr-un `ImportRun` REAL (`is_synthetic_fixture=False`) -- pret
+      decontat, masurat, nu modelat.
+    - `"indexed_synthetic"`: tarif indexat OPCOM, dar intervalul PZU folosit
+      provine dintr-un fixture sintetic (`is_synthetic_fixture=True`, date de
+      test/demo injectate direct in baza, niciodata descarcate de la OPCOM) --
+      marcat explicit ca NEFIIND un pret real decontat ("estimated").
+    - `"unknown"`: niciun tarif/interval gasit pentru acest moment (nu ar
+      trebui sa se intample pentru o ora deja inclusa ca "priced", dar
+      returnat explicit in loc sa presupuna ceva)."""
+    tariff = _lookup_at(tariff_versions, at, "valid_from", "valid_to")
+    if tariff is None:
+        return "unknown"
+    if tariff.fixed_price_lei_per_kwh is not None:
+        return "fixed_contract"
+    market = _lookup_at(market_intervals, at, "interval_start", "interval_end")
+    if market is None:
+        return "unknown"
+    return "indexed_synthetic" if market.import_run.is_synthetic_fixture else "indexed_settled"
 
 
 def get_timeseries(db: Session, station: Station, start: datetime, end: datetime) -> list[dict]:
@@ -486,7 +519,18 @@ def get_estimated_savings(db: Session, station: Station, start: datetime, end: d
     (nu tariful curent aplicat retroactiv intregului istoric -- bug corectat
     fata de versiunea anterioara). Orele fara pret rezolvabil sunt EXCLUSE
     din toate cele trei sume (real/reper1/reper2), nu tratate ca zero, iar
-    acoperirea ramasa e raportata explicit (`hours_priced`/`hours_expected`)."""
+    acoperirea ramasa e raportata explicit (`hours_priced`/`hours_expected`).
+
+    Issue #49 adauga o DETALIERE financiara suplimentara, in carduri separate,
+    ca sa nu fie confundata cu "economie totala": `gross_pv_value_lei`
+    (valoare bruta = productie PV x pret cumparare, cost potential evitat, NU
+    economie realizata), `self_consumption_savings_lei` (economie REALA prin
+    autoconsum direct) si `export_revenue_lei` (venit real din export -- deja
+    parte din `actual_net_cost_lei`, expus separat). Fiecare are `_description`
+    cu formula exacta. `tariff_buy_provenance`/`tariff_provenance_summary`
+    expun daca pretul de import folosit e masurat (`fixed_contract`/
+    `indexed_settled`) sau doar un fixture sintetic de test (`indexed_synthetic`,
+    `tariff_provenance_summary="estimated"`)."""
     tariff_versions_buy = _tariff_versions_for_range(db, station.id, "import", start, end)
     if not tariff_versions_buy:
         return {"available": False, "reason": "Niciun tarif de import valabil in intervalul cerut."}
@@ -507,10 +551,16 @@ def get_estimated_savings(db: Session, station: Station, start: datetime, end: d
     hours_expected = max(int((end - start).total_seconds() / 3600), 0)
     hours_priced = 0
     hours_with_load_but_no_price = 0
+    hours_export_price_missing = 0
     total_load_kwh = 0.0
+    total_pv_kwh = 0.0
     actual_net_cost = 0.0
     whole_system_baseline_cost = 0.0
     ems_incremental_baseline_cost = 0.0
+    gross_pv_value = 0.0
+    self_consumption_savings = 0.0
+    export_revenue = 0.0
+    tariff_buy_provenance = {"fixed_contract": 0, "indexed_settled": 0, "indexed_synthetic": 0, "unknown": 0}
 
     for r in rows:
         if r.load_energy_kwh is None:
@@ -521,7 +571,10 @@ def get_estimated_savings(db: Session, station: Station, start: datetime, end: d
             continue
         # Nicio ipoteza de venit necunoscut daca nu exista tarif de export valabil
         # in acea ora -- la fel ca `optimization_service._resolve_price`.
-        price_sell = _effective_price_at(tariff_versions_sell, market_intervals, r.period_start) or 0.0
+        price_sell_resolved = _effective_price_at(tariff_versions_sell, market_intervals, r.period_start)
+        if price_sell_resolved is None:
+            hours_export_price_missing += 1
+        price_sell = price_sell_resolved or 0.0
 
         load = float(r.load_energy_kwh)
         pv = float(r.pv_energy_kwh) if r.pv_energy_kwh is not None else 0.0
@@ -530,6 +583,7 @@ def get_estimated_savings(db: Session, station: Station, start: datetime, end: d
 
         hours_priced += 1
         total_load_kwh += load
+        total_pv_kwh += pv
         actual_net_cost += grid_import * price_buy - grid_export * price_sell
         whole_system_baseline_cost += load * price_buy
 
@@ -537,8 +591,21 @@ def get_estimated_savings(db: Session, station: Station, start: datetime, end: d
         self_export = max(pv - load, 0.0)
         ems_incremental_baseline_cost += self_import * price_buy - self_export * price_sell
 
+        # Detaliere issue #49: NU sunt trei numere independente insumabile la
+        # `whole_system_benefit_lei` (acela foloseste fluxurile REALE de retea,
+        # care depind si de baterie) -- fiecare e etichetat explicit cu
+        # formula/reperul lui propriu, ca sa nu fie confundat cu "economie totala".
+        gross_pv_value += pv * price_buy
+        self_consumption_savings += min(pv, load) * price_buy
+        export_revenue += grid_export * price_sell
+
+        tariff_buy_provenance[_price_provenance_at(tariff_versions_buy, market_intervals, r.period_start)] += 1
+
     if hours_priced == 0:
         return {"available": False, "reason": "Nicio ora cu date de consum si pret rezolvabil in intervalul cerut."}
+
+    has_synthetic_buy_price = tariff_buy_provenance["indexed_synthetic"] > 0
+    tariff_provenance_summary = "estimated" if has_synthetic_buy_price else "measured"
 
     return {
         "available": True,
@@ -562,4 +629,41 @@ def get_estimated_savings(db: Session, station: Station, start: datetime, end: d
         ),
         "ems_incremental_baseline_cost_lei": round(ems_incremental_baseline_cost, 2),
         "ems_incremental_benefit_lei": round(ems_incremental_baseline_cost - actual_net_cost, 2),
+        # --- Detaliere financiara (issue #49) ------------------------------
+        # Cele trei numere de mai jos sunt afisate ca CARDURI SEPARATE, fiecare
+        # cu formula lui, exact ca sa NU fie prezentate implicit ca "economie
+        # totala" (definitia explicita din issue #49: pret contractual x
+        # productie PV e valoare bruta/cost evitat POTENTIAL, nu automat
+        # economie realizata -- autoconsumul, exportul si baseline-ul conteaza).
+        "total_pv_kwh": round(total_pv_kwh, 3),
+        "gross_pv_value_description": (
+            "Valoare bruta a energiei PV produse = productie PV (kWh) x pretul de "
+            "cumparare efectiv (lei/kWh) valabil in fiecare ora -- costul de cumparare "
+            "POTENTIAL evitat daca toata productia ar fi fost cumparata din retea. "
+            "NU e economie realizata: nu tine cont daca PV-ul a fost efectiv "
+            "autoconsumat, exportat sau curbat (curtailed)."
+        ),
+        "gross_pv_value_lei": round(gross_pv_value, 2),
+        "self_consumption_savings_description": (
+            "Economie din autoconsum = min(PV, consum) (kWh) x pretul de cumparare "
+            "efectiv (lei/kWh), pe fiecare ora -- costul de import EVITAT prin "
+            "consumul direct al energiei PV produse in acea ora. Aproximare orara "
+            "(nu tine cont de decalaje in cadrul orei intre productie si consum)."
+        ),
+        "self_consumption_savings_lei": round(self_consumption_savings, 2),
+        "export_revenue_description": (
+            "Venit din export = energie exportata in retea (kWh) x pretul de export "
+            "efectiv (lei/kWh) valabil in acea ora -- venit REAL, deja inclus in "
+            "`actual_net_cost_lei` (il reduce), afisat aici separat pentru claritate."
+        ),
+        "export_revenue_lei": round(export_revenue, 2),
+        "hours_export_price_missing": hours_export_price_missing,
+        "tariff_buy_provenance": tariff_buy_provenance,
+        "tariff_buy_provenance_description": (
+            "Cate din orele cu pret rezolvabil au folosit un pret de import "
+            "'fixed_contract' (cunoscut exact din contract), 'indexed_settled' "
+            "(pret PZU OPCOM real, decontat) sau 'indexed_synthetic' (date de "
+            "test/demo, NU un pret OPCOM real decontat)."
+        ),
+        "tariff_provenance_summary": tariff_provenance_summary,
     }
