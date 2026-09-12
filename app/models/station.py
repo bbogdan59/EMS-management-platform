@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from decimal import Decimal
 
-from sqlalchemy import Boolean, ForeignKey, Integer, Numeric, String, UniqueConstraint
+from sqlalchemy import JSON, Boolean, ForeignKey, Integer, Numeric, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Entity
@@ -73,6 +73,25 @@ class StationConfigVersion(Entity):
 
     notes: Mapped[str | None] = mapped_column(String(2000), nullable=True)
 
+    # Catalog administrabil (issue #42): referinta optionala catre un
+    # `EquipmentModel`, cu snapshot capturat la selectie -- o editare
+    # ulterioara a catalogului nu modifica retroactiv aceasta configuratie.
+    # `NULL` model_id + `*_custom_label` completat = echipament declarat
+    # manual, nevalidat fata de catalog (nu implica compatibilitate RS485).
+    inverter_model_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("equipment_models.id", ondelete="SET NULL"), nullable=True
+    )
+    inverter_model_spec_revision: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    inverter_model_snapshot: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    inverter_custom_label: Mapped[str | None] = mapped_column(String(200), nullable=True)
+
+    battery_model_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("equipment_models.id", ondelete="SET NULL"), nullable=True
+    )
+    battery_model_spec_revision: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    battery_model_snapshot: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    battery_custom_label: Mapped[str | None] = mapped_column(String(200), nullable=True)
+
     station: Mapped[Station] = relationship(back_populates="config_versions")
     panel_groups: Mapped[list[PanelGroup]] = relationship(
         back_populates="config_version", cascade="all, delete-orphan"
@@ -98,6 +117,16 @@ class PanelGroup(Entity):
     power_kwp: Mapped[Decimal] = mapped_column(Numeric(8, 3), nullable=False)
     azimuth_degrees: Mapped[Decimal] = mapped_column(Numeric(5, 1), nullable=False)  # 0=N,90=E,180=S,270=V
     tilt_degrees: Mapped[Decimal] = mapped_column(Numeric(4, 1), nullable=False)
+
+    # Catalog administrabil (issue #42) -- vezi StationConfigVersion pentru
+    # semantica snapshot-ului si a etichetei custom.
+    pv_module_model_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("equipment_models.id", ondelete="SET NULL"), nullable=True
+    )
+    pv_module_model_spec_revision: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    pv_module_model_snapshot: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    pv_module_custom_label: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    pv_module_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     station: Mapped[Station] = relationship(back_populates="panel_groups")
     config_version: Mapped[StationConfigVersion] = relationship(back_populates="panel_groups")

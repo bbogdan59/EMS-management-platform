@@ -5,6 +5,7 @@ from decimal import Decimal
 
 from app.core.security import hash_password
 from app.models.enums import ImportRunStatus
+from app.models.equipment_catalog import EquipmentManufacturer, EquipmentModel
 from app.models.market import ImportRun, MarketPriceInterval
 from app.models.organization import Membership, Organization
 from app.models.user import User
@@ -89,3 +90,25 @@ def make_market_day(
         )
     db.flush()
     return run
+
+
+def make_manufacturer(db, name="Test Manufacturer", is_active=True) -> EquipmentManufacturer:
+    m = EquipmentManufacturer(name=name, is_active=is_active)
+    db.add(m)
+    db.flush()
+    return m
+
+
+def make_equipment_model(
+    db, manufacturer=None, equipment_type="inverter", model_name="Test Model",
+    specs=None, source_note="test fixture", is_active=True, spec_revision=1,
+) -> EquipmentModel:
+    if manufacturer is None:
+        manufacturer = make_manufacturer(db)
+    model = EquipmentModel(
+        manufacturer_id=manufacturer.id, equipment_type=equipment_type, model_name=model_name,
+        specs=specs or {}, source_note=source_note, is_active=is_active, spec_revision=spec_revision,
+    )
+    db.add(model)
+    db.flush()
+    return model

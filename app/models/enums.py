@@ -131,3 +131,14 @@ class AdminJobStatus(str, enum.Enum):
     succeeded = "succeeded"
     failed = "failed"
     skipped_locked = "skipped_locked"
+
+
+class EquipmentType(str, enum.Enum):
+    """Tip de echipament in catalogul administrabil -- issue #42. Catalogul
+    comercial (aceasta lista) e distinct de harta de registre RS485 (issue
+    #17, `InverterProfile`): a sti ca un invertor e "Deye SUN-10K-SG04LP3"
+    nu implica automat ca stim cum sa ii controlam bateria prin Modbus."""
+
+    inverter = "inverter"
+    battery = "battery"
+    pv_module = "pv_module"

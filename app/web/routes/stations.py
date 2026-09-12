@@ -21,11 +21,13 @@ from app.core.rate_limit import RateLimitExceeded, check_fixed_window
 from app.core.rbac import can_manage_station_config, can_modify_operational_settings
 from app.database import get_db
 from app.models.device import ClaimCode, Device
+from app.models.enums import EquipmentType
+from app.models.equipment_catalog import EquipmentModel
 from app.models.station import PanelGroup, StationConfigVersion
 from app.models.tariff import Tariff
 from app.models.user import User
 from app.schemas.station_forms import PreferenceInput, StationConfigInput
-from app.services import device_service, station_service, tariff_service
+from app.services import device_service, equipment_catalog_service, station_service, tariff_service
 from app.web.context import build_nav_context
 from app.web.templating import templates
 
@@ -87,16 +89,84 @@ def _safe_script_json(value) -> str:
 
 def _panel_groups_json(config: StationConfigVersion | None) -> str:
     if config is None:
-        return _safe_script_json([{"name": "Grup principal", "power_kwp": "0", "azimuth_degrees": "180", "tilt_degrees": "30"}])
+        return _safe_script_json(
+            [{
+                "name": "Grup principal", "power_kwp": "0", "azimuth_degrees": "180", "tilt_degrees": "30",
+                "pv_module_model_id": None, "pv_module_label": None, "pv_module_count": None,
+            }]
+        )
     return _safe_script_json(
         [
             {
                 "name": g.name, "power_kwp": str(g.power_kwp),
                 "azimuth_degrees": str(g.azimuth_degrees), "tilt_degrees": str(g.tilt_degrees),
+                "pv_module_model_id": str(g.pv_module_model_id) if g.pv_module_model_id else None,
+                "pv_module_label": (
+                    f"{g.pv_module_model_snapshot['manufacturer']} {g.pv_module_model_snapshot['model_name']}"
+                    if g.pv_module_model_snapshot else g.pv_module_custom_label
+                ),
+                "pv_module_count": g.pv_module_count,
             }
             for g in config.panel_groups
         ]
     )
+
+
+def _equipment_selection_context(config: StationConfigVersion | None) -> dict:
+    """Contextul minim ca template-ul sa arate selectia curenta (catalog sau
+    custom) pentru invertor/baterie, fara sa retrimita formularul."""
+    if config is None:
+        return {
+            "inverter_model_id": None, "inverter_model_label": None, "inverter_custom_label": None,
+            "battery_model_id": None, "battery_model_label": None, "battery_custom_label": None,
+        }
+    return {
+        "inverter_model_id": str(config.inverter_model_id) if config.inverter_model_id else None,
+        "inverter_model_label": (
+            f"{config.inverter_model_snapshot['manufacturer']} {config.inverter_model_snapshot['model_name']}"
+            if config.inverter_model_snapshot else None
+        ),
+        "inverter_custom_label": config.inverter_custom_label,
+        "battery_model_id": str(config.battery_model_id) if config.battery_model_id else None,
+        "battery_model_label": (
+            f"{config.battery_model_snapshot['manufacturer']} {config.battery_model_snapshot['model_name']}"
+            if config.battery_model_snapshot else None
+        ),
+        "battery_custom_label": config.battery_custom_label,
+    }
+
+
+@router.get("/equipment/search")
+def equipment_search(
+    equipment_type: str,
+    q: str | None = None,
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+):
+    """Search/autocomplete pentru catalogul de echipamente (issue #42),
+    folosit din formularul de configurare a statiei. Orice utilizator
+    autentificat poate cauta -- catalogul e metadata comerciala, nu date
+    sensibile per-tenant."""
+    if equipment_type not in {t.value for t in EquipmentType}:
+        return []
+    models = equipment_catalog_service.search_equipment_models(db, equipment_type=equipment_type, query=q)
+    return [
+        {
+            "id": str(m.id),
+            "manufacturer": m.manufacturer.name,
+            "model_name": m.model_name,
+            "spec_revision": m.spec_revision,
+            "specs": m.specs,
+        }
+        for m in models
+    ]
+
+
+def _resolve_equipment_model(db: Session, model_id, expected_type: str) -> EquipmentModel:
+    model = equipment_catalog_service.get_equipment_model(db, model_id)
+    if model is None or model.equipment_type != expected_type:
+        raise ValueError("Modelul de echipament selectat nu a fost gasit.")
+    return model
 
 
 @router.get("/stations/{station_id}/config")
@@ -126,6 +196,7 @@ def station_config_form(
         "expected_version": config.version if config else 0,
         "can_edit": can_manage_station_config(role),
         "errors": request.query_params.getlist("error"),
+        **_equipment_selection_context(config),
         **build_nav_context(db, user, station.id),
     }
     return templates.TemplateResponse(request, "stations/config.html", context)
@@ -150,6 +221,10 @@ def station_config_submit(
     notes: str | None = Form(None),
     panel_groups_json: str = Form(...),
     expected_version: int = Form(...),
+    inverter_model_id: str | None = Form(None),
+    inverter_custom_label: str | None = Form(None),
+    battery_model_id: str | None = Form(None),
+    battery_custom_label: str | None = Form(None),
     db: Session = Depends(get_db),
     station_role: tuple = Depends(StationAccess(min_role="organization_admin")),
     user: User = Depends(get_current_user),
@@ -178,6 +253,10 @@ def station_config_submit(
         "notes": notes or None,
         "panel_groups": panel_groups_raw,
         "expected_version": expected_version,
+        "inverter_model_id": _none_if_blank(inverter_model_id),
+        "inverter_custom_label": _none_if_blank(inverter_custom_label),
+        "battery_model_id": _none_if_blank(battery_model_id),
+        "battery_custom_label": _none_if_blank(battery_custom_label),
     }
     if battery_charge_efficiency:
         raw["battery_charge_efficiency"] = battery_charge_efficiency
@@ -188,6 +267,28 @@ def station_config_submit(
         validated = StationConfigInput.model_validate(raw)
     except ValidationError as exc:
         return _config_error_redirect(station.id, _validation_errors(exc))
+
+    try:
+        inverter_model = (
+            _resolve_equipment_model(db, validated.inverter_model_id, EquipmentType.inverter.value)
+            if validated.inverter_model_id is not None
+            else None
+        )
+        battery_model = (
+            _resolve_equipment_model(db, validated.battery_model_id, EquipmentType.battery.value)
+            if validated.battery_model_id is not None
+            else None
+        )
+        pv_models = [
+            (
+                _resolve_equipment_model(db, group.pv_module_model_id, EquipmentType.pv_module.value)
+                if group.pv_module_model_id is not None
+                else None
+            )
+            for group in validated.panel_groups
+        ]
+    except ValueError as exc:
+        return _config_error_redirect(station.id, [str(exc)])
 
     # Concurenta optimista: daca o alta editare a fost publicata intre randarea
     # formularului si aceasta trimitere, respingem explicit in loc sa suprascriem
@@ -222,10 +323,18 @@ def station_config_submit(
         ev_battery_capacity_kwh=validated.ev_battery_capacity_kwh,
         ev_max_charge_power_kw=validated.ev_max_charge_power_kw,
         notes=validated.notes,
+        inverter_model_id=inverter_model.id if inverter_model else None,
+        inverter_model_spec_revision=inverter_model.spec_revision if inverter_model else None,
+        inverter_model_snapshot=equipment_catalog_service.build_snapshot(inverter_model) if inverter_model else None,
+        inverter_custom_label=validated.inverter_custom_label,
+        battery_model_id=battery_model.id if battery_model else None,
+        battery_model_spec_revision=battery_model.spec_revision if battery_model else None,
+        battery_model_snapshot=equipment_catalog_service.build_snapshot(battery_model) if battery_model else None,
+        battery_custom_label=validated.battery_custom_label,
     )
     db.add(config)
     db.flush()
-    for group in validated.panel_groups:
+    for group, pv_model in zip(validated.panel_groups, pv_models, strict=True):
         db.add(
             PanelGroup(
                 station_id=station.id,
@@ -234,6 +343,11 @@ def station_config_submit(
                 power_kwp=group.power_kwp,
                 azimuth_degrees=group.azimuth_degrees,
                 tilt_degrees=group.tilt_degrees,
+                pv_module_model_id=pv_model.id if pv_model else None,
+                pv_module_model_spec_revision=pv_model.spec_revision if pv_model else None,
+                pv_module_model_snapshot=equipment_catalog_service.build_snapshot(pv_model) if pv_model else None,
+                pv_module_custom_label=group.pv_module_custom_label,
+                pv_module_count=group.pv_module_count,
             )
         )
     record_audit(

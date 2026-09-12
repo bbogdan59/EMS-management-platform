@@ -1143,6 +1143,69 @@ noi de mutatie cer CSRF.
   `server_default=true` acopera deja toate randurile existente, identic cu
   starea dinainte de acest issue.
 
+## Addendum: Catalog administrabil de invertoare/baterii/panouri (issue #42)
+
+**Ce exista.** `EquipmentManufacturer`/`EquipmentModel` (`app/models/equipment_catalog.py`)
+formeaza catalogul administrabil, gestionat exclusiv din backoffice
+(`/admin/catalog`, `platform_admin`). Fiecare model are `equipment_type`
+(inverter/battery/pv_module), `specs` (JSON liber) si `source_note`
+**obligatoriu** la creare (`equipment_catalog_service.create_equipment_model`)
+-- catalogul nu accepta o intrare fara o sursa citata, exact cerinta
+issue-ului de a nu inventa specificatii. Search/autocomplete
+(`GET /equipment/search`, orice utilizator autentificat) exclude implicit
+modelele inactive.
+
+**Seed: deliberat gol.** Nu am incarcat NICIUN model Deye (sau alt
+producator) cu specificatii numerice presupuse -- issue-ul cere explicit fie
+o citare a fisei oficiale, fie un catalog minimal. Fara acces verificat la
+fise tehnice oficiale in acest mediu, catalogul livrat e gol la instalare;
+un administrator populeaza modelele reale prin `/admin/catalog`, fiecare cu
+`source_note` propriu.
+
+**Snapshot imutabil, nu pointer live.** `StationConfigVersion`/`PanelGroup`
+retin `*_model_id` + `*_model_spec_revision` + `*_model_snapshot` (JSON)
+capturate la momentul selectiei (`equipment_catalog_service.build_snapshot`).
+O editare ulterioara a specificatiilor unui model (`update_equipment_model_specs`,
+care creste `spec_revision`) NU modifica retroactiv configuratii deja
+publicate -- verificat explicit
+(`test_catalog_edit_does_not_change_already_published_snapshot`). Acelasi
+principiu de imutabilitate ca `StationConfigVersion` insusi (issue #8).
+
+**Dezactivare nedistructiva, fara hard-delete.** `is_active=False` (pe
+producator sau model) scoate intrarea din search-ul folosit la configurari
+NOI, dar randul ramane in DB si orice configuratie care il refera prin
+snapshot continua sa functioneze identic -- verificat
+(`test_toggle_model_active_is_nondestructive`). Nu exista niciun flux de
+stergere fizica a unui model sau producator din catalog.
+
+**Fallback custom, fara a crea o intrare de catalog nevalidata.** Optiunea
+"modelul meu nu e in lista" NU creeaza un rand `EquipmentModel` cu date
+nevalidate -- salveaza doar o eticheta text (`*_custom_label`) direct pe
+configuratia statiei, langa campurile numerice deja existente (completate
+manual, ca inainte de acest issue). Un `model_id` de catalog si o eticheta
+custom in acelasi timp sunt respinse explicit la validare
+(`test_config_rejects_both_catalog_model_and_custom_label`) -- niciodata
+ambele tacit.
+
+**Catalogul comercial e distinct de compatibilitatea RS485.** A adauga
+"Deye SUN-10K-SG04LP3" in catalog NU activeaza automat vreun control fizic
+prin Modbus -- `InverterProfile`/`InverterDesired` (issue #17) raman un
+artefact separat, aprobat explicit de un `platform_admin`, complet
+neconectat la acest catalog comercial.
+
+**Ramas in afara scopului (deliberat, nu ascuns):**
+- Wizard-ul dedicat de configurare (issue #41, inca neimplementat) --
+  search-ul/catalogul e integrat in formularul existent
+  `/stations/{id}/config`, reutilizabil de un viitor wizard.
+- Import/export administrativ in masa al catalogului (CSV/JSON) -- backoffice-ul
+  actual e CRUD unu-cate-unu, suficient pentru un catalog pornit gol.
+- Deduplicare automata / sugestii de fuziune intre modele introduse manual
+  de mai multe ori cu variatii de nume -- `UniqueConstraint(manufacturer_id,
+  equipment_type, model_name)` previne doar duplicatele EXACTE.
+- Migrarea configuratiilor de statii EXISTENTE catre un model de catalog --
+  toate coloanele noi sunt nullable si opționale; statiile configurate
+  inainte de acest issue raman neschimbate (fara model de catalog asociat).
+
 ## Addendum: Actualizare live a dashboard-ului (issue #50)
 
 **Decizie de transport: SSE, nu WebSocket** -- vezi
