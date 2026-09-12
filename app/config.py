@@ -76,6 +76,7 @@ class Settings(BaseSettings):
     # reenrollment. Separat de device_claim_code_ttl_minutes (codul clasic,
     # generat de operator).
     device_enrollment_ttl_hours: int = 72
+    device_activation_attempts_per_hour: int = 10
 
     # --- OPCOM ---
     opcom_base_url: str = "https://www.opcom.ro/rapoarte-pzu-raportPIP-export-csv"

@@ -61,6 +61,13 @@ class Device(Entity):
     # device_service.enroll_device si docs/API.md). Unica per instalare
     # fizica; NU e un secret -- e doar cheia de corelare pentru operator.
     installation_uuid: Mapped[str | None] = mapped_column(String(64), unique=True, nullable=True)
+    # Public inventory identifier printed on the label. It is deliberately
+    # separate from both authentication secrets below.
+    serial_number: Mapped[str | None] = mapped_column(String(64), unique=True, index=True, nullable=True)
+    # SHA-256 of the high-entropy, sealed package Device Code. Cleared after
+    # the customer claims it, making the code one-use without retaining it.
+    activation_code_hash: Mapped[str | None] = mapped_column(String(128), unique=True, index=True, nullable=True)
+    activation_claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # Hash-ul secretului de provisioning generat/detinut de dispozitiv (nu de
     # server) -- dovada de posesie la fiecare reincercare idempotenta a
     # enrollment-ului, fara sa fie nevoie sa retransmitem un secret emis de noi.

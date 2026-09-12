@@ -9,11 +9,11 @@ from sqlalchemy import select
 from sqlalchemy.orm import sessionmaker
 
 from app.core.rate_limit import reset_key
-from app.core.security import utcnow, verify_password
+from app.core.security import hash_token, utcnow, verify_password
 from app.models.device import Device, DeviceCredential
 from app.models.enums import DeviceStatus
 from app.services import device_service
-from tests.factories import make_org, make_station, make_user
+from tests.factories import make_membership, make_org, make_station, make_user
 from tests.web_helpers import login
 
 
@@ -291,3 +291,105 @@ def test_http_pending_devices_admin_ui_requires_platform_admin(client, db):
     login(client, "notadmin1@test.local", "Password1234")
     resp = client.get("/admin/devices/pending", follow_redirects=False)
     assert resp.status_code in (302, 303, 403)
+
+
+def test_new_enrollment_stores_public_serial_and_only_activation_hash(db):
+    installation_uuid = _uuid()
+    code = "ACT-ABCDE-FGHIJ-KLMNO-PQRST-UVWXY-Z"
+    device_service.enroll_device(
+        db,
+        installation_uuid,
+        "provisioning-secret-label-000001",
+        {"platform": "raspberry-pi-4"},
+        serial_number="EMS-ABCD-EFGH-IJKL-MNOP",
+        activation_code=code,
+    )
+    db.commit()
+
+    device = db.scalar(select(Device).where(Device.installation_uuid == installation_uuid))
+    assert device.serial_number == "EMS-ABCD-EFGH-IJKL-MNOP"
+    assert device.activation_code_hash == hash_token(code)
+    assert code not in str(device.capabilities)
+
+
+def test_valid_device_proof_renews_expired_pending_enrollment(db):
+    installation_uuid = _uuid()
+    secret = "provisioning-secret-renew-000001"
+    kwargs = {
+        "serial_number": "EMS-RENE-WABC-DEFG-HIJK",
+        "activation_code": "ACT-RENEW-ABCDE-FGHIJ-KLMNO-P",
+    }
+    device_service.enroll_device(db, installation_uuid, secret, {}, **kwargs)
+    db.commit()
+    device = db.scalar(select(Device).where(Device.installation_uuid == installation_uuid))
+    device.enrollment_expires_at = utcnow() - timedelta(days=20)
+    db.commit()
+
+    result = device_service.enroll_device(db, installation_uuid, secret, {}, **kwargs)
+    db.commit()
+    assert result["status"] == "pending"
+    assert device.enrollment_expires_at > utcnow()
+
+
+def test_customer_admin_claims_sealed_device_code_without_receiving_device_secret(client, db):
+    reset_key("login_attempts:testclient")
+    org = make_org(db, "Customer Device Claim")
+    customer = make_user(db, email="customer-device@test.local", password="Password1234")
+    make_membership(db, customer, org, role="organization_admin")
+    station = make_station(db, org, customer, name="Customer Home")
+    code = "ACT-CUSTO-MERDE-VICEC-ODE12-3"
+    installation_uuid = _uuid()
+    device_service.enroll_device(
+        db, installation_uuid, "provisioning-secret-customer-01", {},
+        serial_number="EMS-CUST-OMER-0001", activation_code=code,
+    )
+    db.commit()
+
+    login(client, customer.email, "Password1234")
+    response = client.post(
+        f"/stations/{station.id}/devices/activate",
+        data={"csrf_token": client.cookies.get("ems_csrf"), "activation_code": code.lower()},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    assert response.headers["location"].endswith("?linked=1")
+    assert "credential" not in response.text.lower()
+
+    device = db.scalar(select(Device).where(Device.installation_uuid == installation_uuid))
+    assert device.station_id == station.id
+    assert device.status == DeviceStatus.active.value
+    assert device.activation_code_hash is None
+    assert device.activation_claimed_at is not None
+    assert device.pending_credential_secret is not None  # only the authenticated device can recover it
+
+
+def test_device_code_is_one_use_and_failure_does_not_enumerate_inventory(client, db):
+    reset_key("login_attempts:testclient")
+    org = make_org(db, "One Use Device Claim")
+    customer = make_user(db, email="one-use-device@test.local", password="Password1234")
+    make_membership(db, customer, org, role="organization_admin")
+    station = make_station(db, org, customer, name="One Use Home")
+    code = "ACT-ONEUS-EABCD-EFGHI-JKLMN-O"
+    device_service.enroll_device(
+        db, _uuid(), "provisioning-secret-one-use-01", {},
+        serial_number="EMS-ONEU-SE00-0001", activation_code=code,
+    )
+    db.commit()
+    login(client, customer.email, "Password1234")
+    csrf = client.cookies.get("ems_csrf")
+
+    first = client.post(
+        f"/stations/{station.id}/devices/activate",
+        data={"csrf_token": csrf, "activation_code": code}, follow_redirects=False,
+    )
+    second = client.post(
+        f"/stations/{station.id}/devices/activate",
+        data={"csrf_token": csrf, "activation_code": code}, follow_redirects=False,
+    )
+    unknown = client.post(
+        f"/stations/{station.id}/devices/activate",
+        data={"csrf_token": csrf, "activation_code": "ACT-NOTTH-ERE00-00000-00000-0"}, follow_redirects=False,
+    )
+    assert first.headers["location"].endswith("?linked=1")
+    assert second.headers["location"] == unknown.headers["location"]
+    assert second.headers["location"].endswith("?error=invalid_device_code")
