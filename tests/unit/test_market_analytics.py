@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 
 import pytest
 
@@ -346,3 +346,34 @@ def test_market_status_uses_bucharest_timezone_near_midnight(db):
         status = market.get_market_status(db)
     assert status["today"]["date"] == "2026-09-11"
     assert status["today"]["status"] == "succeeded"
+
+
+def test_daily_timeline_aggregation_uses_bucharest_delivery_day_across_utc_midnight(db):
+    """A Bucharest delivery day spans two UTC dates. Daily aggregation must
+    use the explicit market delivery_date, not the DB session timezone."""
+    from sqlalchemy import select
+
+    from app.models.market import MarketPriceInterval
+
+    delivery_day = date(2026, 6, 1)  # UTC+3: starts on 31 May at 21:00 UTC
+    make_market_day(db, delivery_day, [100.0, 300.0])
+    rows = db.scalars(
+        select(MarketPriceInterval)
+        .where(MarketPriceInterval.delivery_date == delivery_day)
+        .order_by(MarketPriceInterval.interval_index)
+    ).all()
+    rows[0].interval_start = datetime.combine(delivery_day, time.min, tzinfo=UTC) - timedelta(hours=3)
+    rows[0].interval_end = rows[0].interval_start + timedelta(hours=1)
+    rows[1].interval_start = datetime.combine(delivery_day, time.min, tzinfo=UTC) + timedelta(hours=20)
+    rows[1].interval_end = rows[1].interval_start + timedelta(hours=1)
+    db.flush()
+
+    series = market.get_timeline_split(
+        db,
+        datetime(2026, 1, 1, tzinfo=UTC),
+        datetime(2026, 9, 1, tzinfo=UTC),
+    )
+
+    assert len(series) == 1
+    assert series[0]["price_lei_mwh"] == 200.0
+    assert datetime.fromisoformat(series[0]["t"]).astimezone(BUCHAREST).date() == delivery_day
