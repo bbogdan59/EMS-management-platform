@@ -29,6 +29,7 @@ from app.services import (
     auth_service,
     dashboard_service,
     device_service,
+    market_retention_service,
     membership_service,
     organization_service,
     station_service,
@@ -424,6 +425,7 @@ def operations(request: Request, db: Session = Depends(get_db), user: User = Dep
         "commands": commands,
         "stations": stations,
         "admin_jobs": admin_jobs,
+        "market_retention_default_max": market_retention_service.DEFAULT_MAX_ACTIVE_REVISIONS,
         **build_nav_context(db, user),
     }
     return templates.TemplateResponse(request, "admin/operations.html", context)
@@ -517,6 +519,58 @@ def trigger_opcom_import(
     db.commit()
 
     if not _enqueue_admin_job(db, job, admin_opcom_import_job_task, user):
+        return RedirectResponse("/admin/operations?error=enqueue_failed", status_code=303)
+
+    return RedirectResponse("/admin/operations", status_code=303)
+
+
+@router.post("/operations/market-retention", dependencies=[Depends(verify_csrf)])
+def trigger_market_retention(
+    request: Request,
+    dry_run: str | None = Form(None),
+    max_active_revisions: int = Form(market_retention_service.DEFAULT_MAX_ACTIVE_REVISIONS),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Declanseaza manual, pe fundal, arhivarea reviziilor OPCOM excedentare
+    (issue #51) -- STRICT NEDISTRUCTIVA, vezi `market_retention_service`.
+    `dry_run` (implicit bifat in template) arata ce s-ar arhiva fara sa
+    scrie nimic -- utilizatorul trebuie sa debifeze explicit pentru o
+    rulare reala."""
+    from app.workers.tasks import admin_market_retention_job_task
+
+    if max_active_revisions < 1:
+        return RedirectResponse("/admin/operations?error=invalid_max_active_revisions", status_code=303)
+
+    _lock_admin_job_target(db, "market-retention")
+
+    existing = db.scalar(
+        select(AdminJob).where(
+            AdminJob.job_type == AdminJobType.market_retention.value,
+            AdminJob.status.in_(_ACTIVE_ADMIN_JOB_STATUSES),
+        )
+    )
+    if existing is not None:
+        return RedirectResponse("/admin/operations?error=market_retention_in_progress", status_code=303)
+
+    is_dry_run = bool(dry_run)
+    job = AdminJob(
+        job_type=AdminJobType.market_retention.value,
+        status=AdminJobStatus.queued.value,
+        params={"dry_run": is_dry_run, "max_active_revisions": max_active_revisions},
+        target_label=("Retentie OPCOM (dry-run)" if is_dry_run else "Retentie OPCOM"),
+        triggered_by_user_id=user.id,
+    )
+    db.add(job)
+    db.flush()
+    record_audit(
+        db, action="market_retention_triggered", resource_type="admin_job", resource_id=str(job.id),
+        actor_user_id=user.id, actor_label=user.email,
+        metadata={"dry_run": is_dry_run, "max_active_revisions": max_active_revisions},
+    )
+    db.commit()
+
+    if not _enqueue_admin_job(db, job, admin_market_retention_job_task, user):
         return RedirectResponse("/admin/operations?error=enqueue_failed", status_code=303)
 
     return RedirectResponse("/admin/operations", status_code=303)

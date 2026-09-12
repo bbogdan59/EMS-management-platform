@@ -15,6 +15,10 @@
   <div class="badge-error rounded p-2">Data de livrare nu este valida.</div>
   {% elif request.query_params.get("error") == "enqueue_failed" %}
   <div class="badge-error rounded p-2">Jobul nu a putut fi trimis catre worker. Puteti incerca din nou.</div>
+  {% elif request.query_params.get("error") == "market_retention_in_progress" %}
+  <div class="badge-warn rounded p-2">Exista deja o retentie de preturi OPCOM in curs.</div>
+  {% elif request.query_params.get("error") == "invalid_max_active_revisions" %}
+  <div class="badge-error rounded p-2">Numarul maxim de revizii active trebuie sa fie cel putin 1.</div>
   {% endif %}
 
   <div class="card">
@@ -37,6 +41,10 @@
               <a class="text-brand-700 hover:underline dark:text-brand-300" href="/admin/operations#import-runs">import #{{ j.result_resource_id }}</a>
             {% elif j.result_resource_type == "optimization_run" and j.result_resource_id %}
               <a class="text-brand-700 hover:underline dark:text-brand-300" href="/admin/operations#optimization-runs">optimizare #{{ j.result_resource_id }}</a>
+            {% elif j.job_type == "market_retention" and j.params.result %}
+              <a class="text-brand-700 hover:underline dark:text-brand-300" href="/admin/operations#market-retention">
+                {{ j.params.result.archived_count }} arhivate{% if j.params.result.dry_run %} (simulare){% endif %}
+              </a>
             {% elif j.error_message %}
               <span class="text-red-600" title="{{ j.error_message }}">{{ j.error_message | truncate(60) }}</span>
             {% else %}-{% endif %}
@@ -73,12 +81,33 @@
               {% elif r.status == "unpublished" %}<span class="badge-warn">nepublicat</span>
               {% else %}<span class="badge-error">{{ r.status }}</span>{% endif %}
               {% if r.is_synthetic_fixture %}<span class="badge-warn">sintetic</span>{% endif %}
+              {% if r.is_archived %}<span class="badge-muted" title="{{ r.archived_reason }}">arhivat</span>{% endif %}
             </td>
             <td>{{ r.interval_count or "-" }}</td>
           </tr>
           {% endfor %}
         </tbody>
       </table>
+    </div>
+
+    <div class="card" id="market-retention">
+      <h2 class="mb-2 font-medium">Retentie revizii preturi OPCOM</h2>
+      <p class="mb-2 text-xs text-gray-500 dark:text-gray-400">
+        Pastreaza cel mult N revizii REUSITE active per zi de livrare (implicit {{ market_retention_default_max }});
+        cele mai vechi devin arhivate (nedistructiv -- randurile raman intacte, doar excluse din vederile implicite).
+        "Simulare" (dry-run) arata ce s-ar arhiva fara sa scrie nimic.
+      </p>
+      <form method="post" action="/admin/operations/market-retention" class="flex flex-wrap items-end gap-3">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}" />
+        <div>
+          <label class="label">Max. revizii active/zi</label>
+          <input class="input w-24" type="number" min="1" name="max_active_revisions" value="{{ market_retention_default_max }}" required />
+        </div>
+        <label class="flex items-center gap-2 text-sm">
+          <input type="checkbox" name="dry_run" value="true" checked /> Simulare (dry-run)
+        </label>
+        <button type="submit" class="btn-primary">Ruleaza</button>
+      </form>
     </div>
 
     <div class="card" id="optimization-runs">
