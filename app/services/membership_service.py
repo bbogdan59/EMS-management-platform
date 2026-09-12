@@ -44,6 +44,21 @@ def count_active_admins(db: Session, organization_id: uuid.UUID, *, exclude_memb
     return len(db.scalars(stmt).all())
 
 
+def _lock_organization_memberships(db: Session, organization_id: uuid.UUID) -> None:
+    """Serialize membership mutations for one organization.
+
+    The last-admin check is otherwise vulnerable to a write-skew race: two
+    administrators can be demoted concurrently after both observe the other
+    one as active. PostgreSQL row locks are held until the caller commits.
+    """
+    db.execute(
+        select(Membership.id)
+        .where(Membership.organization_id == organization_id)
+        .order_by(Membership.id)
+        .with_for_update()
+    ).all()
+
+
 def _assert_not_last_admin(db: Session, membership: Membership) -> None:
     """Interzice orice tranzitie (demotare, dezactivare, eliminare) care ar
     lasa organizatia FARA niciun `organization_admin` activ -- fara asta,
@@ -99,6 +114,8 @@ def list_pending_invitations(db: Session, organization: Organization) -> list[In
 def change_role(db: Session, organization: Organization, membership: Membership, new_role: str, actor: User) -> Membership:
     if membership.organization_id != organization.id:
         raise MembershipError("Membership nu apartine acestei organizatii.")
+    _lock_organization_memberships(db, organization.id)
+    db.refresh(membership)
     if new_role not in ORGANIZATION_ROLES:
         raise MembershipError(f"Rol invalid: '{new_role}'.")
     if membership.role == new_role:
@@ -128,6 +145,8 @@ def change_role(db: Session, organization: Organization, membership: Membership,
 def deactivate_member(db: Session, organization: Organization, membership: Membership, actor: User) -> Membership:
     if membership.organization_id != organization.id:
         raise MembershipError("Membership nu apartine acestei organizatii.")
+    _lock_organization_memberships(db, organization.id)
+    db.refresh(membership)
     if not membership.is_active:
         return membership
     _assert_not_last_admin(db, membership)
@@ -148,6 +167,8 @@ def deactivate_member(db: Session, organization: Organization, membership: Membe
 def reactivate_member(db: Session, organization: Organization, membership: Membership, actor: User) -> Membership:
     if membership.organization_id != organization.id:
         raise MembershipError("Membership nu apartine acestei organizatii.")
+    _lock_organization_memberships(db, organization.id)
+    db.refresh(membership)
     if membership.is_active:
         return membership
 
@@ -169,6 +190,8 @@ def remove_member(db: Session, organization: Organization, membership: Membershi
     (foloseste `deactivate_member` pentru asta, reversibil si cu istoric)."""
     if membership.organization_id != organization.id:
         raise MembershipError("Membership nu apartine acestei organizatii.")
+    _lock_organization_memberships(db, organization.id)
+    db.refresh(membership)
     _assert_not_last_admin(db, membership)
 
     user_id = membership.user_id
