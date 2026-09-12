@@ -33,7 +33,7 @@ from sqlalchemy.orm import Session
 
 from app.core.security import utcnow
 from app.models.enums import ImportRunStatus
-from app.models.market import ImportRun
+from app.models.market import ImportRun, MarketPriceInterval
 
 logger = structlog.get_logger(__name__)
 
@@ -146,14 +146,22 @@ def _archive_excess_for_date(
     ).all()
 
     # Primele `max_active_revisions` (cele mai recente) raman active; restul
-    # sunt candidate la arhivare. Revizia curenta e mereu in acest cap (e
-    # mereu cea mai recenta reusita) -- verificarea explicita de mai jos e o
-    # plasa de siguranta suplimentara, nu singura protectie.
+    # sunt candidate la arhivare. Resolve current revisions in one query:
+    # loading run.intervals here would otherwise issue one query and hydrate
+    # up to 100 price rows for every old revision.
+    current_run_ids = set(
+        db.scalars(
+            select(MarketPriceInterval.import_run_id).where(
+                MarketPriceInterval.source == source,
+                MarketPriceInterval.delivery_date == delivery_date,
+                MarketPriceInterval.is_current.is_(True),
+            )
+        ).all()
+    )
     to_archive = runs[max_active_revisions:]
     now = utcnow()
     for run in to_archive:
-        is_current_revision = any(interval.is_current for interval in run.intervals)
-        if is_current_revision:
+        if run.id in current_run_ids:
             continue
         result.archived.append(
             ArchivedRevision(import_run_id=str(run.id), delivery_date=run.delivery_date.isoformat(), revision=run.revision)
