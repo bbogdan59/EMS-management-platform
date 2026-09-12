@@ -11,7 +11,7 @@ recenta), documentata explicit ca atare in UI. Vezi docstring-ul functiei.
 """
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import func, select
@@ -205,7 +205,18 @@ def _get_timeline_aggregated(
     `_get_timeline_daily` -- vezi `get_timeline_split` pentru pragurile care
     aleg intre ele."""
     now = utcnow()
-    bucket = func.date_trunc(trunc_unit, MarketPriceInterval.interval_start)
+    if trunc_unit == "day":
+        # OPCOM delivery days follow the Europe/Bucharest market calendar.
+        # Grouping a timestamptz with date_trunc("day") would depend on the
+        # PostgreSQL session timezone and can split one delivery day across
+        # two UTC dates. delivery_date is the canonical market-day key.
+        bucket = MarketPriceInterval.delivery_date
+    elif trunc_unit == "hour":
+        # Hourly buckets are absolute UTC intervals, made independent of the
+        # database session timezone (including DST transition days).
+        bucket = func.date_trunc("hour", func.timezone("UTC", MarketPriceInterval.interval_start))
+    else:
+        raise ValueError(f"Unsupported timeline aggregation unit: {trunc_unit}")
     stmt = (
         select(
             bucket.label("bucket_start"),
@@ -227,17 +238,25 @@ def _get_timeline_aggregated(
     if not include_synthetic:
         stmt = stmt.where(ImportRun.is_synthetic_fixture.is_(False))
     rows = db.execute(stmt).all()
-    return [
-        {
-            "t": r.bucket_start.isoformat(),
-            "price_lei_mwh": float(r.avg_mwh),
-            "price_lei_kwh": float(r.avg_kwh),
-            "is_negative": bool(r.has_negative),
-            "is_future": r.bucket_start > now,
-            "is_synthetic": bool(r.has_synthetic),
-        }
-        for r in rows
-    ]
+    result = []
+    for row in rows:
+        if isinstance(row.bucket_start, datetime):
+            bucket_start = row.bucket_start
+            if bucket_start.tzinfo is None:
+                bucket_start = bucket_start.replace(tzinfo=UTC)
+        else:
+            bucket_start = datetime.combine(row.bucket_start, time.min, tzinfo=BUCHAREST).astimezone(UTC)
+        result.append(
+            {
+                "t": bucket_start.isoformat(),
+                "price_lei_mwh": float(row.avg_mwh),
+                "price_lei_kwh": float(row.avg_kwh),
+                "is_negative": bool(row.has_negative),
+                "is_future": bucket_start > now,
+                "is_synthetic": bool(row.has_synthetic),
+            }
+        )
+    return result
 
 
 def _get_timeline_hourly(
