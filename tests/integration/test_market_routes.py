@@ -50,6 +50,29 @@ def test_market_data_endpoints_return_json(client, db):
     assert "method" in forecast.json()
 
 
+def test_market_data_timeline_stays_bounded_for_large_windows(client, db):
+    """Issue #33: cererea `/market/data/timeline` pentru un interval mare
+    (ex. 365 zile) nu trebuie sa returneze rezolutia bruta de import (ar
+    insemna zeci de mii de puncte la 15 minute) -- raspunsul ramane in
+    ordinul sutelor de puncte, gratie agregarii server-side adaptive."""
+    reset_key("login_attempts:testclient")
+    make_user(db, email="market-timeline@test.local", password="Password1234")
+    from datetime import timedelta
+
+    from app.core.security import utcnow
+
+    today = utcnow().date()
+    for offset in range(40):
+        make_market_day(db, today - timedelta(days=offset + 3), [100.0] * 96)  # 15 min/rand
+    db.commit()
+
+    login(client, "market-timeline@test.local", "Password1234")
+    resp = client.get("/market/data/timeline?days=365")
+    assert resp.status_code == 200
+    points = resp.json()
+    assert 0 < len(points) <= 366
+
+
 def test_market_export_csv(client, db):
     reset_key("login_attempts:testclient")
     make_user(db, email="market3@test.local", password="Password1234")

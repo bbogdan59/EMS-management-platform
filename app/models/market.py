@@ -44,6 +44,16 @@ class ImportRun(Entity):
     error_message: Mapped[str | None] = mapped_column(String(2000), nullable=True)
     triggered_by_user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"), nullable=True)
 
+    # Arhivare NEDISTRUCTIVA (issue #51): peste `market_retention_service.
+    # DEFAULT_MAX_ACTIVE_REVISIONS` revizii REUSITE pastrate "active" per zi de
+    # livrare, cele mai vechi sunt marcate arhivate -- randul (si toate
+    # `MarketPriceInterval` legate de el) raman intacte, doar excluse din
+    # vederile "hot"/implicite. Nicio stergere definitiva automata; aceea
+    # ramane un pas manual, in afara acestui cod (necesita aprobare legal/ops).
+    is_archived: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    archived_reason: Mapped[str | None] = mapped_column(String(500), nullable=True)
+
     __table_args__ = (
         UniqueConstraint("source", "delivery_date", "revision", name="uq_import_run_revision"),
     )

@@ -11,13 +11,14 @@ recenta), documentata explicit ca atare in UI. Vezi docstring-ul functiei.
 """
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core.security import utcnow
+from app.core.units import KWH_PER_MWH
 from app.models.market import ImportRun, MarketPriceInterval
 
 SOURCE = "opcom_pzu"
@@ -25,10 +26,13 @@ TREND_RATIO_MIN = 0.5
 TREND_RATIO_MAX = 2.0
 RECENT_WINDOW_DAYS = 30
 BUCHAREST = ZoneInfo("Europe/Bucharest")
-# Peste acest prag, `get_timeline_split` agrega pe ora in loc sa returneze
-# rezolutia bruta a randurilor -- un an intreg la 15 minute ar insemna
-# ~35.000 de puncte intr-un singur grafic altfel.
+# Peste TIMELINE_HOURLY_THRESHOLD_DAYS, `get_timeline_split` agrega pe ora in
+# loc sa returneze rezolutia bruta a randurilor -- un an intreg la 15 minute
+# ar insemna ~35.000 de puncte intr-un singur grafic altfel. Peste
+# TIMELINE_DAILY_THRESHOLD_DAYS, agrega pe ZI -- chiar si agregarea orara ar
+# produce mii de puncte pentru o fereastra de un an (issue #33).
 TIMELINE_HOURLY_THRESHOLD_DAYS = 10
+TIMELINE_DAILY_THRESHOLD_DAYS = 60
 
 
 def _today_local() -> date:
@@ -92,7 +96,7 @@ def get_daily_averages(
                 "day": d.day,
                 "day_of_year": d.timetuple().tm_yday,
                 "avg_price_lei_mwh": float(avg_mwh),
-                "avg_price_lei_kwh": float(avg_mwh) / 1000.0,
+                "avg_price_lei_kwh": float(avg_mwh) / float(KWH_PER_MWH),
                 "min_price_lei_mwh": float(min_mwh),
                 "max_price_lei_mwh": float(max_mwh),
                 "sample_count": n,
@@ -141,17 +145,24 @@ def get_timeline_split(
     'maine') cu linie punctata, iar restul (trecut/realizat) cu linie
     continua.
 
-    Pentru o fereastra <= `TIMELINE_HOURLY_THRESHOLD_DAYS` zile, returneaza
-    rezolutia BRUTA a randurilor stocate (15/30/60 minute, dupa cum a fost
-    publicata fiecare zi -- vezi `opcom_service.parse_csv`), neschimbat fata
-    de comportamentul de dinainte. Pentru o fereastra mai mare, agrega pe ORA
-    (medie), ca numarul de puncte trimise catre grafic sa ramana rezonabil
-    indiferent cat de lung e intervalul cerut (ex. un an intreg de istoric).
+    Rezolutia raspunsului se adapteaza la marimea ferestrei cerute, ca
+    numarul de puncte trimise catre grafic sa ramana rezonabil indiferent cat
+    de lung e intervalul (issue #33): fereastra <= `TIMELINE_HOURLY_THRESHOLD_DAYS`
+    zile primeste rezolutia BRUTA a randurilor stocate (15/30/60 minute, dupa
+    cum a fost publicata fiecare zi -- vezi `opcom_service.parse_csv`).
+    Fereastra intre acest prag si `TIMELINE_DAILY_THRESHOLD_DAYS` zile (asta
+    include fereastra implicita de 30 de zile din UI, neschimbata) e agregata
+    pe ORA (medie). Peste
+    `TIMELINE_DAILY_THRESHOLD_DAYS` zile (ex. un an intreg de istoric),
+    agregarea trece pe ZI, ca numarul de puncte sa ramana in sute, nu mii.
 
     Implicit EXCLUDE intervalele provenite din fixture-uri sintetice, la fel
     ca `get_daily_averages` (vezi acolo motivul); fiecare punct ramas
     marcheaza `is_synthetic=False` explicit pentru claritate in consumatori."""
-    if end - start > timedelta(days=TIMELINE_HOURLY_THRESHOLD_DAYS):
+    window = end - start
+    if window > timedelta(days=TIMELINE_DAILY_THRESHOLD_DAYS):
+        return _get_timeline_daily(db, start, end, source, include_synthetic)
+    if window > timedelta(days=TIMELINE_HOURLY_THRESHOLD_DAYS):
         return _get_timeline_hourly(db, start, end, source, include_synthetic)
     return _get_timeline_raw(db, start, end, source, include_synthetic)
 
@@ -187,11 +198,26 @@ def _get_timeline_raw(
     ]
 
 
-def _get_timeline_hourly(
-    db: Session, start: datetime, end: datetime, source: str, include_synthetic: bool
+def _get_timeline_aggregated(
+    db: Session, start: datetime, end: datetime, source: str, include_synthetic: bool, trunc_unit: str
 ) -> list[dict]:
+    """Agregare pe bucket-uri de `trunc_unit` ('hour' sau 'day'), o singura
+    interogare (AVG/BOOL_OR), impartita intre `_get_timeline_hourly` si
+    `_get_timeline_daily` -- vezi `get_timeline_split` pentru pragurile care
+    aleg intre ele."""
     now = utcnow()
-    bucket = func.date_trunc("hour", MarketPriceInterval.interval_start)
+    if trunc_unit == "day":
+        # OPCOM delivery days follow the Europe/Bucharest market calendar.
+        # Grouping a timestamptz with date_trunc("day") would depend on the
+        # PostgreSQL session timezone and can split one delivery day across
+        # two UTC dates. delivery_date is the canonical market-day key.
+        bucket = MarketPriceInterval.delivery_date
+    elif trunc_unit == "hour":
+        # Hourly buckets are absolute UTC intervals, made independent of the
+        # database session timezone (including DST transition days).
+        bucket = func.date_trunc("hour", func.timezone("UTC", MarketPriceInterval.interval_start))
+    else:
+        raise ValueError(f"Unsupported timeline aggregation unit: {trunc_unit}")
     stmt = (
         select(
             bucket.label("bucket_start"),
@@ -213,17 +239,37 @@ def _get_timeline_hourly(
     if not include_synthetic:
         stmt = stmt.where(ImportRun.is_synthetic_fixture.is_(False))
     rows = db.execute(stmt).all()
-    return [
-        {
-            "t": r.bucket_start.isoformat(),
-            "price_lei_mwh": float(r.avg_mwh),
-            "price_lei_kwh": float(r.avg_kwh),
-            "is_negative": bool(r.has_negative),
-            "is_future": r.bucket_start > now,
-            "is_synthetic": bool(r.has_synthetic),
-        }
-        for r in rows
-    ]
+    result = []
+    for row in rows:
+        if isinstance(row.bucket_start, datetime):
+            bucket_start = row.bucket_start
+            if bucket_start.tzinfo is None:
+                bucket_start = bucket_start.replace(tzinfo=UTC)
+        else:
+            bucket_start = datetime.combine(row.bucket_start, time.min, tzinfo=BUCHAREST).astimezone(UTC)
+        result.append(
+            {
+                "t": bucket_start.isoformat(),
+                "price_lei_mwh": float(row.avg_mwh),
+                "price_lei_kwh": float(row.avg_kwh),
+                "is_negative": bool(row.has_negative),
+                "is_future": bucket_start > now,
+                "is_synthetic": bool(row.has_synthetic),
+            }
+        )
+    return result
+
+
+def _get_timeline_hourly(
+    db: Session, start: datetime, end: datetime, source: str, include_synthetic: bool
+) -> list[dict]:
+    return _get_timeline_aggregated(db, start, end, source, include_synthetic, "hour")
+
+
+def _get_timeline_daily(
+    db: Session, start: datetime, end: datetime, source: str, include_synthetic: bool
+) -> list[dict]:
+    return _get_timeline_aggregated(db, start, end, source, include_synthetic, "day")
 
 
 def get_forecast_to_year_end(db: Session, target_year: int | None = None, source: str = SOURCE) -> dict:
@@ -303,7 +349,7 @@ def get_forecast_to_year_end(db: Session, target_year: int | None = None, source
             predicted = flat_value
 
         if predicted is not None:
-            points.append({"date": d.isoformat(), "predicted_price_lei_mwh": round(predicted, 2), "predicted_price_lei_kwh": round(predicted / 1000.0, 5)})
+            points.append({"date": d.isoformat(), "predicted_price_lei_mwh": round(predicted, 2), "predicted_price_lei_kwh": round(predicted / float(KWH_PER_MWH), 5)})
         d += timedelta(days=1)
 
     return {

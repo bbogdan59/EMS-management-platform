@@ -14,23 +14,24 @@ import uuid
 from datetime import date, timedelta
 from decimal import Decimal
 
-from sqlalchemy import delete
+from sqlalchemy import delete, select
 from sqlalchemy.orm import sessionmaker
 
 from app.core.rate_limit import get_redis
 from app.core.security import utcnow
 from app.models.admin_job import AdminJob
 from app.models.enums import AdminJobStatus, AdminJobType
-from app.models.market import ImportRun
+from app.models.market import ImportRun, MarketPriceInterval
 from app.models.optimization import OptimizationRun
 from app.models.tariff import Tariff, TariffVersion
 from app.services import opcom_service, optimization_service
 from app.workers.tasks import (
     _SAFE_JOB_ERROR,
+    admin_market_retention_job_task,
     admin_opcom_import_job_task,
     admin_optimize_station_job_task,
 )
-from tests.factories import make_org, make_station, make_user
+from tests.factories import make_market_day, make_org, make_station, make_user
 
 
 def _session_factory(engine):
@@ -333,3 +334,79 @@ def test_admin_optimize_station_job_task_failure_sets_safe_error(engine, monkeyp
             verify.close()
     finally:
         _cleanup(engine, admin_job_ids=[job_id], org_id=org_id, user_id=user_id)
+
+
+def test_admin_market_retention_job_task_archives_excess_revisions(engine):
+    """Issue #51: taskul admin ruleaza `enforce_revision_retention` printr-o
+    sesiune reala (`session_scope()`), diferita de sesiunea de setup a
+    testului -- deci setup-ul trebuie comis real (`engine`), la fel ca
+    celelalte teste din acest fisier."""
+    Session = _session_factory(engine)
+    delivery_date = date.today() - timedelta(days=10)
+
+    setup = Session()
+    try:
+        user = make_user(setup, email=f"admjob-retention-{uuid.uuid4().hex[:8]}@test.local", is_platform_admin=True)
+        setup.commit()
+        user_id = user.id
+
+        run_ids = []
+        for revision in range(1, 8):
+            if run_ids:
+                for row in setup.scalars(
+                    select(MarketPriceInterval).where(
+                        MarketPriceInterval.delivery_date == delivery_date, MarketPriceInterval.revision == revision - 1
+                    )
+                ):
+                    row.is_current = False
+                    setup.add(row)
+            run = make_market_day(setup, delivery_date, [100.0 + revision], revision=revision)
+            run_ids.append(run.id)
+        setup.commit()
+    finally:
+        setup.close()
+
+    job_setup = Session()
+    try:
+        job = AdminJob(
+            job_type=AdminJobType.market_retention.value,
+            status=AdminJobStatus.queued.value,
+            params={"dry_run": False, "max_active_revisions": 5},
+            target_label="Retentie OPCOM",
+            triggered_by_user_id=user_id,
+        )
+        job_setup.add(job)
+        job_setup.commit()
+        job_id = job.id
+    finally:
+        job_setup.close()
+
+    try:
+        result = admin_market_retention_job_task(str(job_id))
+        assert result["status"] == "succeeded"
+        assert result["archived_count"] == 2
+
+        verify = Session()
+        try:
+            refreshed = verify.get(AdminJob, job_id)
+            assert refreshed.status == AdminJobStatus.succeeded.value
+            assert refreshed.params["result"]["archived_count"] == 2
+
+            archived_runs = verify.scalars(
+                select(ImportRun).where(ImportRun.id.in_(run_ids[:2]))
+            ).all()
+            assert all(r.is_archived for r in archived_runs)
+            still_active = verify.scalars(select(ImportRun).where(ImportRun.id.in_(run_ids[2:]))).all()
+            assert not any(r.is_archived for r in still_active)
+        finally:
+            verify.close()
+    finally:
+        cleanup = Session()
+        try:
+            cleanup.execute(delete(AdminJob).where(AdminJob.id == job_id))
+            cleanup.execute(delete(MarketPriceInterval).where(MarketPriceInterval.import_run_id.in_(run_ids)))
+            cleanup.execute(delete(ImportRun).where(ImportRun.id.in_(run_ids)))
+            cleanup.commit()
+        finally:
+            cleanup.close()
+        _cleanup(engine, user_id=user_id)

@@ -25,6 +25,7 @@ from app.models.station import Station
 from app.services import (
     aggregation_service,
     command_dispatch_service,
+    market_retention_service,
     opcom_service,
     optimization_service,
     pv_forecast_service,
@@ -340,6 +341,65 @@ def admin_optimize_station_job_task(job_id: str) -> dict:
         result_resource_id=run_id,
     )
     return {"status": "succeeded", "optimization_run_id": str(run_id)}
+
+
+@celery_app.task(name="app.workers.tasks.admin_market_retention_job_task")
+def admin_market_retention_job_task(job_id: str) -> dict:
+    """Executa, pe fundal, arhivarea reviziilor OPCOM excedentare declansata
+    manual din panoul admin (`AdminJob.job_type == 'market_retention'`) --
+    vezi docstring-ul `admin_opcom_import_job_task` pentru motivatie. Nu
+    inlocuieste `market_revision_retention_task` (rularea planificata
+    zilnica), care ramane neschimbata. STRICT NEDISTRUCTIV -- vezi
+    `market_retention_service` pentru politica."""
+    try:
+        job_uuid = uuid.UUID(job_id)
+    except ValueError:
+        logger.error("admin_job.invalid_id")
+        return {"status": "ignored"}
+    claimed = _claim_admin_job(job_uuid, AdminJobType.market_retention.value)
+    if claimed is None:
+        return {"status": "ignored"}
+
+    try:
+        params = claimed["params"]
+        dry_run = bool(params.get("dry_run", False))
+        max_active_revisions = int(params.get("max_active_revisions", market_retention_service.DEFAULT_MAX_ACTIVE_REVISIONS))
+        triggered_by_user_id = claimed["triggered_by_user_id"]
+        with session_scope() as db:
+            result = market_retention_service.enforce_revision_retention(
+                db, max_active_revisions=max_active_revisions, dry_run=dry_run
+            )
+            record_audit(
+                db, action="market_retention_triggered", resource_type="admin_job", resource_id=job_id,
+                actor_user_id=triggered_by_user_id, actor_label="admin_job",
+                metadata={"admin_job_id": job_id, **result.as_dict()},
+            )
+    except Exception as exc:
+        logger.error("admin_market_retention_job.failed", job_id=job_id, exception_type=type(exc).__name__)
+        _fail_admin_job(job_uuid, claimed, "market_retention_failed")
+        return {"status": "failed"}
+
+    _mark_admin_job(
+        job_uuid,
+        status=AdminJobStatus.succeeded.value,
+        finished_at=utcnow(),
+        params={**params, "result": result.as_dict()},
+    )
+    return {"status": "succeeded", **result.as_dict()}
+
+
+@celery_app.task(name="app.workers.tasks.market_revision_retention_task")
+def market_revision_retention_task() -> dict:
+    """Rulare planificata zilnica a retentiei de revizii OPCOM (issue #51) --
+    STRICT NEDISTRUCTIVA (vezi `market_retention_service`), separata de
+    `retention_task` de mai jos (acela FACE hard-delete pentru telemetrie/
+    audit dupa varsta, politica total diferita, nu trebuie confundate)."""
+    with _task_lock("market_revision_retention") as acquired:
+        if not acquired:
+            return {"status": "skipped_locked"}
+        with session_scope() as db:
+            result = market_retention_service.enforce_revision_retention(db, dry_run=False)
+    return {"status": "succeeded", **result.as_dict()}
 
 
 @celery_app.task(name="app.workers.tasks.retention_task")

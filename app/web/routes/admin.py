@@ -24,8 +24,16 @@ from app.models.market import ImportRun
 from app.models.optimization import OptimizationRun
 from app.models.organization import Membership, Organization
 from app.models.station import Station
-from app.models.user import User
-from app.services import dashboard_service, device_service, organization_service, station_service
+from app.models.user import Invitation, User
+from app.services import (
+    auth_service,
+    dashboard_service,
+    device_service,
+    market_retention_service,
+    membership_service,
+    organization_service,
+    station_service,
+)
 from app.web.context import build_nav_context
 from app.web.templating import templates
 
@@ -108,11 +116,8 @@ def organization_detail(
     if organization is None:
         return RedirectResponse("/admin/organizations", status_code=303)
 
-    memberships = db.scalars(select(Membership).where(Membership.organization_id == organization_id)).all()
-    member_rows = []
-    for m in memberships:
-        member = db.get(User, m.user_id)
-        member_rows.append({"email": member.email if member else "?", "role": m.role})
+    member_rows = membership_service.list_members(db, organization)
+    pending_invitations = membership_service.list_pending_invitations(db, organization)
 
     station_rows = []
     for station in db.scalars(select(Station).where(Station.organization_id == organization_id).order_by(Station.name)).all():
@@ -137,9 +142,12 @@ def organization_detail(
     context = {
         "organization": organization,
         "members": member_rows,
+        "pending_invitations": pending_invitations,
+        "organization_roles": sorted(auth_service.ORGANIZATION_ROLES),
         "station_rows": station_rows,
         "recent_audit": recent_audit,
         "errors": request.query_params.getlist("error"),
+        "now": utcnow(),
         **build_nav_context(db, user),
     }
     return templates.TemplateResponse(request, "admin/organization_detail.html", context)
@@ -238,6 +246,110 @@ def restore_organization(
     return RedirectResponse(f"/admin/organizations/{organization_id}", status_code=303)
 
 
+@router.post("/organizations/{organization_id}/members/{membership_id}/role", dependencies=[Depends(verify_csrf)])
+def admin_change_member_role(
+    organization_id: uuid.UUID,
+    membership_id: uuid.UUID,
+    role: str = Form(...),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Platform_admin poate atribui/revoca manageri direct din backoffice
+    (issue #23) -- fara impersonare: actioneaza explicit ca platform_admin,
+    auditat, nu "ca si cum ar fi" un membru al organizatiei."""
+    organization = db.get(Organization, organization_id)
+    membership = db.get(Membership, membership_id) if organization is not None else None
+    if organization is None or membership is None or membership.organization_id != organization_id:
+        return RedirectResponse("/admin/organizations", status_code=303)
+    try:
+        membership_service.change_role(db, organization, membership, role, user)
+    except membership_service.MembershipError as exc:
+        db.rollback()
+        return RedirectResponse(f"/admin/organizations/{organization_id}?error={exc}", status_code=303)
+    db.commit()
+    return RedirectResponse(f"/admin/organizations/{organization_id}", status_code=303)
+
+
+@router.post("/organizations/{organization_id}/members/{membership_id}/deactivate", dependencies=[Depends(verify_csrf)])
+def admin_deactivate_member(
+    organization_id: uuid.UUID,
+    membership_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    organization = db.get(Organization, organization_id)
+    membership = db.get(Membership, membership_id) if organization is not None else None
+    if organization is None or membership is None or membership.organization_id != organization_id:
+        return RedirectResponse("/admin/organizations", status_code=303)
+    try:
+        membership_service.deactivate_member(db, organization, membership, user)
+    except membership_service.MembershipError as exc:
+        db.rollback()
+        return RedirectResponse(f"/admin/organizations/{organization_id}?error={exc}", status_code=303)
+    db.commit()
+    return RedirectResponse(f"/admin/organizations/{organization_id}", status_code=303)
+
+
+@router.post("/organizations/{organization_id}/members/{membership_id}/reactivate", dependencies=[Depends(verify_csrf)])
+def admin_reactivate_member(
+    organization_id: uuid.UUID,
+    membership_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    organization = db.get(Organization, organization_id)
+    membership = db.get(Membership, membership_id) if organization is not None else None
+    if organization is None or membership is None or membership.organization_id != organization_id:
+        return RedirectResponse("/admin/organizations", status_code=303)
+    try:
+        membership_service.reactivate_member(db, organization, membership, user)
+    except membership_service.MembershipError as exc:
+        db.rollback()
+        return RedirectResponse(f"/admin/organizations/{organization_id}?error={exc}", status_code=303)
+    db.commit()
+    return RedirectResponse(f"/admin/organizations/{organization_id}", status_code=303)
+
+
+@router.post("/organizations/{organization_id}/members/{membership_id}/remove", dependencies=[Depends(verify_csrf)])
+def admin_remove_member(
+    organization_id: uuid.UUID,
+    membership_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    organization = db.get(Organization, organization_id)
+    membership = db.get(Membership, membership_id) if organization is not None else None
+    if organization is None or membership is None or membership.organization_id != organization_id:
+        return RedirectResponse("/admin/organizations", status_code=303)
+    try:
+        membership_service.remove_member(db, organization, membership, user)
+    except membership_service.MembershipError as exc:
+        db.rollback()
+        return RedirectResponse(f"/admin/organizations/{organization_id}?error={exc}", status_code=303)
+    db.commit()
+    return RedirectResponse(f"/admin/organizations/{organization_id}", status_code=303)
+
+
+@router.post("/organizations/{organization_id}/invitations/{invitation_id}/cancel", dependencies=[Depends(verify_csrf)])
+def admin_cancel_invitation(
+    organization_id: uuid.UUID,
+    invitation_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    organization = db.get(Organization, organization_id)
+    invitation = db.get(Invitation, invitation_id) if organization is not None else None
+    if organization is None or invitation is None or invitation.organization_id != organization_id:
+        return RedirectResponse("/admin/organizations", status_code=303)
+    try:
+        membership_service.cancel_invitation(db, organization, invitation, user)
+    except membership_service.MembershipError as exc:
+        db.rollback()
+        return RedirectResponse(f"/admin/organizations/{organization_id}?error={exc}", status_code=303)
+    db.commit()
+    return RedirectResponse(f"/admin/organizations/{organization_id}", status_code=303)
+
+
 @router.post("/stations/{station_id}/archive", dependencies=[Depends(verify_csrf)])
 def archive_station(
     station_id: uuid.UUID,
@@ -313,6 +425,7 @@ def operations(request: Request, db: Session = Depends(get_db), user: User = Dep
         "commands": commands,
         "stations": stations,
         "admin_jobs": admin_jobs,
+        "market_retention_default_max": market_retention_service.DEFAULT_MAX_ACTIVE_REVISIONS,
         **build_nav_context(db, user),
     }
     return templates.TemplateResponse(request, "admin/operations.html", context)
@@ -406,6 +519,58 @@ def trigger_opcom_import(
     db.commit()
 
     if not _enqueue_admin_job(db, job, admin_opcom_import_job_task, user):
+        return RedirectResponse("/admin/operations?error=enqueue_failed", status_code=303)
+
+    return RedirectResponse("/admin/operations", status_code=303)
+
+
+@router.post("/operations/market-retention", dependencies=[Depends(verify_csrf)])
+def trigger_market_retention(
+    request: Request,
+    dry_run: str | None = Form(None),
+    max_active_revisions: int = Form(market_retention_service.DEFAULT_MAX_ACTIVE_REVISIONS),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Declanseaza manual, pe fundal, arhivarea reviziilor OPCOM excedentare
+    (issue #51) -- STRICT NEDISTRUCTIVA, vezi `market_retention_service`.
+    `dry_run` (implicit bifat in template) arata ce s-ar arhiva fara sa
+    scrie nimic -- utilizatorul trebuie sa debifeze explicit pentru o
+    rulare reala."""
+    from app.workers.tasks import admin_market_retention_job_task
+
+    if max_active_revisions < 1:
+        return RedirectResponse("/admin/operations?error=invalid_max_active_revisions", status_code=303)
+
+    _lock_admin_job_target(db, "market-retention")
+
+    existing = db.scalar(
+        select(AdminJob).where(
+            AdminJob.job_type == AdminJobType.market_retention.value,
+            AdminJob.status.in_(_ACTIVE_ADMIN_JOB_STATUSES),
+        )
+    )
+    if existing is not None:
+        return RedirectResponse("/admin/operations?error=market_retention_in_progress", status_code=303)
+
+    is_dry_run = bool(dry_run)
+    job = AdminJob(
+        job_type=AdminJobType.market_retention.value,
+        status=AdminJobStatus.queued.value,
+        params={"dry_run": is_dry_run, "max_active_revisions": max_active_revisions},
+        target_label=("Retentie OPCOM (dry-run)" if is_dry_run else "Retentie OPCOM"),
+        triggered_by_user_id=user.id,
+    )
+    db.add(job)
+    db.flush()
+    record_audit(
+        db, action="market_retention_triggered", resource_type="admin_job", resource_id=str(job.id),
+        actor_user_id=user.id, actor_label=user.email,
+        metadata={"dry_run": is_dry_run, "max_active_revisions": max_active_revisions},
+    )
+    db.commit()
+
+    if not _enqueue_admin_job(db, job, admin_market_retention_job_task, user):
         return RedirectResponse("/admin/operations?error=enqueue_failed", status_code=303)
 
     return RedirectResponse("/admin/operations", status_code=303)

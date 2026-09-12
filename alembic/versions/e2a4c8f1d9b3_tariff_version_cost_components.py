@@ -1,7 +1,7 @@
 """tariff version cost components
 
 Revision ID: e2a4c8f1d9b3
-Revises: a3941290d3e9
+Revises: b7d3f6a9c1e4
 Create Date: 2026-09-12T05:00:00.000000
 
 Part of issue #46: componente de cost explicite pentru `TariffVersion`
@@ -19,7 +19,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "e2a4c8f1d9b3"
-down_revision = "a3941290d3e9"
+down_revision = "b7d3f6a9c1e4"
 branch_labels = None
 depends_on = None
 

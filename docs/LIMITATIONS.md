@@ -855,7 +855,7 @@ de UI mai ampla, neceruta explicit in criteriile testabile numeric ale
 acestui issue; jobul de reconciliere `observed_*` mentionat mai sus.
 
 
-## 18. Contracte tarifare: componente de cost distincte, TVA explicit, preview numeric (issue #46)
+## Addendum: Contracte tarifare: componente de cost distincte, TVA explicit, preview numeric (issue #46)
 
 **Formula unica, centralizata.** Inainte de acest PR, logica de "pret
 efectiv" era duplicata implicit intre `dashboard_service._effective_price`
@@ -934,3 +934,211 @@ preview afisat/motiv-indisponibil pe pagina.
   pret OPCOM de referinta (cel mai recent disponibil) inmultit cu consumul
   total, nu o simulare completa interval-cu-interval (aceea exista deja,
   separat, in `dashboard_service.get_estimated_savings`, issue #13).
+
+
+## Addendum: Retentie revizii OPCOM (max. active/zi) si contract explicit de unitati (issue #51)
+
+**O revizie de pret e strict un `ImportRun` cu `status=succeeded`.** Fiecare
+incercare de import (`opcom_service.import_opcom_day`) primeste un numar de
+revizie nou, INDIFERENT daca reuseste sau esueaza -- deci `revision` singur
+nu distinge o versiune reala de pret de o tentativa esuata/metadata de
+audit. Politica de retentie noua (`app/services/market_retention_service.py`)
+numara si arhiveaza EXCLUSIV revizii reusite; tentativele esuate sunt
+ignorate complet (nu conteaza la prag, nu sunt niciodata arhivate).
+
+**Arhivare STRICT NEDISTRUCTIVA, nu stergere.** Peste
+`DEFAULT_MAX_ACTIVE_REVISIONS` (5) revizii reusite pastrate active per zi de
+livrare, cele mai vechi capata `ImportRun.is_archived=True` +
+`archived_at`/`archived_reason` (migratia `b7d3f6a9c1e4`) -- randul si toate
+`MarketPriceInterval` asociate raman intacte in baza de date, interogabile
+oricand (verificat explicit intr-un test). Revizia CURENTA
+(`is_current=True`) nu e niciodata arhivata, indiferent de varsta -- e
+singura referinta "vie" folosita de restul platformei; asta satisface
+cerinta ca "revizia folosita de un optimization run/factura ramane
+referentiabila" fara sa fie nevoie de o legatura FK explicita (nu exista
+inca niciun cod care sa retina un FK catre o revizie specifica -- toate
+calculele istorice folosesc intervalele stocate direct, pe interval de
+timp, nu pe numar de revizie).
+
+**Stergerea DEFINITIVA (hard-delete) NU e implementata automat, deliberat**
+-- necesita aprobare legal/ops explicita, in afara acestui cod (identic cu
+decizia din issue #24 pentru organizatii/statii). Retentia planificata
+(Celery beat, zilnic la 03:30, `market_revision_retention_task`) si
+declansarea manuala din admin (`POST /admin/operations/market-retention`,
+prin fluxul `AdminJob` din issue #11) fac ACEEASI operatie idempotenta si
+concurrent-safe (lock advisory PostgreSQL, cheiat pe sursa) -- rulata de
+doua ori fara nimic nou intre timp nu arhiveaza nimic suplimentar. Ambele
+suporta `dry_run` (implicit BIFAT in formularul admin -- utilizatorul
+trebuie sa debifeze explicit pentru o rulare reala).
+
+**Contract explicit de unitati, centralizat.** Inainte existau 3 locuri
+separate care converteau intre lei/MWh si lei/kWh, fiecare cu propriul
+`*1000`/`/1000` scris ad-hoc (`opcom_service.parse_csv`,
+`market_analytics_service.get_daily_averages`/`get_forecast_to_year_end`).
+Noul modul `app/core/units.py` (`KWH_PER_MWH`, `mwh_to_kwh`, `kwh_to_mwh`)
+e singurul loc care stie factorul de conversie -- toate cele 3 locuri il
+folosesc acum, eliminand riscul unei conversii gresite scrise independent
+in viitor. API-ul canonic (JSON) continua sa expuna EXPLICIT ambele unitati
+pe fiecare punct (`price_lei_mwh`/`price_lei_kwh`, `avg_price_lei_mwh`/
+`avg_price_lei_kwh` etc.) -- deja asa inainte de acest issue, verificat, nu
+schimbat.
+
+**Spot OPCOM vs. cost efectiv contractual -- clarificat explicit in UI.**
+Dashboard-ul statiei (`dashboard/station.html`) avea doua notiuni de "pret"
+etichetate identic ("lei/kWh") dar DIFERITE: KPI-urile "Pret cumparare"/
+"Pret vanzare" (costul EFECTIV, din tariful contractual al statiei) si
+graficul "Preturi PZU" (pretul SPOT OPCOM brut). Etichetele KPI devin
+explicit "Cost efectiv import"/"Venit efectiv export" (cu tooltip catre
+pagina de tarife), iar graficul devine "Pret spot OPCOM PZU" cu o nota text
+ca nu e neaparat costul efectiv al clientului.
+
+**Teste:** `tests/unit/test_market_retention_service.py` (arhivare peste
+prag, niciodata revizia curenta, ignora tentative esuate, dry-run
+nemodificator, idempotenta la a doua rulare, nicio stergere de rand/interval,
+prag invalid respins, date/surse independente), `tests/unit/test_units.py`
+(conversie round-trip, semn negativ, zero), `tests/integration/test_admin_job_tasks.py`
+(taskul Celery real arhiveaza corect printr-o sesiune separata),
+`tests/integration/test_admin_operations_routes.py` (ruta HTTP, dry-run
+implicit, respinge prag invalid, protectie impotriva declansarii duble).
+
+**Ramas in afara scopului (deliberat, nu ascuns):** stergerea definitiva
+efectiva (vezi mai sus -- pas manual, cu aprobare, in afara acestui cod);
+o pagina UI dedicata de rasfoire a reviziilor arhivate (in prezent doar
+badge-ul "arhivat" in tabelul de import-uri din `/admin/operations`);
+o formula completa de contract tarifar (componente separate distributie/
+transport/taxe/TVA) -- ramane in scopul issue #46, coordonat separat.
+
+
+## 18. Grafic timeline preturi OPCOM: agregare adaptiva pe 3 niveluri + incarcare progresiva (issue #33)
+
+**Restul acestui issue era deja rezolvat de #35** (agregarea orara pentru
+ferestre >10 zile, aplicata automat ferestrei implicite de 30 de zile din
+UI). Ramasese totusi un gol fata de criteriile explicite ale issue-ului:
+agregarea orara singura tot produce mii de puncte pentru un an intreg
+(~8760), nu "sute" cum cere criteriul de acceptare, iar UI-ul nu avea nicio
+cale sa ceara o fereastra mai mare decat cele 30 de zile implicite fara sa
+rezulte, potential, intr-un singur fetch masiv.
+
+**Agregare pe 3 niveluri, nu 2.** `market_analytics_service.get_timeline_split`
+alege acum intre rezolutia bruta (<= `TIMELINE_HOURLY_THRESHOLD_DAYS` = 10
+zile), agregare orara (intre acel prag si `TIMELINE_DAILY_THRESHOLD_DAYS` =
+60 zile) si agregare ZILNICA (peste 60 de zile) -- extrase intr-un helper
+comun `_get_timeline_aggregated(..., trunc_unit)` ca sa nu se duplice
+interogarea SQL intre nivelul orar si cel zilnic. Pentru un an intreg de
+istoric la 15 minute, raspunsul ramane la cel mult ~366 puncte (un punct pe
+zi), nu ~35.000 (rezolutie bruta) si nici ~8760 (doar orara).
+
+**Incarcare progresiva in UI, nu un singur fetch cu tot istoricul.**
+`market.js` adauga un selector de interval (30/90/180/365 zile) langa
+graficul principal de preturi -- fiecare optiune declanseaza o cerere NOUA
+catre `/market/data/timeline?days=...` doar cand utilizatorul o cere
+explicit, nu un fetch initial care ar incerca sa incarce tot intervalul
+maxim posibil. Fereastra implicita la incarcarea paginii ramane 30 de zile,
+neschimbata (agregare orara, ca inainte de acest issue).
+
+**Teste:** `test_timeline_split_stays_hourly_at_exactly_the_daily_threshold`
+(pragul de 60 de zile e strict, ca cel de 10 zile), `test_timeline_split_
+aggregates_daily_for_year_long_windows` (an intreg la 15 minute -> <=366
+puncte), `test_timeline_split_daily_aggregation_averages_within_bucket`,
+`test_timeline_split_daily_aggregation_excludes_synthetic_by_default`, plus
+un test HTTP (`test_market_data_timeline_stays_bounded_for_large_windows`)
+care verifica direct raspunsul rutei `/market/data/timeline?days=365`.
+
+**Ramas neschimbat (in afara scopului):** celelalte grafice de pe pagina
+(yearly-overlay, monthly, forecast) -- deja agregate corespunzator (zi/luna),
+nu au fost atinse.
+
+
+## 19. Gestiune membri si RBAC delegat pentru managerul clientului (issue #23)
+
+**Matricea de capabilitati** e documentata explicit in `docs/RBAC_MATRIX.md`
+(nu doar in acest fisier) -- patru roluri ordonate strict (`viewer` <
+`operator` < `organization_admin` < `platform_admin`), verificate SERVER-SIDE
+la fiecare endpoint (`StationAccess`/`OrganizationAccess`, parametrizate cu
+`min_role`), niciodata doar prin ascunderea unui buton in UI. Un test nou
+(`tests/unit/test_rbac_matrix.py`) verifica direct, parametrizat pe toate
+cele 4 roluri, ca fiecare helper `can_*` din `app/core/rbac.py` respecta
+exact pragul documentat -- daca cineva schimba un prag fara sa actualizeze
+documentul (sau invers), testul pica.
+
+**Membership-urile pot fi acum administrate complet, nu doar create.**
+Inainte de acest issue exista doar crearea de invitatii si listarea
+(read-only) a membrilor -- lipseau schimbarea de rol, retrimiterea/anularea
+unei invitatii si dezactivarea/eliminarea unei membership. Serviciul nou
+`app/services/membership_service.py` adauga toate acestea, disponibile atat
+prin autoservire (`/organizations/{id}/members/...`, `organization_admin`+
+al organizatiei respective) cat si din backoffice
+(`/admin/organizations/{id}/members/...`, `platform_admin`, cross-tenant,
+FARA impersonare -- actioneaza explicit ca platform_admin, auditat cu
+`actor_label` = emailul lui, nu al membrului).
+
+**Dezactivare NEDISTRUCTIVA, distincta de eliminare.** `Membership` capata
+un camp `is_active` (migratia `f1c7a9e2b4d6`, default `true` pentru randurile
+existente -- comportament identic cu inainte). "Dezactiveaza" pastreaza
+randul (istoricul de rol/audit ramane atasabil, reversibil prin
+"Reactiveaza"); "Elimina" e hard-delete, pentru corectarea unei
+invitatii/membership create din greseala, nu mecanism normal de offboarding
+-- acelasi pattern folosit deja pentru `Station.is_active`/`Organization.status`
+in issue #24.
+
+**`is_active=False` echivaleaza PESTE TOT cu lipsa membership-ului.**
+`OrganizationAccess`, `StationAccess` (`app/api/deps.py`) si autorizarea
+fluxului SSE (`app/web/routes/sse.py::_authorized_summary`) filtreaza acum
+explicit `Membership.is_active.is_(True)` -- o membership dezactivata
+blocheaza acces identic cu una inexistenta. Fluxul SSE re-verifica autorizarea
+la FIECARE ciclu de polling (nu doar la deschiderea conexiunii), deci o
+dezactivare intrerupe un flux deja deschis in cel mult
+`POLL_INTERVAL_SECONDS`, nu doar la o reconectare -- verificat direct
+(`tests/unit/test_sse_authorization.py`) apeland `_authorized_summary`
+inainte/dupa dezactivare, fara sa porneasca un flux async real.
+
+**Schimbare sensibila = revocare imediata de sesiune, pe TOATE dispozitivele.**
+Schimbarea de rol, dezactivarea si eliminarea unei membership revoca acum
+toate sesiunile web ale utilizatorului afectat
+(`auth_service.revoke_all_sessions_for_user`) -- nu doar sesiunea curenta.
+Testat explicit cu doua sesiuni simultane ale aceluiasi membru ("doua
+taburi"): ambele devin invalide, nu doar cea care a facut ultima cerere
+(`test_two_active_sessions_of_the_same_member_are_both_invalidated_on_deactivation`).
+Aplicatia NU are (inca) un flux dedicat de reconfirmare cu parola/MFA pentru
+aceste actiuni -- revocarea de sesiune de mai sus e substitutul functional
+actual (utilizatorul trebuie sa se re-autentifice pentru orice acces
+ulterior), documentat explicit ca decizie deliberata, nu omisiune ascunsa
+(vezi si `docs/RBAC_MATRIX.md`).
+
+**Protectia ultimului `organization_admin` activ.** Nicio actiune
+(retrogradare, dezactivare, eliminare) nu poate lasa o organizatie fara
+niciun `organization_admin` activ (`membership_service._assert_not_last_admin`). Mutațiile sunt serializate
+cu row locks PostgreSQL pentru a preveni write-skew-ul în care doi admini
+se retrogradează simultan -- altfel ar bloca administrarea ulterioara a membrilor/statiilor pentru toata
+lumea, inclusiv pentru un nou `organization_admin` promovat manual (nimeni
+nu ar mai avea dreptul sa faca promovarea). "Transferul" rolului de manager
+se face in doi pasi (promoveaza intai un alt membru, apoi optional
+retrogradeaza-l pe cel vechi). Regresia concurenta ruleaza cu doua sesiuni
+PostgreSQL independente -- aceasta protectie garanteaza ca al doilea
+pas ramane mereu posibil dupa primul.
+
+**`platform_admin` nu poate fi acordat printr-o invitatie/schimbare de rol
+de organizatie.** `auth_service.ORGANIZATION_ROLES` (allowlist-ul validat
+server-side pentru invitatii SI pentru `membership_service.change_role`) nu
+contine niciodata `platform_admin` -- e exclusiv un flag global pe `User`,
+acordat doar prin bootstrap (o singura data) sau direct in baza de date.
+Verificat explicit (`test_platform_admin_cannot_be_granted_via_organization_role_allowlist`,
+`test_change_role_rejects_platform_admin_as_target`).
+
+**Teste negative cross-tenant si per rol.** O membership dintr-o alta
+organizatie nu poate fi modificata prin ID-ul ei (`_get_membership_in_org`
+verifica apartenenta la organizatia din URL inainte de orice mutatie) --
+verificat ca redirect generic cu eroare, nu 404/500 care ar confirma
+existenta ei catre un actor neautorizat. `operator`/`viewer` nu pot accesa
+niciuna dintre rutele noi de administrare a membrilor (403). Toate rutele
+noi de mutatie cer CSRF.
+
+**Ramas in afara scopului (deliberat, nu ascuns):**
+- MFA/reconfirmare cu parola pentru actiuni sensibile -- aplicatia nu are
+  MFA deloc inca (vezi mai sus).
+- UI dedicat pentru "istoricul" schimbarilor de rol ale unui membru dincolo
+  de jurnalul general de audit (`recent_audit`, deja afisat) -- niciun
+  criteriu testabil numeric al issue-ului nu a cerut un ecran separat.
+- Migrarea/backfill-ul datelor existente pentru `Membership.is_active` --
+  `server_default=true` acopera deja toate randurile existente, identic cu
+  starea dinainte de acest issue.

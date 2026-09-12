@@ -57,6 +57,13 @@ class Membership(Entity):
         ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True
     )
     role: Mapped[str] = mapped_column(String(32), nullable=False)
+    # Dezactivare NEDISTRUCTIVA (issue #23) -- pastreaza randul (istoric de
+    # rol/audit ramane atasabil), dar echivaleaza cu lipsa accesului peste
+    # tot unde e verificata apartenenta (`OrganizationAccess`/`StationAccess`,
+    # SSE). Eliminarea completa (hard delete, vezi `membership_service.remove_member`)
+    # ramane disponibila separat, pentru corectarea unei invitatii/membership
+    # gresite, nu ca mecanism normal de offboarding.
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
     user: Mapped[User] = relationship(back_populates="memberships")  # noqa: F821
     organization: Mapped[Organization] = relationship(back_populates="memberships")

@@ -32,8 +32,8 @@
     <div class="card"><p class="label !mb-1">SOC baterie</p><p id="kpi-soc" class="text-lg font-semibold">-</p></div>
     <div class="card"><p class="label !mb-1">Putere baterie</p><p id="kpi-battery" class="text-lg font-semibold">-</p></div>
     <div class="card"><p class="label !mb-1">EV</p><p id="kpi-ev" class="text-lg font-semibold">-</p></div>
-    <div class="card"><p class="label !mb-1">Pret cumparare</p><p id="kpi-price-buy" class="text-lg font-semibold">-</p></div>
-    <div class="card"><p class="label !mb-1">Pret vanzare</p><p id="kpi-price-sell" class="text-lg font-semibold">-</p></div>
+    <div class="card"><p class="label !mb-1" title="Cost efectiv de import conform contractului tau (nu pretul spot OPCOM) -- vezi /stations/{{ station.id }}/tariffs">Cost efectiv import (lei/kWh)</p><p id="kpi-price-buy" class="text-lg font-semibold">-</p></div>
+    <div class="card"><p class="label !mb-1" title="Venit efectiv de export conform contractului tau (nu pretul spot OPCOM) -- vezi /stations/{{ station.id }}/tariffs">Venit efectiv export (lei/kWh)</p><p id="kpi-price-sell" class="text-lg font-semibold">-</p></div>
   </div>
   <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
     <div class="card"><p class="label !mb-1">Automatizare</p><p id="kpi-automation" class="text-sm font-medium">-</p></div>
@@ -69,7 +69,10 @@
       <div id="chart-soc" style="height:280px"></div>
     </div>
     <div class="card">
-      <h2 class="mb-2 font-medium">Preturi PZU (azi / maine)</h2>
+      <h2 class="mb-2 font-medium">Pret spot OPCOM PZU (azi / maine)</h2>
+      <p class="mb-1 text-xs text-gray-500 dark:text-gray-400">
+        Pretul de piata (lei/kWh), NU costul tau efectiv (vezi KPI-urile de mai sus) -- diferenta e formula contractului tau (marja, taxe, distributie).
+      </p>
       <p id="prices-tomorrow-status" class="mb-2 text-xs text-amber-700 dark:text-amber-300"></p>
       <div id="chart-prices" style="height:280px"></div>
     </div>
