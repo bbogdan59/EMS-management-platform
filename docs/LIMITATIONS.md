@@ -893,3 +893,98 @@ care verifica direct raspunsul rutei `/market/data/timeline?days=365`.
 **Ramas neschimbat (in afara scopului):** celelalte grafice de pe pagina
 (yearly-overlay, monthly, forecast) -- deja agregate corespunzator (zi/luna),
 nu au fost atinse.
+
+
+## 19. Gestiune membri si RBAC delegat pentru managerul clientului (issue #23)
+
+**Matricea de capabilitati** e documentata explicit in `docs/RBAC_MATRIX.md`
+(nu doar in acest fisier) -- patru roluri ordonate strict (`viewer` <
+`operator` < `organization_admin` < `platform_admin`), verificate SERVER-SIDE
+la fiecare endpoint (`StationAccess`/`OrganizationAccess`, parametrizate cu
+`min_role`), niciodata doar prin ascunderea unui buton in UI. Un test nou
+(`tests/unit/test_rbac_matrix.py`) verifica direct, parametrizat pe toate
+cele 4 roluri, ca fiecare helper `can_*` din `app/core/rbac.py` respecta
+exact pragul documentat -- daca cineva schimba un prag fara sa actualizeze
+documentul (sau invers), testul pica.
+
+**Membership-urile pot fi acum administrate complet, nu doar create.**
+Inainte de acest issue exista doar crearea de invitatii si listarea
+(read-only) a membrilor -- lipseau schimbarea de rol, retrimiterea/anularea
+unei invitatii si dezactivarea/eliminarea unei membership. Serviciul nou
+`app/services/membership_service.py` adauga toate acestea, disponibile atat
+prin autoservire (`/organizations/{id}/members/...`, `organization_admin`+
+al organizatiei respective) cat si din backoffice
+(`/admin/organizations/{id}/members/...`, `platform_admin`, cross-tenant,
+FARA impersonare -- actioneaza explicit ca platform_admin, auditat cu
+`actor_label` = emailul lui, nu al membrului).
+
+**Dezactivare NEDISTRUCTIVA, distincta de eliminare.** `Membership` capata
+un camp `is_active` (migratia `f1c7a9e2b4d6`, default `true` pentru randurile
+existente -- comportament identic cu inainte). "Dezactiveaza" pastreaza
+randul (istoricul de rol/audit ramane atasabil, reversibil prin
+"Reactiveaza"); "Elimina" e hard-delete, pentru corectarea unei
+invitatii/membership create din greseala, nu mecanism normal de offboarding
+-- acelasi pattern folosit deja pentru `Station.is_active`/`Organization.status`
+in issue #24.
+
+**`is_active=False` echivaleaza PESTE TOT cu lipsa membership-ului.**
+`OrganizationAccess`, `StationAccess` (`app/api/deps.py`) si autorizarea
+fluxului SSE (`app/web/routes/sse.py::_authorized_summary`) filtreaza acum
+explicit `Membership.is_active.is_(True)` -- o membership dezactivata
+blocheaza acces identic cu una inexistenta. Fluxul SSE re-verifica autorizarea
+la FIECARE ciclu de polling (nu doar la deschiderea conexiunii), deci o
+dezactivare intrerupe un flux deja deschis in cel mult
+`POLL_INTERVAL_SECONDS`, nu doar la o reconectare -- verificat direct
+(`tests/unit/test_sse_authorization.py`) apeland `_authorized_summary`
+inainte/dupa dezactivare, fara sa porneasca un flux async real.
+
+**Schimbare sensibila = revocare imediata de sesiune, pe TOATE dispozitivele.**
+Schimbarea de rol, dezactivarea si eliminarea unei membership revoca acum
+toate sesiunile web ale utilizatorului afectat
+(`auth_service.revoke_all_sessions_for_user`) -- nu doar sesiunea curenta.
+Testat explicit cu doua sesiuni simultane ale aceluiasi membru ("doua
+taburi"): ambele devin invalide, nu doar cea care a facut ultima cerere
+(`test_two_active_sessions_of_the_same_member_are_both_invalidated_on_deactivation`).
+Aplicatia NU are (inca) un flux dedicat de reconfirmare cu parola/MFA pentru
+aceste actiuni -- revocarea de sesiune de mai sus e substitutul functional
+actual (utilizatorul trebuie sa se re-autentifice pentru orice acces
+ulterior), documentat explicit ca decizie deliberata, nu omisiune ascunsa
+(vezi si `docs/RBAC_MATRIX.md`).
+
+**Protectia ultimului `organization_admin` activ.** Nicio actiune
+(retrogradare, dezactivare, eliminare) nu poate lasa o organizatie fara
+niciun `organization_admin` activ (`membership_service._assert_not_last_admin`). Mutațiile sunt serializate
+cu row locks PostgreSQL pentru a preveni write-skew-ul în care doi admini
+se retrogradează simultan -- altfel ar bloca administrarea ulterioara a membrilor/statiilor pentru toata
+lumea, inclusiv pentru un nou `organization_admin` promovat manual (nimeni
+nu ar mai avea dreptul sa faca promovarea). "Transferul" rolului de manager
+se face in doi pasi (promoveaza intai un alt membru, apoi optional
+retrogradeaza-l pe cel vechi). Regresia concurenta ruleaza cu doua sesiuni
+PostgreSQL independente -- aceasta protectie garanteaza ca al doilea
+pas ramane mereu posibil dupa primul.
+
+**`platform_admin` nu poate fi acordat printr-o invitatie/schimbare de rol
+de organizatie.** `auth_service.ORGANIZATION_ROLES` (allowlist-ul validat
+server-side pentru invitatii SI pentru `membership_service.change_role`) nu
+contine niciodata `platform_admin` -- e exclusiv un flag global pe `User`,
+acordat doar prin bootstrap (o singura data) sau direct in baza de date.
+Verificat explicit (`test_platform_admin_cannot_be_granted_via_organization_role_allowlist`,
+`test_change_role_rejects_platform_admin_as_target`).
+
+**Teste negative cross-tenant si per rol.** O membership dintr-o alta
+organizatie nu poate fi modificata prin ID-ul ei (`_get_membership_in_org`
+verifica apartenenta la organizatia din URL inainte de orice mutatie) --
+verificat ca redirect generic cu eroare, nu 404/500 care ar confirma
+existenta ei catre un actor neautorizat. `operator`/`viewer` nu pot accesa
+niciuna dintre rutele noi de administrare a membrilor (403). Toate rutele
+noi de mutatie cer CSRF.
+
+**Ramas in afara scopului (deliberat, nu ascuns):**
+- MFA/reconfirmare cu parola pentru actiuni sensibile -- aplicatia nu are
+  MFA deloc inca (vezi mai sus).
+- UI dedicat pentru "istoricul" schimbarilor de rol ale unui membru dincolo
+  de jurnalul general de audit (`recent_audit`, deja afisat) -- niciun
+  criteriu testabil numeric al issue-ului nu a cerut un ecran separat.
+- Migrarea/backfill-ul datelor existente pentru `Membership.is_active` --
+  `server_default=true` acopera deja toate randurile existente, identic cu
+  starea dinainte de acest issue.

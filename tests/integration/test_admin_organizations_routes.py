@@ -9,8 +9,9 @@ from sqlalchemy import select
 
 from app.core.rate_limit import reset_key
 from app.models.audit import AuditLog
-from app.models.organization import Organization
+from app.models.organization import Membership, Organization
 from app.models.station import Station
+from app.services import membership_service
 from tests.factories import make_membership, make_org, make_station, make_user
 from tests.web_helpers import get_csrf, login
 
@@ -164,6 +165,118 @@ def test_edit_organization_profile(client, db):
     assert updated.name == "Renamed Co"
     assert updated.billing_email == "b@renamed.ro"
     assert updated.notes == "vip"
+
+
+def test_admin_can_change_member_role_without_impersonation(client, db):
+    """Platform_admin poate administra membrii direct din backoffice (issue
+    #23), fara sa aiba nevoie de o membership proprie in acea organizatie."""
+    admin, org, org_admin, viewer, station = _setup(db)
+    m_viewer = db.scalar(select(Membership).where(Membership.user_id == viewer.id))
+
+    login(client, admin.email, "Password1234")
+    csrf = get_csrf(client)
+    resp = client.post(
+        f"/admin/organizations/{org.id}/members/{m_viewer.id}/role",
+        data={"csrf_token": csrf, "role": "operator"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    db.expire_all()
+    assert db.get(Membership, m_viewer.id).role == "operator"
+
+    entry = db.scalar(
+        select(AuditLog).where(AuditLog.action == "membership_role_changed", AuditLog.organization_id == org.id)
+    )
+    assert entry is not None
+    assert entry.actor_label == admin.email  # actioneaza explicit ca platform_admin, nu ca membru
+
+
+def test_admin_can_deactivate_and_reactivate_member(client, db):
+    admin, org, org_admin, viewer, station = _setup(db)
+    m_viewer = db.scalar(select(Membership).where(Membership.user_id == viewer.id))
+
+    login(client, admin.email, "Password1234")
+    csrf = get_csrf(client)
+    resp = client.post(
+        f"/admin/organizations/{org.id}/members/{m_viewer.id}/deactivate",
+        data={"csrf_token": csrf}, follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    db.expire_all()
+    assert db.get(Membership, m_viewer.id).is_active is False
+
+    resp = client.post(
+        f"/admin/organizations/{org.id}/members/{m_viewer.id}/reactivate",
+        data={"csrf_token": csrf}, follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    db.expire_all()
+    assert db.get(Membership, m_viewer.id).is_active is True
+
+
+def test_admin_cannot_demote_last_organization_admin(client, db):
+    admin, org, org_admin, viewer, station = _setup(db)
+    m_org_admin = db.scalar(select(Membership).where(Membership.user_id == org_admin.id))
+
+    login(client, admin.email, "Password1234")
+    csrf = get_csrf(client)
+    resp = client.post(
+        f"/admin/organizations/{org.id}/members/{m_org_admin.id}/role",
+        data={"csrf_token": csrf, "role": "viewer"}, follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    db.expire_all()
+    assert db.get(Membership, m_org_admin.id).role == "organization_admin"  # neschimbat
+
+
+def test_admin_can_remove_member(client, db):
+    admin, org, org_admin, viewer, station = _setup(db)
+    m_viewer = db.scalar(select(Membership).where(Membership.user_id == viewer.id))
+
+    login(client, admin.email, "Password1234")
+    csrf = get_csrf(client)
+    resp = client.post(
+        f"/admin/organizations/{org.id}/members/{m_viewer.id}/remove",
+        data={"csrf_token": csrf}, follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    db.expire_all()
+    assert db.get(Membership, m_viewer.id) is None
+
+
+def test_admin_can_cancel_pending_invitation(client, db):
+    admin, org, org_admin, viewer, station = _setup(db)
+    login(client, org_admin.email, "Password1234")
+    csrf = get_csrf(client)
+    client.post(
+        f"/organizations/{org.id}/invitations",
+        data={"csrf_token": csrf, "email": "admin-cancel-target@test.local", "role": "viewer"},
+    )
+    invitation = membership_service.list_pending_invitations(db, org)[0]
+
+    reset_key("login_attempts:testclient")
+    login(client, admin.email, "Password1234")
+    csrf = get_csrf(client)
+    resp = client.post(
+        f"/admin/organizations/{org.id}/invitations/{invitation.id}/cancel",
+        data={"csrf_token": csrf}, follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    db.expire_all()
+    assert membership_service.list_pending_invitations(db, org) == []
+
+
+def test_non_platform_admin_cannot_use_admin_member_routes(client, db):
+    admin, org, org_admin, viewer, station = _setup(db)
+    m_viewer = db.scalar(select(Membership).where(Membership.user_id == viewer.id))
+
+    login(client, org_admin.email, "Password1234")
+    csrf = get_csrf(client)
+    resp = client.post(
+        f"/admin/organizations/{org.id}/members/{m_viewer.id}/deactivate",
+        data={"csrf_token": csrf}, follow_redirects=False,
+    )
+    assert resp.status_code == 403
 
 
 def test_suspend_without_reason_is_rejected(client, db):

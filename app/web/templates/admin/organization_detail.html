@@ -101,13 +101,69 @@
   <div class="card">
     <h2 class="mb-2 font-medium">Membri ({{ members | length }})</h2>
     <table class="w-full text-sm">
-      <thead class="text-left text-gray-500"><tr><th class="py-1">E-mail</th><th>Rol</th></tr></thead>
+      <thead class="text-left text-gray-500"><tr><th class="py-1">E-mail</th><th>Rol</th><th>Stare</th><th></th></tr></thead>
       <tbody>
         {% for m in members %}
-        <tr class="border-t border-gray-100 dark:border-gray-800"><td class="py-1">{{ m.email }}</td><td>{{ m.role }}</td></tr>
+        <tr class="border-t border-gray-100 dark:border-gray-800">
+          <td class="py-1">{{ m.email }}</td>
+          <td>{{ m.role }}</td>
+          <td>{% if m.is_active %}<span class="badge-ok">activ</span>{% else %}<span class="badge-muted">dezactivat</span>{% endif %}</td>
+          <td>
+            <div class="flex flex-wrap items-center gap-2 text-xs">
+              <form method="post" action="/admin/organizations/{{ organization.id }}/members/{{ m.membership_id }}/role" class="flex items-center gap-1">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}" />
+                <select class="input !py-1 !text-xs" name="role" {% if m.is_sole_admin %}disabled{% endif %}>
+                  {% for r in organization_roles %}
+                  <option value="{{ r }}" {% if r == m.role %}selected{% endif %}>{{ r }}</option>
+                  {% endfor %}
+                </select>
+                <button type="submit" class="btn-secondary !px-2 !py-1" {% if m.is_sole_admin %}disabled{% endif %}>Schimba</button>
+              </form>
+              {% if m.is_active %}
+              <form method="post" action="/admin/organizations/{{ organization.id }}/members/{{ m.membership_id }}/deactivate">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}" />
+                <button type="submit" class="btn-secondary !px-2 !py-1" {% if m.is_sole_admin %}disabled{% endif %}>Dezactiveaza</button>
+              </form>
+              {% else %}
+              <form method="post" action="/admin/organizations/{{ organization.id }}/members/{{ m.membership_id }}/reactivate">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}" />
+                <button type="submit" class="btn-secondary !px-2 !py-1">Reactiveaza</button>
+              </form>
+              <form method="post" action="/admin/organizations/{{ organization.id }}/members/{{ m.membership_id }}/remove"
+                    onsubmit="return confirm('Elimina definitiv acest membru din organizatie?');">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}" />
+                <button type="submit" class="btn-danger !px-2 !py-1">Elimina</button>
+              </form>
+              {% endif %}
+              {% if m.is_sole_admin %}<span class="text-gray-500">ultimul organization_admin</span>{% endif %}
+            </div>
+          </td>
+        </tr>
         {% endfor %}
       </tbody>
     </table>
+
+    {% if pending_invitations %}
+    <h3 class="mb-2 mt-4 text-sm font-medium text-gray-600 dark:text-gray-300">Invitatii in asteptare</h3>
+    <table class="w-full text-sm">
+      <thead class="text-left text-gray-500"><tr><th class="py-1">E-mail</th><th>Rol</th><th></th><th></th></tr></thead>
+      <tbody>
+        {% for inv in pending_invitations %}
+        <tr class="border-t border-gray-100 dark:border-gray-800">
+          <td class="py-1">{{ inv.email }}</td>
+          <td>{{ inv.role }}</td>
+          <td>{% if inv.expires_at < now %}<span class="badge-warn">expirata</span>{% endif %}</td>
+          <td>
+            <form method="post" action="/admin/organizations/{{ organization.id }}/invitations/{{ inv.id }}/cancel" class="inline">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}" />
+              <button type="submit" class="text-xs text-red-600 hover:underline">anuleaza</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
   </div>
 
   <!-- Statii -->
