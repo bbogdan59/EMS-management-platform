@@ -1305,3 +1305,124 @@ SSE deschis). Regresie acoperita si de
 `tests/integration/test_auth_session_lock_regression.py` (doua conexiuni
 Postgres reale, nu fixture-ul `db` cu SAVEPOINT, care nu poate exercita
 contentie de lock reala).
+
+## Addendum: Provisioning prin serial -- wizard, transfer/factory reset, dezactivare legacy (issue #44, dupa PR #59)
+
+PR #59 a livrat deja partea grea a issue-ului #44: provisioning secret separat
+pe device, serial public, Device Code sigilat stocat server-side numai ca
+hash, enrollment/polling idempotent, claim self-service atomic, RBAC/CSRF/
+rate-limit si raspuns generic anti-enumerare -- vezi sectiunea 14 de mai sus
+si docs/API.md. Nota de progres a issue-ului enumera patru bucati ramase;
+aceasta lucrare le acopera pe toate patru, cu scop deliberat redus la doua
+dintre ele (detaliat mai jos), nu ascuns.
+
+**1. Integrare in wizard-ul multi-step -- NU exista niciun wizard multi-step
+in aplicatie** (verificat explicit: nicio ruta/template cu "wizard" in tot
+codul, in afara acestei mentiuni). In loc sa construiesc un subsistem nou de
+wizard de la zero (scop propriu, mult mai mare decat acest issue), am
+integrat pasul de asociere prin serial in singurul loc unde chiar apare in
+fluxul real: crearea unei statii (`POST /organizations/{id}/stations`)
+redirecteaza acum direct la `/stations/{id}/devices?onboarding=1` (in loc de
+pagina organizatiei), iar `stations/devices.html` afiseaza un indicator de
+pasi ("1. Statie creata -> 2. Asociaza device-ul -> 3. Configurare") si, dupa
+o asociere reusita in acest context, un buton explicit spre pasul 3
+(`/stations/{id}/config`). Parametrul `onboarding=1` e purtat prin toate
+redirect-urile intermediare (form ascuns + query string), fara stare server
+noua. Un wizard dedicat, cu preseturi si validare progresiva intre pasi,
+ramane issue-ul #41 -- neatins aici, doar secventiat ce exista deja.
+
+**2. Transfer / factory reset -- implementate, strict `platform_admin`,
+deliberat cross-tenant-capabile.** Pagina noua `/admin/devices/assigned`
+(tab nou in `admin/_tabs.html`) listeaza orice device activ, asociat unei
+statii, cu doua actiuni noi in `device_service.py`:
+- `transfer_device` muta un device ACTIV la o alta statie (inclusiv intre
+  organizatii diferite -- decizie deliberata: e un scenariu administrativ
+  real, hardware revandut/reinstalat la alt client, nu o preluare
+  neautorizata de utilizator; niciun organization_admin nu are acces la
+  aceasta ruta). Revoca IMEDIAT credentiala curenta si genereaza una noua,
+  livrabila device-ului prin exact acelasi canal idempotent deja existent
+  (`POST /api/v1/devices/enroll` -> raspuns `assigned` cu
+  `credential_secret`) -- niciun cod nou de editat manual pe device, niciun
+  protocol nou. Device-ul nu primeste config/secrete ale statiei noi inainte
+  de acest transfer explicit.
+- `factory_reset_device` detaseaza un device ACTIV de statia lui, revoca
+  imediat credentiala curenta si il intoarce la `pending_claim` fara statie
+  -- exact starea unui enrollment proaspat, deci realocabil imediat prin
+  `/admin/devices/pending` sau printr-un nou Device Code. Identitatea proprie
+  a dispozitivului (`installation_uuid`/`provisioning_secret_hash`) NU e
+  atinsa -- un factory reset FIZIC real, pe hardware, si-ar regenera-o
+  singur la urmatorul enroll; acest capat administrativ acopera doar partea
+  controlata de server (detasare + revocare), nu simuleaza reset-ul fizic.
+- Ambele cer in formular confirmarea explicita, server-side, a serialului
+  (sau `installation_uuid` daca inca nu are serial public) afisat pe pagina
+  -- nu doar un dialog JS `confirm()`, ocolibil trivial cu un POST direct --
+  si sunt inregistrate in audit (`device_transferred`, `device_factory_reset`,
+  plus varianta `_failed` la confirmare gresita sau stare invalida).
+- **"Device inlocuit" nu are un capat nou dedicat** -- e deja acoperit complet
+  de primitivele existente: `revoke_device` pe unitatea veche (stricata) +
+  fluxul normal de enrollment/Device Code pentru unitatea noua, la aceeasi
+  statie. Un capat separat "replace" ar fi doar aceasta compunere, fara
+  comportament nou -- l-am documentat aici in loc sa adaug cod redundant.
+
+**3. Dezactivare completa a fluxului legacy -- flag explicit
+`legacy_claim_code_enabled` (`app/config.py`), interzis in productie, NU
+stergere destructiva.** Codul temporar de 15 minute (`ClaimCode`,
+`device_service.create_claim_code`/`claim_device`) ramane folosit direct de
+`scripts/mock_device_cli.py`, `scripts/seed_demo.py` si o parte din testele
+de integrare existente (`test_device_api.py`, `test_commands.py`,
+`test_device_protocol_hardening.py`) -- eliminarea lui completa ar fi
+stricat toate acestea pentru un beneficiu de securitate nul in productie
+(flag-ul rezolva deja riscul real). Asadar:
+- `Settings.legacy_claim_code_enabled` implicit `True` (dezvoltare/teste/
+  simulatoare), dar `model_post_init` **refuza pornirea aplicatiei** daca e
+  `True` si `ENVIRONMENT=production` -- acelasi tipar deja folosit pentru
+  `demo_mode_enabled`/`opcom_use_synthetic_fixture_on_failure`/
+  `session_cookie_secure`/`email_backend`. Nu exista nicio cale de a porni
+  serverul de productie cu acest bypass activ.
+- Independent de acel guard de pornire, si ruta web
+  (`POST /stations/{id}/claim-codes`) si cea de dispozitiv
+  (`POST /api/v1/devices/claim`) verifica flag-ul la fiecare cerere si refuza
+  explicit (redirect cu `error=legacy_disabled`, respectiv `410 Gone`) cand e
+  dezactivat -- deci flag-ul chiar opreste functional fluxul oriunde e setat
+  pe `False`, nu doar la pornirea in productie. UI-ul (`stations/devices.html`)
+  ascunde complet cardul "Flux legacy" cand flag-ul e dezactivat.
+- Codurile deja emise si neconsumate NU sunt invalidate retroactiv la
+  dezactivare (flag-ul blocheaza doar EMITEREA/CONSUMUL de la acel moment
+  incolo) -- acceptabil, fiindca in productie flag-ul nu poate fi activat
+  niciodata, deci nu exista coduri legacy emise acolo.
+- **Ramas explicit pentru un PR viitor:** stergerea fizica a modelului
+  `ClaimCode`/`claim_device` si a scripturilor care il folosesc, dupa ce
+  `EMS-device-code#3` (dependinta cross-repo mentionata in issue, inaccesibila
+  din acest mediu) confirma ca simulatoarele/dispozitivele reale au migrat
+  complet pe enrollment automat + Device Code.
+
+**4. Test de concurenta cu doua conturi/sesiuni Postgres --
+`test_concurrent_claim_two_accounts_same_code_exactly_one_wins`
+(`tests/integration/test_device_provisioning_issue44.py`).** Doua conturi
+DIFERITE, din doua organizatii DIFERITE, incearca sa revendice ACELASI cod
+de asociere in acelasi timp, prin doua sesiuni SQLAlchemy separate legate de
+`engine` (conexiuni Postgres reale, commit-uri reale) intr-un
+`ThreadPoolExecutor`, sincronizate cu `threading.Barrier` si citite cu
+`future.result(timeout=10)` -- niciodata fixtura `db` cu SAVEPOINT, care nu
+poate exercita contentie reala de lock (acelasi tipar ca testele de cursa
+deja existente in `test_device_protocol_hardening.py` si
+`test_device_enrollment.py`). Verificat explicit: exact un cont castiga
+(celalalt primeste eroare curata, fara deadlock si fara timeout), rezultatul
+apartine statiei pentru care codul a fost emis (niciodata celeilalte,
+indiferent care cont a castigat cursa -- fara asociere cross-tenant tacita),
+si nu apare niciun al doilea device dublat.
+
+**Ramas in afara scopului acestui PR (deliberat, nu ascuns):**
+- Un wizard multi-step dedicat, cu preseturi si pasi de validare separati --
+  issue #41, neatins; am secventiat doar fluxul existent (vezi punctul 1).
+- Un capat "replace device" dedicat -- deja acoperit de compunerea
+  revoke + enrollment nou (vezi punctul 2).
+- Stergerea fizica a fluxului legacy cu cod de 15 minute -- gatat complet
+  functional (flag + interdictie de pornire in productie), dar codul insusi
+  ramane in repo pentru simulatoare/dezvoltare pana la migrarea confirmata
+  mentionata la punctul 3.
+- Testele de replay/enumerare-de-seriale/brute-force explicite -- deja
+  acoperite de PR #59 ("raspuns generic anti-enumerare"); nu erau in nota de
+  progres ca ramase, deci nu au fost reluate aici.
+- Contractul cross-repo cu `EMS-device-code#3` -- repo inaccesibil din acest
+  mediu, mentionat explicit in issue ca dependinta separata.
