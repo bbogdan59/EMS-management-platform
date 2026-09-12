@@ -1,7 +1,7 @@
 """import run archival
 
 Revision ID: b7d3f6a9c1e4
-Revises: a3941290d3e9
+Revises: f1c7a9e2b4d6
 Create Date: 2026-09-12T04:00:00.000000
 
 Part of issue #51: arhivare nedistructiva a reviziilor OPCOM excedentare
@@ -17,7 +17,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "b7d3f6a9c1e4"
-down_revision = "a3941290d3e9"
+down_revision = "f1c7a9e2b4d6"
 branch_labels = None
 depends_on = None
 

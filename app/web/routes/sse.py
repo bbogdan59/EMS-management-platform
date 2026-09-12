@@ -36,6 +36,7 @@ def _authorized_summary(db: Session, station_id: uuid.UUID, user_id: uuid.UUID, 
             select(Membership).where(
                 Membership.user_id == user_id,
                 Membership.organization_id == station.organization_id,
+                Membership.is_active.is_(True),
             )
         )
         if membership is None or not role_at_least(membership.role, "viewer"):

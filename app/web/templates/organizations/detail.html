@@ -105,12 +105,74 @@
       {% endif %}
       <ul class="divide-y divide-gray-100 dark:divide-gray-800">
         {% for m in memberships %}
-        <li class="flex items-center justify-between py-2 text-sm">
-          <span>{{ m.email }}</span>
-          <span class="badge-muted">{{ m.role }}</span>
+        <li class="py-2 text-sm">
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <span>
+              {{ m.email }}
+              {% if m.user_id == current_user_id %}<span class="badge-muted">tu</span>{% endif %}
+              {% if not m.is_active %}<span class="badge-warn">dezactivat</span>{% endif %}
+            </span>
+            <span class="badge-muted">{{ m.role }}</span>
+          </div>
+          {% if can_manage %}
+          <div class="mt-1 flex flex-wrap items-center gap-2 text-xs">
+            <form method="post" action="/organizations/{{ organization.id }}/members/{{ m.membership_id }}/role" class="flex items-center gap-1">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}" />
+              <select class="input !py-1 !text-xs" name="role" {% if m.is_sole_admin %}disabled{% endif %}>
+                {% for r in organization_roles %}
+                <option value="{{ r }}" {% if r == m.role %}selected{% endif %}>{{ r }}</option>
+                {% endfor %}
+              </select>
+              <button type="submit" class="btn-secondary !px-2 !py-1" {% if m.is_sole_admin %}disabled{% endif %}>Schimba rol</button>
+            </form>
+            {% if m.is_active %}
+            <form method="post" action="/organizations/{{ organization.id }}/members/{{ m.membership_id }}/deactivate">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}" />
+              <button type="submit" class="btn-secondary !px-2 !py-1" {% if m.is_sole_admin %}disabled{% endif %}>Dezactiveaza</button>
+            </form>
+            {% else %}
+            <form method="post" action="/organizations/{{ organization.id }}/members/{{ m.membership_id }}/reactivate">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}" />
+              <button type="submit" class="btn-secondary !px-2 !py-1">Reactiveaza</button>
+            </form>
+            <form method="post" action="/organizations/{{ organization.id }}/members/{{ m.membership_id }}/remove"
+                  onsubmit="return confirm('Elimina definitiv acest membru din organizatie?');">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}" />
+              <button type="submit" class="btn-danger !px-2 !py-1">Elimina</button>
+            </form>
+            {% endif %}
+            {% if m.is_sole_admin %}
+            <span class="text-gray-500">ultimul organization_admin -- promoveaza pe altcineva intai</span>
+            {% endif %}
+          </div>
+          {% endif %}
         </li>
         {% endfor %}
       </ul>
+
+      {% if can_manage and pending_invitations %}
+      <h3 class="mb-2 mt-4 text-sm font-medium text-gray-600 dark:text-gray-300">Invitatii in asteptare</h3>
+      <ul class="divide-y divide-gray-100 dark:divide-gray-800">
+        {% for inv in pending_invitations %}
+        <li class="flex flex-wrap items-center justify-between gap-2 py-2 text-sm">
+          <span>
+            {{ inv.email }} <span class="badge-muted">{{ inv.role }}</span>
+            {% if inv.expires_at < now %}<span class="badge-warn">expirata</span>{% endif %}
+          </span>
+          <span class="flex gap-2 text-xs">
+            <form method="post" action="/organizations/{{ organization.id }}/invitations/{{ inv.id }}/resend">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}" />
+              <button type="submit" class="btn-secondary !px-2 !py-1">Retrimite</button>
+            </form>
+            <form method="post" action="/organizations/{{ organization.id }}/invitations/{{ inv.id }}/cancel">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}" />
+              <button type="submit" class="btn-danger !px-2 !py-1">Anuleaza</button>
+            </form>
+          </span>
+        </li>
+        {% endfor %}
+      </ul>
+      {% endif %}
 
       {% if can_manage %}
       <details class="mt-4">
@@ -124,9 +186,9 @@
           <div>
             <label class="label">Rol</label>
             <select class="input" name="role">
-              <option value="viewer">viewer</option>
-              <option value="operator">operator</option>
-              <option value="organization_admin">organization_admin</option>
+              {% for r in organization_roles %}
+              <option value="{{ r }}">{{ r }}</option>
+              {% endfor %}
             </select>
           </div>
           <button type="submit" class="btn-primary">Trimite invitatie</button>

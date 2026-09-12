@@ -125,6 +125,7 @@ class StationAccess:
             select(Membership).where(
                 Membership.user_id == user.id,
                 Membership.organization_id == station.organization_id,
+                Membership.is_active.is_(True),
             )
         )
         if membership is None:
@@ -154,7 +155,9 @@ class OrganizationAccess:
             return org, "platform_admin"
         membership = db.scalar(
             select(Membership).where(
-                Membership.user_id == user.id, Membership.organization_id == organization_id
+                Membership.user_id == user.id,
+                Membership.organization_id == organization_id,
+                Membership.is_active.is_(True),
             )
         )
         if membership is None:
@@ -170,5 +173,9 @@ def user_organization_ids(db: Session, user: User) -> list[uuid.UUID]:
         return [row[0] for row in db.execute(select(Organization.id)).all()]
     return [
         row[0]
-        for row in db.execute(select(Membership.organization_id).where(Membership.user_id == user.id)).all()
+        for row in db.execute(
+            select(Membership.organization_id).where(
+                Membership.user_id == user.id, Membership.is_active.is_(True)
+            )
+        ).all()
     ]
