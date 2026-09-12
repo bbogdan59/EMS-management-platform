@@ -430,6 +430,9 @@ def preferences_submit(
 # --- Tarife ---
 
 
+_INVOICE_PREVIEW_SAMPLE_KWH = Decimal(300)
+
+
 @router.get("/stations/{station_id}/tariffs")
 def tariffs_page(
     request: Request,
@@ -437,11 +440,31 @@ def tariffs_page(
     station_role: tuple = Depends(StationAccess(min_role="viewer")),
     user: User = Depends(get_current_user),
 ):
+    from app.models.market import MarketPriceInterval
+
     station, role = station_role
     tariffs = db.scalars(select(Tariff).where(Tariff.station_id == station.id)).all()
+
+    latest_market_price = db.scalar(
+        select(MarketPriceInterval.price_lei_per_kwh)
+        .where(MarketPriceInterval.source == "opcom_pzu", MarketPriceInterval.is_current.is_(True))
+        .order_by(MarketPriceInterval.interval_start.desc())
+        .limit(1)
+    )
+
+    previews: dict[uuid.UUID, dict] = {}
+    for tariff in tariffs:
+        latest_version = max(tariff.versions, key=lambda v: v.valid_from, default=None)
+        if latest_version is not None:
+            previews[latest_version.id] = tariff_service.build_invoice_preview(
+                latest_version, latest_market_price, _INVOICE_PREVIEW_SAMPLE_KWH
+            )
+
     context = {
         "station": station,
         "tariffs": tariffs,
+        "previews": previews,
+        "preview_sample_kwh": _INVOICE_PREVIEW_SAMPLE_KWH,
         "can_edit": can_manage_station_config(role),
         **build_nav_context(db, user, station.id),
     }
@@ -458,6 +481,10 @@ def tariffs_submit(
     opcom_margin_lei_per_kwh: str | None = Form(None),
     fixed_monthly_fee_lei: str = Form("0"),
     variable_component_lei_per_kwh: str = Form("0"),
+    distribution_lei_per_kwh: str = Form("0"),
+    transport_lei_per_kwh: str = Form("0"),
+    other_regulated_lei_per_kwh: str = Form("0"),
+    vat_rate_percent: str | None = Form(None),
     settlement_method: str = Form("net_metering_15min"),
     settlement_interval_days: int = Form(30),
     economic_calculation_disabled: str | None = Form(None),
@@ -476,6 +503,10 @@ def tariffs_submit(
         opcom_margin_lei_per_kwh=_dec(opcom_margin_lei_per_kwh),
         fixed_monthly_fee_lei=_dec(fixed_monthly_fee_lei, Decimal("0")),
         variable_component_lei_per_kwh=_dec(variable_component_lei_per_kwh, Decimal("0")),
+        distribution_lei_per_kwh=_dec(distribution_lei_per_kwh, Decimal("0")),
+        transport_lei_per_kwh=_dec(transport_lei_per_kwh, Decimal("0")),
+        other_regulated_lei_per_kwh=_dec(other_regulated_lei_per_kwh, Decimal("0")),
+        vat_rate_percent=_dec(vat_rate_percent),
         settlement_method=settlement_method,
         settlement_interval_days=settlement_interval_days,
         economic_calculation_disabled=bool(economic_calculation_disabled),

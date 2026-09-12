@@ -107,15 +107,14 @@ def _w_to_kw(value: Decimal | None) -> float | None:
 
 
 def _effective_price(tariff_version: TariffVersion | None, market_price: MarketPriceInterval | None) -> float | None:
-    if tariff_version is None or tariff_version.economic_calculation_disabled:
-        return None
-    if tariff_version.fixed_price_lei_per_kwh is not None:
-        base = float(tariff_version.fixed_price_lei_per_kwh)
-    elif tariff_version.opcom_margin_lei_per_kwh is not None and market_price is not None:
-        base = float(market_price.price_lei_per_kwh) + float(tariff_version.opcom_margin_lei_per_kwh)
-    else:
-        return None
-    return round(base + float(tariff_version.variable_component_lei_per_kwh), 6)
+    """Deleaga la `tariff_service.compute_effective_price_lei_per_kwh` (issue
+    #46) -- SINGURA formula, include acum si distributie/transport/alte taxe
+    reglementate/TVA, nu doar pret de energie + o componenta variabila
+    generica. `float()` la iesire e doar pentru API-ul JSON al dashboard-ului;
+    calculul insusi ramane Decimal in `tariff_service`."""
+    market_price_lei_per_kwh = market_price.price_lei_per_kwh if market_price is not None else None
+    result = tariff_service.compute_effective_price_lei_per_kwh(tariff_version, market_price_lei_per_kwh)
+    return round(float(result), 6) if result is not None else None
 
 
 def _tariff_versions_for_range(db: Session, station_id: uuid.UUID, direction: str, start: datetime, end: datetime) -> list[TariffVersion]:

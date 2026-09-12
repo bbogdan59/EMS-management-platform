@@ -855,6 +855,87 @@ de UI mai ampla, neceruta explicit in criteriile testabile numeric ale
 acestui issue; jobul de reconciliere `observed_*` mentionat mai sus.
 
 
+## Addendum: Contracte tarifare: componente de cost distincte, TVA explicit, preview numeric (issue #46)
+
+**Formula unica, centralizata.** Inainte de acest PR, logica de "pret
+efectiv" era duplicata implicit intre `dashboard_service._effective_price`
+(folosita atat "acum" cat si istoric, prin `_effective_price_at`) fara sa
+existe un singur loc documentat cu formula exacta. `tariff_service.
+compute_effective_price_lei_per_kwh` devine acel singur loc -- documentat
+explicit (sursa: acest PR, 2026-09-12, NU o regula legala verificata, doar
+aritmetica generica de facturare pe care operatorul trebuie sa o confirme
+fata de contractul lui real) -- iar `dashboard_service._effective_price`
+acum doar delega la el (verificat: toate cele 9 teste existente din
+`test_dashboard_service.py` trec neschimbate, deci comportamentul pentru
+tarifele deja existente ramane identic).
+
+**Cost marginal separat de costul fix, pentru ambele tipuri de contract.**
+`TariffVersion.fixed_price_lei_per_kwh`/`opcom_margin_lei_per_kwh` raman
+strict costul de ENERGIE (marginal, pe kWh); `fixed_monthly_fee_lei` ramane
+strict abonamentul FIX, independent de consum -- niciodata amestecate in
+acelasi numar (`build_invoice_preview` le raporteaza separat explicit).
+Pentru `kind=fixed`, pretul e CONSTANT indiferent de ora -- un pret constant
+nu are niciun gradient de arbitraj intraday de extras, deci optimizerul nu
+"inventeaza" o oportunitate de arbitraj de pret care nu exista (proprietate
+matematica automata a formularii curente a obiectivului, nu cod nou).
+
+**Componente de retea/taxe explicite, nu o "gaura neagra" generica.**
+`TariffVersion` capata `distribution_lei_per_kwh`/`transport_lei_per_kwh`/
+`other_regulated_lei_per_kwh` (migratia `e2a4c8f1d9b3`, toate 0 implicit --
+backward-compatibil, comportament identic pentru versiunile existente).
+`variable_component_lei_per_kwh` ramane disponibil pentru compatibilitate/
+simplitate cand contractul nu separa aceste componente.
+
+**TVA explicit opt-in, `None` != 0%.** `vat_rate_percent` (procent, ex. 19)
+e `None` implicit -- inseamna explicit "TVA neinclus in aceasta formula",
+nu o presupunere de 0%. Cand e setat, se aplica atat pe partea de energie
+(in `compute_effective_price_lei_per_kwh`) cat si, separat, pe abonamentul
+fix (in `build_invoice_preview`) -- asta e aritmetica generala de TVA (se
+aplica pe toata suma taxabila, nu doar pe energie), NU o regula specifica
+legislatiei romanesti inventata aici.
+
+**Lipsa pretului OPCOM blocheaza calculul, nu produce un fallback tacut.**
+Comportament deja existent inainte de acest PR (verificat, nu adaugat acum)
+in `compute_effective_price_lei_per_kwh`: pentru un tarif `indexed_opcom`
+fara pretul OPCOM al orei respective, functia returneaza `None` explicit --
+apelantul exclude acea ora, nu foloseste 0 sau un pret vechi.
+
+**Preview numeric pe pagina de tarife.** `/stations/{id}/tariffs` calculeaza
+acum, pentru ultima versiune a fiecarui tarif, un exemplu numeric la 300 kWh
+(consum lunar tipic, arbitrar ales pentru ilustrare) folosind ultimul pret
+OPCOM disponibil ca referinta pentru tarifele indexate -- etichetat explicit
+"exemplu... NU e o factura reala" in UI, cu motivul afisat cand nu poate fi
+calculat (calcul dezactivat sau niciun pret OPCOM disponibil).
+
+**Spot vs. cost efectiv, clarificat in dashboard (impartit cu issue #51).**
+KPI-urile de pret din `dashboard/station.html` devin explicit "Cost efectiv
+import"/"Venit efectiv export" (cu link catre pagina de tarife), distincte
+de graficul "Pret spot OPCOM PZU" -- vezi si sectiunea 18 anterioara
+(issue #51) pentru detalii, aceeasi schimbare de UI acopera ambele issue-uri.
+
+**Teste:** `tests/unit/test_tariff_service.py` (16) -- separarea marginal/
+fix, indexare OPCOM cu marja pozitiva/negativa, blocare fara fallback la
+pret lipsa, `economic_calculation_disabled`, insumarea tuturor componentelor
+noi, TVA aplicat/neaplicat (`None` vs. `0%` distincte), TVA pe abonament
+separat de energie, motivele de preview indisponibil, persistarea noilor
+campuri prin `add_tariff_version`. `tests/integration/test_tariffs_routes.py`
+(4) -- ruta HTTP persista noile campuri, `viewer` nu poate crea tarife,
+preview afisat/motiv-indisponibil pe pagina.
+
+**Ramas in afara scopului (deliberat, nu ascuns, coordonat cu alte issue-uri):**
+- **Wizard-ul dedicat cu preseturi** (issue #41, inca neimplementat) --
+  configurarea ramane prin formularul de tarife existent, extins cu noile
+  campuri, nu o experienta ghidata pas-cu-pas.
+- **Reguli legale/comerciale romanesti verificate** (cote OPANAF/ANRE reale,
+  formule reglementate de distributie/transport) -- deliberat NEINVENTATE;
+  operatorul introduce valorile reale din contractul/factura lui, iar acest
+  PR ofera doar structura si aritmetica de combinare a lor, nu sursa datelor.
+- **Decontare neta ora-cu-ora in preview** -- preview-ul foloseste UN SINGUR
+  pret OPCOM de referinta (cel mai recent disponibil) inmultit cu consumul
+  total, nu o simulare completa interval-cu-interval (aceea exista deja,
+  separat, in `dashboard_service.get_estimated_savings`, issue #13).
+
+
 ## Addendum: Retentie revizii OPCOM (max. active/zi) si contract explicit de unitati (issue #51)
 
 **O revizie de pret e strict un `ImportRun` cu `status=succeeded`.** Fiecare
@@ -926,6 +1007,8 @@ o pagina UI dedicata de rasfoire a reviziilor arhivate (in prezent doar
 badge-ul "arhivat" in tabelul de import-uri din `/admin/operations`);
 o formula completa de contract tarifar (componente separate distributie/
 transport/taxe/TVA) -- ramane in scopul issue #46, coordonat separat.
+
+
 ## 18. Grafic timeline preturi OPCOM: agregare adaptiva pe 3 niveluri + incarcare progresiva (issue #33)
 
 **Restul acestui issue era deja rezolvat de #35** (agregarea orara pentru
