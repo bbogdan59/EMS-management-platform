@@ -29,7 +29,8 @@ def enroll_device(payload: EnrollRequest, db: Session = Depends(get_db)):
     identitate e secretul de provisioning propriu, transmis in corp."""
     try:
         result = device_service.enroll_device(
-            db, payload.installation_uuid, payload.provisioning_secret, payload.hardware_info
+            db, payload.installation_uuid, payload.provisioning_secret, payload.hardware_info,
+            serial_number=payload.serial_number, activation_code=payload.activation_code,
         )
     except device_service.DeviceServiceError as exc:
         db.rollback()

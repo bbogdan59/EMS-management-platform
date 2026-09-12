@@ -434,7 +434,15 @@ def _enrollment_status_payload(device: Device) -> dict:
     }
 
 
-def enroll_device(db: Session, installation_uuid: str, provisioning_secret: str, hardware_info: dict) -> dict:
+def enroll_device(
+    db: Session,
+    installation_uuid: str,
+    provisioning_secret: str,
+    hardware_info: dict,
+    *,
+    serial_number: str | None = None,
+    activation_code: str | None = None,
+) -> dict:
     """Idempotenta: un `installation_uuid` necunoscut creeaza un device nou
     `pending_claim` fara statie; unul cunoscut verifica secretul de
     provisioning si intoarce starea CURENTA (pending/assigned/revoked), fara
@@ -443,10 +451,37 @@ def enroll_device(db: Session, installation_uuid: str, provisioning_secret: str,
     Anti-insusire: daca `installation_uuid` exista deja dar secretul nu se
     potriveste, cererea e respinsa explicit -- o serie/UUID declarat de
     altcineva nu poate "prelua" un enrollment existent."""
+    if (serial_number is None) != (activation_code is None):
+        raise DeviceServiceError("Serialul si codul de activare trebuie trimise impreuna.")
+    if serial_number is not None:
+        serial_number = serial_number.strip().upper()
+
     existing = db.scalar(select(Device).where(Device.installation_uuid == installation_uuid))
     if existing is not None:
         if not existing.provisioning_secret_hash or not verify_password(provisioning_secret, existing.provisioning_secret_hash):
             raise DeviceServiceError("Identitate de enrollment invalida pentru acest installation_uuid.")
+        if serial_number is not None:
+            assert activation_code is not None  # pair validated above
+            expected_activation_hash = hash_token(activation_code.strip().upper())
+            if existing.serial_number not in (None, serial_number):
+                raise DeviceServiceError("Serialul nu corespunde identitatii provisionate.")
+            if existing.activation_code_hash not in (None, expected_activation_hash):
+                raise DeviceServiceError("Codul de activare nu corespunde identitatii provisionate.")
+            if existing.station_id is None and existing.activation_claimed_at is None:
+                existing.serial_number = serial_number
+                existing.activation_code_hash = expected_activation_hash
+                db.add(existing)
+        if (
+            existing.status == DeviceStatus.pending_claim.value
+            and existing.station_id is None
+            and existing.enrollment_expires_at is not None
+            and existing.enrollment_expires_at < utcnow()
+        ):
+            # A unit may sit powered off in inventory for weeks. A valid
+            # proof from the physical device renews pending enrollment.
+            existing.enrollment_expires_at = expires_in(hours=get_settings().device_enrollment_ttl_hours)
+            db.add(existing)
+        db.flush()
         return _enrollment_status_payload(existing)
 
     settings = get_settings()
@@ -456,6 +491,8 @@ def enroll_device(db: Session, installation_uuid: str, provisioning_secret: str,
         status=DeviceStatus.pending_claim.value,
         capabilities=hardware_info or {},
         installation_uuid=installation_uuid,
+        serial_number=serial_number,
+        activation_code_hash=(hash_token(activation_code.strip().upper()) if activation_code else None),
         provisioning_secret_hash=hash_password(provisioning_secret),
         enrolled_at=utcnow(),
         enrollment_expires_at=expires_in(hours=settings.device_enrollment_ttl_hours),
@@ -476,6 +513,39 @@ def enroll_device(db: Session, installation_uuid: str, provisioning_secret: str,
         return _enrollment_status_payload(winner)
 
     return _enrollment_status_payload(device)
+
+
+def activate_device_for_station(
+    db: Session, activation_code: str, station: Station, actor: User
+) -> Device:
+    """Atomically consume a sealed Device Code and assign its pending device.
+
+    The lookup is deliberately generic on failure so the form cannot be used
+    to enumerate inventory. The device's independent provisioning proof was
+    already verified by ``enroll_device``.
+    """
+    normalized = activation_code.strip().upper()
+    code_hash = hash_token(normalized)
+    device = db.scalar(
+        select(Device).where(Device.activation_code_hash == code_hash).with_for_update()
+    )
+    if device is None:
+        raise DeviceServiceError("Cod invalid, expirat sau deja folosit.")
+    invalid = (
+        device.status != DeviceStatus.pending_claim.value
+        or device.station_id is not None
+        or device.enrollment_expires_at is None
+        or device.enrollment_expires_at < utcnow()
+    )
+    if invalid:
+        raise DeviceServiceError("Cod invalid, expirat sau deja folosit.")
+
+    allocate_device(db, device, station, actor)
+    device.activation_code_hash = None
+    device.activation_claimed_at = utcnow()
+    db.add(device)
+    db.flush()
+    return device
 
 
 def list_pending_devices(db: Session) -> list[Device]:
