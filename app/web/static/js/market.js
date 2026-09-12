@@ -1,10 +1,13 @@
 /* global echarts, emsChartTheme */
 
 const EMS_YEAR_COLORS = ["#2f9354", "#4a86e8", "#f5a524", "#a479e2", "#f691b2", "#43d692"];
+const TIMELINE_RANGE_OPTIONS = [30, 90, 180, 365];
+const TIMELINE_DEFAULT_DAYS = 30;
 
 function emsInitMarket(availableYears) {
   const $ = (id) => document.getElementById(id);
   let selectedYears = new Set(availableYears.slice(-3));
+  let selectedTimelineDays = TIMELINE_DEFAULT_DAYS;
 
   async function fetchJson(url) {
     const res = await fetch(url, { headers: { Accept: "application/json" } });
@@ -37,11 +40,33 @@ function emsInitMarket(availableYears) {
     });
   }
 
+  function renderTimelineRangeToggles() {
+    const container = $("timeline-range-toggles");
+    if (!container) return;
+    container.innerHTML = "";
+    TIMELINE_RANGE_OPTIONS.forEach((days) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.textContent = days + " zile";
+      btn.className = days === selectedTimelineDays ? "btn-primary !px-2 !py-1 text-xs" : "btn-secondary !px-2 !py-1 text-xs";
+      btn.addEventListener("click", () => {
+        if (days === selectedTimelineDays) return;
+        selectedTimelineDays = days;
+        renderTimelineRangeToggles();
+        loadTimeline();
+      });
+      container.appendChild(btn);
+    });
+  }
+
   async function loadTimeline() {
     const el = $("chart-timeline");
     if (!el) return;
     try {
-      const data = await fetchJson("/market/data/timeline?days=30");
+      // Fiecare fereastra e o cerere separata, declansata la cerere (buton) --
+      // pagina nu incarca niciodata tot istoricul dintr-o singura cerere
+      // initiala, indiferent cat de mare e intervalul selectat (issue #33).
+      const data = await fetchJson("/market/data/timeline?days=" + selectedTimelineDays);
       showEmpty(el, data.length === 0);
       if (!data.length) return;
 
@@ -161,6 +186,7 @@ function emsInitMarket(availableYears) {
   }
 
   renderYearToggles();
+  renderTimelineRangeToggles();
   loadTimeline();
   loadYearlyOverlay();
   loadForecast();

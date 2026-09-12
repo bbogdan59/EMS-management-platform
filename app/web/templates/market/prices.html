@@ -52,9 +52,13 @@
 
   <!-- Timeline cu linie punctata pentru viitor -->
   <div class="card">
-    <h2 class="mb-2 font-medium">Evolutie pret (ultimele 30 zile + maine)</h2>
+    <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
+      <h2 class="font-medium">Evolutie pret</h2>
+      <div id="timeline-range-toggles" class="flex flex-wrap gap-1 text-sm"></div>
+    </div>
     <p class="mb-2 text-xs text-gray-500 dark:text-gray-400">
       Linie continua = realizat/trecut. Linie punctata = "maine" (pretul publicat pentru ziua urmatoare, importat automat in fiecare zi).
+      Pentru intervale mari, graficul afiseaza medii orare sau zilnice in loc de rezolutia bruta de import.
     </p>
     <div class="empty-state text-sm text-gray-500" hidden>Fara date pentru acest interval.</div>
     <div id="chart-timeline" style="height:320px"></div>

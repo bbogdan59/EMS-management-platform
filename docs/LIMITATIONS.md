@@ -853,3 +853,43 @@ PV/consum/baterie/pret pe ACELASI grafic (in prezent, `chart-power` si
 `chart-prices` raman grafice separate, fiecare cu axa lui) -- o redesenare
 de UI mai ampla, neceruta explicit in criteriile testabile numeric ale
 acestui issue; jobul de reconciliere `observed_*` mentionat mai sus.
+
+
+## 18. Grafic timeline preturi OPCOM: agregare adaptiva pe 3 niveluri + incarcare progresiva (issue #33)
+
+**Restul acestui issue era deja rezolvat de #35** (agregarea orara pentru
+ferestre >10 zile, aplicata automat ferestrei implicite de 30 de zile din
+UI). Ramasese totusi un gol fata de criteriile explicite ale issue-ului:
+agregarea orara singura tot produce mii de puncte pentru un an intreg
+(~8760), nu "sute" cum cere criteriul de acceptare, iar UI-ul nu avea nicio
+cale sa ceara o fereastra mai mare decat cele 30 de zile implicite fara sa
+rezulte, potential, intr-un singur fetch masiv.
+
+**Agregare pe 3 niveluri, nu 2.** `market_analytics_service.get_timeline_split`
+alege acum intre rezolutia bruta (<= `TIMELINE_HOURLY_THRESHOLD_DAYS` = 10
+zile), agregare orara (intre acel prag si `TIMELINE_DAILY_THRESHOLD_DAYS` =
+60 zile) si agregare ZILNICA (peste 60 de zile) -- extrase intr-un helper
+comun `_get_timeline_aggregated(..., trunc_unit)` ca sa nu se duplice
+interogarea SQL intre nivelul orar si cel zilnic. Pentru un an intreg de
+istoric la 15 minute, raspunsul ramane la cel mult ~366 puncte (un punct pe
+zi), nu ~35.000 (rezolutie bruta) si nici ~8760 (doar orara).
+
+**Incarcare progresiva in UI, nu un singur fetch cu tot istoricul.**
+`market.js` adauga un selector de interval (30/90/180/365 zile) langa
+graficul principal de preturi -- fiecare optiune declanseaza o cerere NOUA
+catre `/market/data/timeline?days=...` doar cand utilizatorul o cere
+explicit, nu un fetch initial care ar incerca sa incarce tot intervalul
+maxim posibil. Fereastra implicita la incarcarea paginii ramane 30 de zile,
+neschimbata (agregare orara, ca inainte de acest issue).
+
+**Teste:** `test_timeline_split_stays_hourly_at_exactly_the_daily_threshold`
+(pragul de 60 de zile e strict, ca cel de 10 zile), `test_timeline_split_
+aggregates_daily_for_year_long_windows` (an intreg la 15 minute -> <=366
+puncte), `test_timeline_split_daily_aggregation_averages_within_bucket`,
+`test_timeline_split_daily_aggregation_excludes_synthetic_by_default`, plus
+un test HTTP (`test_market_data_timeline_stays_bounded_for_large_windows`)
+care verifica direct raspunsul rutei `/market/data/timeline?days=365`.
+
+**Ramas neschimbat (in afara scopului):** celelalte grafice de pe pagina
+(yearly-overlay, monthly, forecast) -- deja agregate corespunzator (zi/luna),
+nu au fost atinse.
