@@ -959,7 +959,8 @@ se retrogradează simultan -- altfel ar bloca administrarea ulterioara a membril
 lumea, inclusiv pentru un nou `organization_admin` promovat manual (nimeni
 nu ar mai avea dreptul sa faca promovarea). "Transferul" rolului de manager
 se face in doi pasi (promoveaza intai un alt membru, apoi optional
-retrogradeaza-l pe cel vechi) -- aceasta protectie garanteaza ca al doilea
+retrogradeaza-l pe cel vechi). Regresia concurenta ruleaza cu doua sesiuni
+PostgreSQL independente -- aceasta protectie garanteaza ca al doilea
 pas ramane mereu posibil dupa primul.
 
 **`platform_admin` nu poate fi acordat printr-o invitatie/schimbare de rol
