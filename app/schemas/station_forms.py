@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from datetime import time
 from decimal import Decimal
+from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -28,6 +29,19 @@ class PanelGroupInput(Strict):
     power_kwp: Decimal = Field(gt=0)
     azimuth_degrees: Decimal = Field(ge=0, lt=360)  # 0=N, 90=E, 180=S, 270=V
     tilt_degrees: Decimal = Field(ge=0, le=90)
+    # Catalog administrabil (issue #42): fie un model din catalog
+    # (`pv_module_model_id`), fie o eticheta custom pentru un model care
+    # lipseste -- niciodata amandoua, si niciodata obligatoriu (grupul poate
+    # ramane fara echipament de catalog asociat, ca inainte de #42).
+    pv_module_model_id: UUID | None = None
+    pv_module_custom_label: str | None = Field(default=None, max_length=200)
+    pv_module_count: int | None = Field(default=None, ge=1)
+
+    @model_validator(mode="after")
+    def _model_or_custom_not_both(self) -> PanelGroupInput:
+        if self.pv_module_model_id is not None and self.pv_module_custom_label:
+            raise ValueError("Un grup PV nu poate avea si model de catalog, si eticheta custom in acelasi timp.")
+        return self
 
 
 class StationConfigInput(Strict):
@@ -47,6 +61,18 @@ class StationConfigInput(Strict):
     notes: str | None = Field(default=None, max_length=2000)
     panel_groups: list[PanelGroupInput] = Field(min_length=1, max_length=32)
     expected_version: int = Field(ge=0)
+    inverter_model_id: UUID | None = None
+    inverter_custom_label: str | None = Field(default=None, max_length=200)
+    battery_model_id: UUID | None = None
+    battery_custom_label: str | None = Field(default=None, max_length=200)
+
+    @model_validator(mode="after")
+    def _model_or_custom_not_both(self) -> StationConfigInput:
+        if self.inverter_model_id is not None and self.inverter_custom_label:
+            raise ValueError("Invertorul nu poate avea si model de catalog, si eticheta custom in acelasi timp.")
+        if self.battery_model_id is not None and self.battery_custom_label:
+            raise ValueError("Bateria nu poate avea si model de catalog, si eticheta custom in acelasi timp.")
+        return self
 
     @model_validator(mode="after")
     def _coherent_limits(self) -> StationConfigInput:
