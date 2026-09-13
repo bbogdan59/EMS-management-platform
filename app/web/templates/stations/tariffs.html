@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% from "partials/_breadcrumb.html" import trail as breadcrumb %}
+{% from "partials/_form_errors.html" import summary as error_summary %}
 {% block title %}Tarife {{ station.name }} - {{ app_name }}{% endblock %}
 {% block content %}
 <div class="space-y-6">
@@ -10,6 +11,8 @@
     {"label": "Tarife", "url": None},
   ]) }}
   <h1 class="text-xl font-semibold">Tarife - {{ station.name }}</h1>
+
+  {{ error_summary(errors) }}
 
   {% for t in tariffs %}
   <div class="card">

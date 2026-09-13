@@ -16,6 +16,22 @@ from app.models.base import Entity
 # reproductibila bit-cu-bit indiferent de ordinea insumarii.
 
 
+# Tip de contract (issue #46): valorile canonice stocate in `Tariff.kind`.
+# Numele pastreaza compatibilitatea cu datele/migratiile existente
+# ("indexed_opcom", nu "dynamic_indexed" ca in textul issue-ului) -- doar doua
+# tipuri sunt implementate concret (fix / dinamic indexat pe OPCOM); "provider"
+# sau "custom" din issue raman doar etichete libere in `Tariff.name`, nu tipuri
+# de calcul distincte, pentru ca niciuna nu are o formula de calcul proprie
+# implementata inca (ar necesita sursa de date/formula reala, in afara
+# scopului acestui PR -- vezi LIMITATIONS.md). `tariff_service` valideaza la
+# scriere ca `kind` e una dintre aceste valori SI ca versiunea nou creata are
+# EXACT campurile care corespund acelui tip (nu ambele, nu niciunul) -- esec
+# explicit (ValueError), nu o presupunere tacita despre ce a vrut operatorul.
+TARIFF_KIND_FIXED = "fixed"
+TARIFF_KIND_DYNAMIC_INDEXED = "indexed_opcom"
+TARIFF_KINDS = frozenset({TARIFF_KIND_FIXED, TARIFF_KIND_DYNAMIC_INDEXED})
+
+
 class Tariff(Entity):
     """Contract tarifar pentru o statie, pe o directie (import/export)."""
 
@@ -25,7 +41,7 @@ class Tariff(Entity):
         ForeignKey("stations.id", ondelete="CASCADE"), nullable=False, index=True
     )
     direction: Mapped[str] = mapped_column(String(16), nullable=False)  # import|export
-    kind: Mapped[str] = mapped_column(String(32), nullable=False)  # fixed|indexed_opcom
+    kind: Mapped[str] = mapped_column(String(32), nullable=False)  # vezi TARIFF_KINDS
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     is_active: Mapped[bool] = mapped_column(default=True, nullable=False)
 
