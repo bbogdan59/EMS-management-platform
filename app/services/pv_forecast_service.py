@@ -16,8 +16,18 @@ nu o valoare masurata per instalatie.
 Rezolutia prognozei PV mosteneste rezolutia orara a sursei meteo (Open-Meteo);
 motorul de optimizare trateaza valoarea ca fiind constanta in cadrul orei
 cand construieste grila de 15 minute.
-"""
+
+Fereastra de lumina reala (issue #53): orice interval al carui inceput cade
+in afara ferestrei [rasarit, apus) REALE a statiei (calculata cu SPA din
+latitudine/longitudine, vezi `solar_geometry_service.py`) e clampat explicit
+la 0 kW -- indiferent ce valoare bruta de iradianta ar raporta sursa meteo
+pentru acel interval (unele surse raporteaza valori mici, nenule, in
+amurg/inainte de rasarit, din cauza mediei orare). E o plasa de siguranta
+fizica suplimentara, nu inlocuieste modelul pvlib de mai sus (care oricum
+converge la 0 aproape de orizont)."""
 from __future__ import annotations
+
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import pvlib
@@ -27,6 +37,7 @@ from sqlalchemy.orm import Session
 from app.core.security import utcnow
 from app.models.forecast import PvForecast, WeatherForecast
 from app.models.station import PanelGroup, Station, StationConfigVersion
+from app.services.solar_geometry_service import sun_window_for_local_date
 
 SYSTEM_DERATE = 0.85
 
@@ -96,10 +107,27 @@ def generate_pv_forecast(db: Session, station: Station) -> list[PvForecast]:
     inverter_limit = float(config.inverter_power_kw)
     total_ac_kw = total_dc_kw.clip(upper=inverter_limit)
 
+    try:
+        tz = ZoneInfo(station.timezone)
+    except Exception:
+        tz = ZoneInfo("Europe/Bucharest")
+    sun_windows: dict = {}
+    for ts in times:
+        local_date = ts.tz_convert(tz).date() if ts.tzinfo else ts.date()
+        if local_date not in sun_windows:
+            sun_windows[local_date] = sun_window_for_local_date(
+                float(station.latitude), float(station.longitude), tz, local_date
+            )
+
     created = []
     forecast_issued_at = utcnow()
-    for i, _ts in enumerate(times):
+    for i, ts in enumerate(times):
         w = weather_rows[i]
+        local_date = ts.tz_convert(tz).date() if ts.tzinfo else ts.date()
+        sun_window = sun_windows[local_date]
+        power_kw = float(total_ac_kw.iloc[i])
+        if not sun_window.is_daylight(w.interval_start):
+            power_kw = 0.0
         pv = PvForecast(
             station_id=station.id,
             issued_at=forecast_issued_at,
@@ -108,7 +136,7 @@ def generate_pv_forecast(db: Session, station: Station) -> list[PvForecast]:
             source="pvlib",
             source_version=pvlib.__version__,
             based_on_weather_forecast_id=w.id,
-            predicted_power_kw=round(float(total_ac_kw.iloc[i]), 4),
+            predicted_power_kw=round(power_kw, 4),
             scenario="expected",
         )
         db.add(pv)
