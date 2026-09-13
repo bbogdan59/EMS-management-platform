@@ -187,6 +187,27 @@ def test_get_or_create_tariff_rejects_unknown_kind(db):
         svc.get_or_create_tariff(db, station, "import", "some_random_string", "Bogus")
 
 
+def test_existing_contract_kind_cannot_reclassify_historical_versions(db):
+    station = _station(db, "kind-transition")
+    tariff = svc.get_or_create_tariff(db, station, "import", "fixed", "Contract initial")
+    svc.add_tariff_version(
+        db,
+        tariff,
+        valid_from=datetime.now(UTC),
+        fixed_price_lei_per_kwh=Decimal("0.8"),
+        opcom_margin_lei_per_kwh=None,
+        fixed_monthly_fee_lei=Decimal("0"),
+        variable_component_lei_per_kwh=Decimal("0"),
+        settlement_method="net_metering_15min",
+        settlement_interval_days=30,
+    )
+
+    with pytest.raises(ValueError, match="nu poate fi schimbat"):
+        svc.get_or_create_tariff(db, station, "import", "indexed_opcom", "Contract nou")
+
+    assert tariff.kind == "fixed"
+
+
 def test_fixed_contract_requires_fixed_price(db):
     station = _station(db, "fixed-missing-price")
     tariff = svc.get_or_create_tariff(db, station, "import", "fixed", "Fix fara pret")
