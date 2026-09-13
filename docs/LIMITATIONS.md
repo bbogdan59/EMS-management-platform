@@ -1353,6 +1353,8 @@ optiunea "1 an" (`range=1y`), ca sa existe o cale reala prin UI catre
 rezolutia zilnica.
 Un test de regresie acopera explicit conversia energiei in putere medie
 pentru ziua locala de 23 de ore de la trecerea la ora de vara.
+Exportul CSV ramane separat si brut; limitarea cardinalitatii se aplica
+doar contractului JSON folosit de grafice.
 
 **Widget independent cu empty/error state, nu doar "console.error".**
 `dashboard.js`: graficele de putere si SOC au acum propriile elemente
