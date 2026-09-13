@@ -50,7 +50,7 @@ def test_single_station_user_redirects_straight_to_dashboard(client, db):
 
     redirect_resp = client.get("/", follow_redirects=False)
     assert redirect_resp.status_code == 302
-    assert f"station_id={station.id}" in redirect_resp.headers["location"]
+    assert redirect_resp.headers["location"] == f"/?station_id={station.id}"
 
     page = client.get("/", follow_redirects=True)
     assert page.status_code == 200
@@ -59,6 +59,21 @@ def test_single_station_user_redirects_straight_to_dashboard(client, db):
     # deloc (doar numele statiei, ca text simplu) -- issue #45.
     assert 'name="station_id"' not in page.text
     assert "DS One Station Org / DS Only Station" in page.text
+
+
+def test_single_station_redirect_does_not_reflect_untrusted_host(client, db):
+    reset_key("login_attempts:testclient")
+    user = make_user(db, email="ds-host@test.local", password="Password1234")
+    org = make_org(db, "DS Host Org")
+    make_membership(db, user, org, role="viewer")
+    station = make_station(db, org, user, name="DS Host Station")
+    db.commit()
+
+    login(client, user.email, "Password1234")
+    resp = client.get("/", headers={"host": "attacker.invalid"}, follow_redirects=False)
+
+    assert resp.status_code == 302
+    assert resp.headers["location"] == f"/?station_id={station.id}"
 
 
 def test_multi_station_user_sees_picker_with_selector(client, db):
