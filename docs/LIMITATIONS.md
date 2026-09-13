@@ -1799,7 +1799,7 @@ le inlocuieste.
 1. **Redirect automat "o singura statie" (`app/web/routes/dashboard.py`,
    `home()`).** Cand un utilizator autentificat NON-admin de platforma are
    acces la exact O statie si nu a cerut explicit alta (`station_id` lipseste
-   din query), `GET /` face 302 direct catre URL-ul relativ `/?station_id=<statia lui>` (fara a reflecta headerul `Host`) --
+   din query), `GET /` face 302 direct catre URL-ul relativ `/?station_id=<statia lui>` (fara a reflecta headerul `Host`, comportament acoperit de test de regresie) --
    clientul NU mai vede o pagina intermediara cu un selector cu o singura
    optiune. Cu 0 statii, ramane empty state-ul explicativ existent
    (`dashboard/no_station.html`, neschimbat). Cu 2+ statii, comportamentul
