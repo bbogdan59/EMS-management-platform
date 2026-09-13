@@ -1382,6 +1382,9 @@ corespund tipului declarat -- `kind=fixed` cere `fixed_price_lei_per_kwh` si
 interzice `opcom_margin_lei_per_kwh`; `kind=indexed_opcom` cere
 `opcom_margin_lei_per_kwh` si interzice `fixed_price_lei_per_kwh` -- esec
 explicit (`ValueError`), niciodata o alegere tacita intre cele doua campuri.
+Exceptia explicita este o versiune cu `economic_calculation_disabled=True`:
+pretul corespunzator tipului poate lipsi, deoarece platforma declara ca nu
+poate calcula acea formula; campul de pret al celuilalt tip ramane interzis.
 Ruta `/stations/{id}/tariffs` (POST) prinde aceasta eroare si o afiseaza in
 formular (macro-ul `_form_errors.html`, issue #48), fara sa creeze niciun
 rand nou -- nu doar teste de model, comportament HTTP verificat capat-la-cap.

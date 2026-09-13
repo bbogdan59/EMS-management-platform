@@ -53,7 +53,11 @@ def get_or_create_tariff(db: Session, station: Station, direction: str, kind: st
 
 
 def _validate_version_matches_contract_kind(
-    kind: str, *, fixed_price_lei_per_kwh: Decimal | None, opcom_margin_lei_per_kwh: Decimal | None
+    kind: str,
+    *,
+    fixed_price_lei_per_kwh: Decimal | None,
+    opcom_margin_lei_per_kwh: Decimal | None,
+    economic_calculation_disabled: bool,
 ) -> None:
     """Impune ca versiunea noua sa aiba EXACT campurile care corespund
     tipului de contract al tarifului parinte (issue #46: "Contract versionat
@@ -68,7 +72,7 @@ def _validate_version_matches_contract_kind(
     si contractul real (indexarea pe OPCOM nu s-ar mai aplica niciodata)."""
     validate_tariff_kind(kind)
     if kind == TARIFF_KIND_FIXED:
-        if fixed_price_lei_per_kwh is None:
+        if fixed_price_lei_per_kwh is None and not economic_calculation_disabled:
             raise ValueError(
                 "fixed_price_lei_per_kwh: obligatoriu pentru un contract fix (pretul fix de energie, lei/kWh)."
             )
@@ -77,7 +81,7 @@ def _validate_version_matches_contract_kind(
                 "opcom_margin_lei_per_kwh: marja fata de OPCOM nu se aplica unui contract fix -- lasa acest camp gol."
             )
     elif kind == TARIFF_KIND_DYNAMIC_INDEXED:
-        if opcom_margin_lei_per_kwh is None:
+        if opcom_margin_lei_per_kwh is None and not economic_calculation_disabled:
             raise ValueError(
                 "opcom_margin_lei_per_kwh: obligatoriu pentru un contract dinamic-indexat -- formula de "
                 "mapare (pret OPCOM + marja) trebuie sa fie explicita, nu implicita."
@@ -107,7 +111,10 @@ def add_tariff_version(
     limitation_note: str | None = None,
 ) -> TariffVersion:
     _validate_version_matches_contract_kind(
-        tariff.kind, fixed_price_lei_per_kwh=fixed_price_lei_per_kwh, opcom_margin_lei_per_kwh=opcom_margin_lei_per_kwh
+        tariff.kind,
+        fixed_price_lei_per_kwh=fixed_price_lei_per_kwh,
+        opcom_margin_lei_per_kwh=opcom_margin_lei_per_kwh,
+        economic_calculation_disabled=economic_calculation_disabled,
     )
 
     open_version = db.scalar(

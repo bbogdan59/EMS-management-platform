@@ -260,6 +260,31 @@ def test_dynamic_indexed_contract_rejects_stray_fixed_price(db):
         )
 
 
+@pytest.mark.parametrize("kind", ["fixed", "indexed_opcom"])
+def test_disabled_economic_calculation_allows_missing_price_formula(db, kind):
+    """Un contract nesuportat poate fi pastrat pentru audit/configurare fara
+    a inventa un pret. Campul strain ramane interzis de validarea tipului."""
+    station = _station(db, f"disabled-{kind}")
+    tariff = svc.get_or_create_tariff(db, station, "import", kind, "Formula nesuportata")
+
+    version = svc.add_tariff_version(
+        db,
+        tariff,
+        valid_from=datetime.now(UTC),
+        fixed_price_lei_per_kwh=None,
+        opcom_margin_lei_per_kwh=None,
+        fixed_monthly_fee_lei=Decimal("0"),
+        variable_component_lei_per_kwh=Decimal("0"),
+        settlement_method="net_metering_15min",
+        settlement_interval_days=30,
+        economic_calculation_disabled=True,
+        limitation_note="Formula contractuala nu este implementata.",
+    )
+
+    assert version.economic_calculation_disabled is True
+    assert svc.compute_effective_price_lei_per_kwh(version, Decimal("0.50")) is None
+
+
 def test_valid_fixed_and_dynamic_versions_still_accepted(db):
     """Regresie: versiunile corect formate (un singur camp de pret completat,
     corespunzator tipului) tot trec, pentru ambele tipuri de contract."""
