@@ -280,6 +280,12 @@ def test_production_rejects_legacy_claim_code_enabled():
         )
 
 
+def test_legacy_claim_code_is_disabled_by_default():
+    from app.config import Settings
+
+    assert Settings.model_fields["legacy_claim_code_enabled"].default is False
+
+
 def test_web_legacy_claim_code_route_disabled_returns_error(client, db, monkeypatch):
     reset_key("login_attempts:testclient")
     user = make_user(db, email="legacyweb1@test.local", password="Password1234")
