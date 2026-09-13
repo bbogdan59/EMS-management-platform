@@ -32,7 +32,15 @@ def get_or_create_tariff(db: Session, station: Station, direction: str, kind: st
         select(Tariff).where(Tariff.station_id == station.id, Tariff.direction == direction, Tariff.is_active.is_(True))
     )
     if tariff is not None:
-        tariff.kind = kind
+        # `kind` apartine contractului parinte, nu versiunii. Mutarea lui pe
+        # un contract existent ar reclasifica retroactiv toate versiunile
+        # istorice. Pana cand tranzitia este modelata ca un contract nou cu
+        # inchiderea celui vechi, o refuzam explicit.
+        if tariff.kind != kind:
+            raise ValueError(
+                "kind: tipul unui contract existent nu poate fi schimbat; "
+                "tranzitia trebuie modelata ca un contract nou pentru a pastra istoricul."
+            )
         tariff.name = name
         db.add(tariff)
         db.flush()
