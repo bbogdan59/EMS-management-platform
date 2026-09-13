@@ -134,13 +134,21 @@ def build_rows(
 
         price_import = float(pi.price_import_lei_kwh) if pi.price_import_lei_kwh is not None else None
         price_export = float(pi.price_export_lei_kwh) if pi.price_export_lei_kwh is not None else None
-        cost = None
-        if price_import is not None or price_export is not None:
-            grid_import_kw = max(grid_kw, 0.0)
-            grid_export_kw = max(-grid_kw, 0.0)
-            cost = round(
-                (grid_import_kw * (price_import or 0.0) - grid_export_kw * (price_export or 0.0)) * interval_hours, 4
-            )
+        grid_import_kw = max(grid_kw, 0.0)
+        grid_export_kw = max(-grid_kw, 0.0)
+        # Un pret lipsa este necunoscut, nu zero. Avem nevoie doar de pretul
+        # corespunzator fluxului efectiv din interval; un interval fara flux
+        # are cost cunoscut 0 chiar daca nu exista tarife.
+        required_price_missing = (
+            (grid_import_kw > THRESHOLD_KW and price_import is None)
+            or (grid_export_kw > THRESHOLD_KW and price_export is None)
+        )
+        cost = None if required_price_missing else round(
+            (grid_import_kw * (price_import if price_import is not None else 0.0)
+             - grid_export_kw * (price_export if price_export is not None else 0.0))
+            * interval_hours,
+            4,
+        )
 
         rows.append(
             IntervalRow(
@@ -181,9 +189,11 @@ def group_segments(rows: list[IntervalRow]) -> list[PlanSegment]:
 
 def _finalize_segment(rows: list[IntervalRow]) -> PlanSegment:
     n = len(rows)
+    # Totalul unui segment este cunoscut numai daca fiecare interval este
+    # evaluabil; o singura valoare necunoscuta nu poate fi inlocuita cu zero.
     total_cost = None
-    if any(r.interval_cost_lei is not None for r in rows):
-        total_cost = round(sum(r.interval_cost_lei or 0.0 for r in rows), 4)
+    if all(r.interval_cost_lei is not None for r in rows):
+        total_cost = round(sum(r.interval_cost_lei for r in rows), 4)
     return PlanSegment(
         action_code=rows[0].action_code,
         action_label=rows[0].action_label,
