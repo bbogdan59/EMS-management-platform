@@ -86,6 +86,13 @@ def backtest_pv_forecast(db: Session, station: Station, start: datetime, end: da
     Niciunul dintre cele doua nu intra in calculul MAE/bias."""
     if end <= start:
         raise ValueError("Intervalul de backtesting trebuie sa aiba end > start.")
+    if start.utcoffset() is None or end.utcoffset() is None:
+        raise ValueError("Limitele intervalului trebuie sa fie timezone-aware.")
+    if any(
+        value.minute % 15 or value.second or value.microsecond
+        for value in (start, end)
+    ):
+        raise ValueError("Limitele intervalului trebuie aliniate la grila de 15 minute.")
 
     n_expected = int((end - start) / INTERVAL)
 
