@@ -183,7 +183,7 @@ def _station(db, suffix: str):
 
 def test_get_or_create_tariff_rejects_unknown_kind(db):
     station = _station(db, "unknown")
-    with pytest.raises(ValueError, match="Tip de contract necunoscut"):
+    with pytest.raises(ValueError, match="tip de contract necunoscut"):
         svc.get_or_create_tariff(db, station, "import", "some_random_string", "Bogus")
 
 
@@ -218,7 +218,7 @@ def test_fixed_contract_rejects_stray_opcom_margin(db):
 def test_dynamic_indexed_contract_requires_opcom_margin(db):
     station = _station(db, "dynamic-missing-margin")
     tariff = svc.get_or_create_tariff(db, station, "import", "indexed_opcom", "Dinamic fara marja")
-    with pytest.raises(ValueError, match="marja fata de pretul OPCOM este obligatorie"):
+    with pytest.raises(ValueError, match="opcom_margin_lei_per_kwh: obligatoriu"):
         svc.add_tariff_version(
             db, tariff, valid_from=datetime.now(UTC),
             fixed_price_lei_per_kwh=None, opcom_margin_lei_per_kwh=None,
@@ -230,7 +230,7 @@ def test_dynamic_indexed_contract_requires_opcom_margin(db):
 def test_dynamic_indexed_contract_rejects_stray_fixed_price(db):
     station = _station(db, "dynamic-stray-fixed")
     tariff = svc.get_or_create_tariff(db, station, "import", "indexed_opcom", "Dinamic contaminat")
-    with pytest.raises(ValueError, match="pretul fix nu se aplica"):
+    with pytest.raises(ValueError, match="fixed_price_lei_per_kwh: nu se aplica"):
         svc.add_tariff_version(
             db, tariff, valid_from=datetime.now(UTC),
             fixed_price_lei_per_kwh=Decimal("0.85"), opcom_margin_lei_per_kwh=Decimal("0.10"),

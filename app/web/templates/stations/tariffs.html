@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% from "partials/_breadcrumb.html" import trail as breadcrumb %}
+{% from "partials/_form_errors.html" import summary as error_summary %}
 {% block title %}Tarife {{ station.name }} - {{ app_name }}{% endblock %}
 {% block content %}
 <div class="space-y-6">
@@ -11,14 +12,7 @@
   ]) }}
   <h1 class="text-xl font-semibold">Tarife - {{ station.name }}</h1>
 
-  {% if errors %}
-  <div class="rounded-lg bg-red-50 p-3 text-sm text-red-800 dark:bg-red-900/30 dark:text-red-200">
-    <p class="mb-1 font-medium">Nu s-a salvat -- nicio versiune noua nu a fost creata:</p>
-    <ul class="list-inside list-disc">
-      {% for e in errors %}<li>{{ e }}</li>{% endfor %}
-    </ul>
-  </div>
-  {% endif %}
+  {{ error_summary(errors) }}
 
   {% for t in tariffs %}
   <div class="card">

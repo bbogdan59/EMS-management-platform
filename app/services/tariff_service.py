@@ -22,7 +22,7 @@ def validate_tariff_kind(kind: str) -> None:
     esec clar la scriere, nu o eticheta ignorata tacit de restul calculului."""
     if kind not in TARIFF_KINDS:
         raise ValueError(
-            f"Tip de contract necunoscut: {kind!r}. Valorile permise sunt: {sorted(TARIFF_KINDS)}."
+            f"kind: tip de contract necunoscut ({kind!r}). Valorile permise sunt: {sorted(TARIFF_KINDS)}."
         )
 
 
@@ -61,20 +61,22 @@ def _validate_version_matches_contract_kind(
     validate_tariff_kind(kind)
     if kind == TARIFF_KIND_FIXED:
         if fixed_price_lei_per_kwh is None:
-            raise ValueError("Contract fix: pretul fix de energie (lei/kWh) este obligatoriu.")
+            raise ValueError(
+                "fixed_price_lei_per_kwh: obligatoriu pentru un contract fix (pretul fix de energie, lei/kWh)."
+            )
         if opcom_margin_lei_per_kwh is not None:
             raise ValueError(
-                "Contract fix: marja fata de OPCOM nu se aplica unui contract fix -- lasa acest camp gol."
+                "opcom_margin_lei_per_kwh: marja fata de OPCOM nu se aplica unui contract fix -- lasa acest camp gol."
             )
     elif kind == TARIFF_KIND_DYNAMIC_INDEXED:
         if opcom_margin_lei_per_kwh is None:
             raise ValueError(
-                "Contract dinamic-indexat: marja fata de pretul OPCOM este obligatorie -- formula de "
+                "opcom_margin_lei_per_kwh: obligatoriu pentru un contract dinamic-indexat -- formula de "
                 "mapare (pret OPCOM + marja) trebuie sa fie explicita, nu implicita."
             )
         if fixed_price_lei_per_kwh is not None:
             raise ValueError(
-                "Contract dinamic-indexat: pretul fix nu se aplica -- foloseste doar marja fata de OPCOM."
+                "fixed_price_lei_per_kwh: nu se aplica unui contract dinamic-indexat -- foloseste doar marja fata de OPCOM."
             )
 
 
