@@ -1848,6 +1848,98 @@ addendumul anterior, neatinse aici.
   profilare CPU/memorie) -- sanity check-ul de mai sus prinde o regresie de
   tip "conexiunile se serializeaza", nu inlocuieste un load-test dedicat.
 
+## 21. Meteo/PV versionat -- rasarit/apus reale si backtesting MAE/bias (issue #53)
+
+Issue #53 cere o re-arhitecturare ampla (evaluare formala de provider,
+worker cu retry/backoff/observabilitate, backtesting complet). Cea mai mare
+parte a infrastructurii de baza EXISTA DEJA in acest repo (verificat explicit
+inainte de a scrie cod nou, ca sa nu se reconstruiasca ce functioneaza):
+
+**Deja existent, verificat, neschimbat:**
+- **Provider ales si documentat.** `app/services/weather_service.py` +
+  `app/config.py` (`weather_provider="open-meteo"`, `weather_base_url`)
+  foloseste deja Open-Meteo (fara autentificare, gratuit pentru uz
+  necomercial, acoperire globala inclusiv Romania) -- alegerea e documentata
+  in limitarea 2 de mai sus. Fallback controlat: `WeatherUnavailableError`
+  se propaga explicit pana in optimizator/UI, fara date inventate.
+- **Prognoza deja versionata cu `issued_at`.** `WeatherForecast`/
+  `PvForecast`/`ConsumptionForecast` au deja `issued_at`, `source`,
+  `source_version`, `confidence`, `is_synthetic` (`app/models/forecast.py`)
+  -- fiecare rulare a importului creeaza un batch nou, niciodata suprascris.
+- **Look-ahead deja prevenit pentru istoric.** `dashboard_service.
+  get_forecast_vs_actual` alege deja, pentru fiecare `interval_start`, doar
+  cea mai recenta prognoza cu `issued_at <= interval_start` -- fix aplicat in
+  issue #13 (limitarea 17 de mai sus), verificat aici ca ramane corect si
+  reutilizat ca principiu (nu ca import direct) in noul modul de backtesting.
+- **Fetch in background, deja pe worker existent, la fiecare 30 minute.**
+  `app/workers/tasks.py::weather_and_forecast_task` (Celery beat, issue #10)
+  ruleaza deja meteo + PV + consum pentru toate statiile active, cu lock
+  Redis anti-suprapunere; ruta web nu asteapta niciodata providerul.
+
+**Adaugat de acest PR (gap real, nu acoperit inainte):**
+- **Rasarit/apus/ore utile de soare, calculate real, nu aproximate.**
+  `app/services/solar_geometry_service.py` (nou) foloseste algoritmul SPA din
+  `pvlib` (deja dependinta a platformei) pe latitudine/longitudine REALE ale
+  statiei, intotdeauna in UTC -- fara nicio migratie de schema (rasaritul e
+  calculabil determinist din data+coordonate, nu are nevoie sa fie
+  persistat/versionat ca prognoza meteo propriu-zisa, care depinde de un
+  provider extern). Conversia in ora LOCALA foloseste `zoneinfo` (DST corect
+  automat) -- testat explicit pe ambele treceri DST din 2026 ale Romaniei
+  (28->29 martie si 24->25 octombrie): ora UTC a rasaritului nu sare
+  (continuitate fizica), dar reprezentarea ei LOCALA sare cu ~1 ora, exact
+  cum ar trebui. `pv_forecast_service.generate_pv_forecast` foloseste acum
+  aceasta fereastra ca o plasa de siguranta suplimentara: orice interval din
+  afara ferestrei reale de lumina e clampat explicit la 0 kW, indiferent de
+  o eventuala valoare mica/nenula de iradianta raportata de sursa meteo
+  langa amurg/rasarit (artefact de medie orara).
+- **Backtesting MAE/bias pentru prognoza PV.**
+  `app/services/forecast_backtest_service.py` (nou) calculeaza eroarea medie
+  absoluta (MAE) si bias-ul (eroare medie semnata: prognoza - real) intre
+  prognoza PV "asa cum era cunoscuta la momentul respectiv" (aceeasi regula
+  anti-look-ahead ca mai sus) si productia PV masurata (telemetrie agregata
+  la 15 minute), pentru o statie si un interval date. Un interval fara
+  prognoza validă sau fara telemetrie suficient de acoperita
+  (`coverage['pv'] >= 0.9`) e raportat separat (`n_missing_forecast`/
+  `n_missing_actual`), NICIODATA tratat ca eroare zero.
+- **Teste deterministe noi**, toate cu fixtures explicite (nicio dependinta
+  de ceasul real sau de un provider extern):
+  `tests/unit/test_solar_geometry_service.py` (ambele treceri DST 2026,
+  durata zilei vara/iarna, `is_daylight` la amiaza/miezul noptii),
+  `tests/unit/test_pv_forecast_service.py` (clamp la 0 in afara ferestrei de
+  lumina reale, eroare explicita fara meteo), `tests/unit/
+  test_forecast_backtest_service.py` (MAE/bias pe fixture cunoscut,
+  excluderea explicita a unei prognoze "din viitor" -- look-ahead --,
+  raportarea separata a lipsei de prognoza/telemetrie/acoperire
+  insuficienta).
+  Intervalul cerut este semi-deschis `[start, end)`, trebuie sa fie
+  timezone-aware si aliniat exact la 15 minute, pentru ca numarul de
+  esantioane asteptate sa nu fie aproximat; limitele naive sau decalate sunt
+  refuzate explicit.
+
+**Ramas explicit in afara scopului acestui PR (documentat, nu ascuns):**
+- **Interfata provider-agnostica formala** (un `Protocol`/clasa abstracta
+  peste care s-ar putea plugini alt provider decat Open-Meteo) -- adaptorul
+  actual e un singur modul concret; o abstractizare completa, cu al doilea
+  provider real implementat si testat, ramane de facut cand exista un motiv
+  concret sa schimbam providerul (ex. limita de rate atinsa in productie).
+- **Worker retry/backoff/observabilitate dedicate.** `weather_and_forecast_task`
+  ruleaza deja pe Celery beat (issue #10), dar o eroare per-statie e doar
+  colectata intr-o lista si logata -- nu exista inca retry cu backoff
+  exponential per provider, rate-limiting explicit catre Open-Meteo, sau
+  metrici de observabilitate (latenta/rata de succes) expuse separat.
+- **Backtesting complet (dashboard, segmentare pe conditii meteo, pret).**
+  `forecast_backtest_service.py` e strict minimal -- MAE/bias pe puterea PV,
+  fara UI, fara segmentare senin/inorat, fara metrici pe prognoza de consum
+  sau de pret. Suficient sa dovedeasca ca metodologia e corecta si sa
+  inceapa masurarea reala, nu un panou de raportare complet.
+- **Optimizer/recomandari care sa consume explicit "ore utile de soare"
+  ramase azi.** `solar_geometry_service.py` e integrat direct doar in
+  `pv_forecast_service` (clamp de siguranta); niciun modul de "recomandari
+  pentru maine" nu exista inca in acest repo (nu doar in afara acestui PR --
+  nu exista deloc), deci nu exista inca un consumator pentru aceasta
+  informatie in afara prognozei PV.
+- **Control HVAC** -- exclus explicit de prompt-ul issue-ului, neatins.
+
 ## Addendum: Tip de contract explicit, izolare import/export si teste DST/rotunjire (issue #46, a doua iteratie)
 
 Issue #46 a fost re-specificat mai detaliat dupa ce prima iteratie (vezi
