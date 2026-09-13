@@ -1306,6 +1306,121 @@ SSE deschis). Regresie acoperita si de
 Postgres reale, nu fixture-ul `db` cu SAVEPOINT, care nu poate exercita
 contentie de lock reala).
 
+## Addendum: Wizard ghidat de configurare organizatie/statie (issue #41)
+
+**Domeniul strict al acestei lucrari:** `app/web/wizard.py` (nou),
+`app/web/routes/organizations.py` (o ruta noua + un parametru `wizard`
+aditiv pe `create_station`), `app/web/routes/stations.py` (parametru
+`wizard` aditiv pe rutele deja existente de config/preferinte/tarife/
+activare device + doua rute noi de rezumat/activare), `app/web/routes/
+dashboard.py` (un banner discret, nu un redirect fortat), `app/services/
+station_service.py` (o singura functie noua, `setup_progress`), coloana
+noua `Station.setup_completed_at` (migratia `3ba1401941db`). Catalogul de
+echipamente si contractele de tarif raman tichete separate (#42, #46);
+integrarea Deye Cloud si firmware-ul NU au fost atinse, conform cerintei
+explicite a issue-ului.
+
+**Decizie de design: wizard-ul e chrome peste rutele existente, nu un flux
+nou.** Fiecare din cei 6 pasi ceruti de issue este pagina deja existenta si
+deja testata (creare statie, `stations/config.html`, `stations/devices.html`,
+`stations/tariffs.html`, `stations/preferences.html`), plus o pagina noua de
+rezumat -- niciodata o reimplementare a formularului sau a validarii.
+`?wizard=1` (query pe GET, camp ascuns pe POST) doar: (a) afiseaza
+`partials/_wizard_progress.html` (progres cu 6 pasi, Back, Sari-peste-pas)
+deasupra formularului deja existent, reutilizand breadcrumb-ul si
+`_form_errors.html`/`form-errors.js` de la issue #48 pentru rezumatul de
+erori si focus-ul pe primul camp invalid -- nu am reimplementat focus
+management propriu; (b) schimba destinatia redirect-ului dupa succes catre
+pasul urmator din `STEP_ORDER`, in loc de reincarcarea paginii curente.
+RBAC (`StationAccess`/`OrganizationAccess`), CSRF (`verify_csrf` neschimbat
+pe toate rutele) si auditul (`record_audit` neschimbat) raman exact cele deja
+existente pe fiecare ruta -- nu a fost adaugata nicio poarta noua de
+autorizare, doar chrome UI.
+
+**"Draft persistent si reluabil" fara un tabel de drafturi separat.**
+`station_service.create_station` creeaza deja, intr-o singura tranzactie,
+statia + o versiune v1 de configuratie tehnica + o versiune v1 de preferinte
+(cu valori implicite rezonabile) -- deci pasii "Echipamente" si "Preferinte"
+NU sunt niciodata cu adevarat incompleti dupa crearea statiei, doar
+rafinabili. Singurele stari genuin incomplete, derivate direct din date reale
+(nu dintr-un payload de formular nesalvat), sunt "niciun device activ
+asociat" si "niciun tarif configurat" (`station_service.setup_progress`).
+Reluarea inseamna doar recalcularea pasului urmator din aceasta stare reala
+(`next_wizard_step`) -- refresh, inchiderea tab-ului sau revenirea a doua zi
+nu pierd nimic, pentru ca nu exista niciun payload intermediar nesalvat de
+pastrat.
+
+**Reluarea e un banner, NICIODATA un redirect fortat.** Am luat in considerare
+si respins deliberat interceptarea rutei `/` (dashboard) pentru a redirecta
+automat catre wizard cat timp configurarea nu e "finalizata" -- ar fi rupt
+`tests/e2e/test_ui_flows.py::test_dashboard_sse_connection_reaches_live_status`
+(un `organization_admin` care viziteaza direct dashboard-ul unei statii proaspat
+create, fara device/tarif, si se asteapta sa vada dashboard-ul, nu sa fie
+deturnat) si ar fi contrazis principiul "vizitarea dashboard-ului nu trebuie
+niciodata blocata". In schimb, `dashboard.py::home` adauga doar
+`wizard_resume_url` in context (un link "Continua configurarea") cand
+utilizatorul curent poate gestiona efectiv configurarea statiei
+(`can_manage_station_config`) SI nu e `platform_admin` (care viziteaza des
+statii ale altor organizatii doar pentru supraveghere, nu pentru configurare)
+SI configurarea nu e inca finalizata explicit. Testat explicit ca acest banner
+NU forteaza navigarea (`test_dashboard_never_force_redirects_incomplete_station`)
+si NU apare pentru roluri fara drept de gestionare (`test_viewer_does_not_
+see_resume_banner`).
+
+**Activare explicita, idempotenta.** Pasul final (`POST /stations/{id}/setup/
+activate`) seteaza `Station.setup_completed_at` DOAR daca era `NULL` -- un al
+doilea submit (dublu-click, back+resubmit) nu suprascrie momentul primei
+activari si redirecteaza oricum identic catre `/?station_id={id}` (criteriul
+de acceptare "dupa finalizare, utilizatorul ajunge direct in dashboard-ul
+statiei"). Nu a fost adaugat un sistem nou de idempotency-token pentru
+dublu-submit dincolo de acesta -- pasii cu date reale (config/preferinte)
+sunt deja protejati impotriva dublei trimiteri de concurenta optimista pe
+versiuni (`expected_version`, livrata prin issue #8), verificata deja de
+`test_station_config_forms.py`; wizard-ul doar schimba redirect-ul dupa acel
+mecanism existent, nu il duplica.
+
+**Ce ramane explicit in afara scopului acestei implementari (nu ascuns):**
+- **Fara stocare de draft independenta de rândurile de domeniu.** Daca un
+  viitor pas al wizard-ului ar introduce campuri care NU corespund direct
+  unui rand deja persistat (de exemplu o selectie facuta pe pasul 3 care
+  influenteaza doar randarea pasului 5, fara sa fie ea insasi o entitate de
+  domeniu), ar necesita un mecanism de draft separat -- nu a fost construit
+  aici, pentru ca nu a fost nevoie: fiecare pas actual scrie direct intr-un
+  rand de domeniu deja existent.
+- **Fara teste automate de concurenta reala pe rutele de wizard** (doua
+  sesiuni/thread-uri simultane pe acelasi pas) -- protectia de concurenta
+  optimista in sine e deja testata cu conexiuni Postgres reale separate in
+  `test_station_config_forms.py` (issue #8); nu am duplicat acel test doar
+  ca sa treaca prin URL-ul `?wizard=1`, care nu schimba logica de concurenta.
+- **Fara audit vizual/screenshot al accesibilitatii** -- am reutilizat
+  mecanismul deja verificat (issue #48: `data-error-summary`/`aria-invalid`/
+  focus pe primul camp invalid, testat cu Playwright acolo), am adaugat
+  `aria-current="step"` si `<nav aria-label>` pe indicatorul de progres si am
+  verificat prin teste HTTP ca acele atribute apar in HTML, dar nu exista un
+  test Playwright nou dedicat exclusiv navigarii cu tastatura a noului
+  indicator de pasi (elementele sunt `<a>`/`<button>` native, deci focusabile
+  si activabile cu tastatura implicit, dar comportamentul real intr-un
+  browser nu a fost verificat separat de acest PR).
+- **Fluxul avansat multi-site ramane neschimbat, nu "ascuns".** Formularul
+  rapid de adaugare a unei statii suplimentare in `/organizations/{id}` (util
+  cand o organizatie are deja o statie si vrea sa adauge alta fara sa
+  parcurga din nou tot wizard-ul) ramane disponibil, doar redenumit explicit
+  "flux avansat" -- wizard-ul ghidat (`/organizations/{id}/setup/station`) e
+  oferit ca actiune implicita doar cand organizatia NU are inca nicio statie
+  (happy path 1 organizatie / 1 statie).
+- **"Cont si organizatie" (pasul 1 din specificatie) nu are o pagina proprie
+  in acest wizard.** Platforma nu are inca un flux de auto-inregistrare
+  publica (conturile se creeaza prin bootstrap admin sau invitatie -- fluxuri
+  deja existente, neatinse aici); crearea implicita a unei organizatii pentru
+  un utilizator rezidential ramane in afara scopului acestei PR, care preia
+  fluxul incepand de la o organizatie deja existenta (cu cel putin un
+  `organization_admin`).
+- **Nicio editare a numelui/fusului orar/coordonatelor unei statii deja
+  create din wizard.** Odata creata, pasul "Statie" din indicatorul de
+  progres apare doar ca bifat (necliclabil) -- nu exista o ruta de editare a
+  acestor campuri de baza (nici in afara wizard-ului); ramane un formular de
+  creare, nu si de editare ulterioara.
+
 ## 20. Design system minim: breadcrumb, grupuri de campuri, focus pe eroare (issue #48)
 
 Issue #48 cerea un "design system" pentru UI -- domeniu larg, care poate

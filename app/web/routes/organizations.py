@@ -20,6 +20,7 @@ from app.schemas.station_forms import StationCreateInput
 from app.services import auth_service, membership_service, station_service
 from app.web.context import build_nav_context
 from app.web.templating import templates
+from app.web.wizard import wizard_chrome_context
 
 router = APIRouter()
 
@@ -67,6 +68,27 @@ def _none_if_blank(value: str | None) -> str | None:
     return value
 
 
+@router.get("/organizations/{organization_id}/setup/station")
+def setup_station_form(
+    request: Request,
+    db: Session = Depends(get_db),
+    org_role: tuple = Depends(OrganizationAccess(min_role="organization_admin")),
+    user: User = Depends(get_current_user),
+):
+    """Pasul 1 al wizard-ului de configurare (issue #41): aceeasi actiune de
+    creare a statiei ca formularul rapid din `/organizations/{id}`, dar pe o
+    pagina dedicata, cu progres/chrome de wizard -- pentru happy path-ul unei
+    organizatii care isi configureaza prima statie, ghidat."""
+    organization, _role = org_role
+    context = {
+        "organization": organization,
+        "errors": request.query_params.getlist("error"),
+        **wizard_chrome_context(db, "station", station=None, organization_id=organization.id),
+        **build_nav_context(db, user),
+    }
+    return templates.TemplateResponse(request, "organizations/setup_station.html", context)
+
+
 @router.post("/organizations/{organization_id}/stations", dependencies=[Depends(verify_csrf)])
 def create_station(
     request: Request,
@@ -82,11 +104,14 @@ def create_station(
     grid_import_limit_kw: str | None = Form(None),
     grid_export_limit_kw: str | None = Form(None),
     ev_enabled: str | None = Form(None),
+    wizard: str | None = Form(None),
     db: Session = Depends(get_db),
     org_role: tuple = Depends(OrganizationAccess(min_role="organization_admin")),
     user: User = Depends(get_current_user),
 ):
     organization, _role = org_role
+    is_wizard = bool(wizard)
+    error_target = f"/organizations/{organization.id}/setup/station" if is_wizard else f"/organizations/{organization.id}"
 
     raw = {
         "name": name,
@@ -107,7 +132,7 @@ def create_station(
     except ValidationError as exc:
         errors = [f"{'.'.join(str(p) for p in e['loc']) or 'formular'}: {e['msg']}" for e in exc.errors()]
         query = urlencode([("error", e) for e in errors])
-        return RedirectResponse(f"/organizations/{organization.id}?{query}", status_code=303)
+        return RedirectResponse(f"{error_target}?{query}", status_code=303)
 
     station = station_service.create_station(
         db,
@@ -136,6 +161,13 @@ def create_station(
         actor_user_id=user.id, actor_label=user.email, organization_id=organization.id, station_id=station.id,
     )
     db.commit()
+    if is_wizard:
+        # Continua wizard-ul (issue #41) direct pe pasul urmator, in loc sa
+        # arunce utilizatorul inapoi in lista organizatiei -- statia tocmai
+        # creata are deja o configuratie/preferinte implicite (vezi
+        # `station_service.create_station`), deci pasul "Echipamente" e o
+        # rafinare optionala, nu o repetare a formularului anterior.
+        return RedirectResponse(f"/stations/{station.id}/config?wizard=1", status_code=303)
     return RedirectResponse(f"/organizations/{organization.id}", status_code=303)
 
 

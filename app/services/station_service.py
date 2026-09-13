@@ -112,6 +112,32 @@ def create_station(
     return station
 
 
+def setup_progress(db: Session, station: Station) -> dict:
+    """Stare reala de completare a pasilor optionali ai wizard-ului de
+    configurare (issue #41), derivata direct din datele deja persistate --
+    fara niciun tabel/coloana separata de "draft" pentru pasii care scriu
+    direct in modelul de domeniu (config/preferinte exista deja din
+    `create_station`, deci nu sunt niciodata "incomplete")."""
+    from app.models.device import Device
+    from app.models.enums import DeviceStatus
+    from app.models.tariff import Tariff
+
+    has_device = (
+        db.scalar(
+            select(Device.id)
+            .where(Device.station_id == station.id, Device.status == DeviceStatus.active.value)
+            .limit(1)
+        )
+        is not None
+    )
+    has_tariff = db.scalar(select(Tariff.id).where(Tariff.station_id == station.id).limit(1)) is not None
+    return {
+        "has_device": has_device,
+        "has_tariff": has_tariff,
+        "completed": station.setup_completed_at is not None,
+    }
+
+
 def next_config_version(db: Session, station: Station) -> int:
     latest = db.scalar(
         select(StationConfigVersion.version)

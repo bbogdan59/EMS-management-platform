@@ -1,9 +1,19 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import JSON, Boolean, ForeignKey, Integer, Numeric, String, UniqueConstraint
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Integer,
+    Numeric,
+    String,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Entity
@@ -25,6 +35,14 @@ class Station(Entity):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     is_demo: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     execution_mode: Mapped[str] = mapped_column(String(16), default="shadow", nullable=False)
+
+    # Issue #41: marcheaza finalizarea explicita a wizard-ului de configurare
+    # (pasul "Rezumat" -> "Activeaza statia"). NULL inseamna ca asistentul de
+    # configurare ghidat nu a fost inca parcurs pana la capat -- folosit doar
+    # ca semnal UX (afisarea unui banner de reluare pe dashboard), niciodata
+    # ca poarta de acces: toate rutele raman accesibile direct, indiferent de
+    # aceasta valoare.
+    setup_completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     organization: Mapped[Organization] = relationship(back_populates="stations")  # noqa: F821
     panel_groups: Mapped[list[PanelGroup]] = relationship(

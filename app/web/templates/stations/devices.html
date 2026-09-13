@@ -9,6 +9,7 @@
     {"label": station.name, "url": "/?station_id=" ~ station.id},
     {"label": "Dispozitive", "url": None},
   ]) }}
+  {% include "partials/_wizard_progress.html" %}
   <h1 class="text-xl font-semibold">Dispozitive - {{ station.name }}</h1>
 
   {% if request.query_params.get("linked") %}
@@ -25,6 +26,7 @@
     <p class="mb-3 text-sm text-gray-500 dark:text-gray-400">Conecteaza device-ul la alimentare si internet, apoi introdu Device Code de pe eticheta sigilata. Nu trebuie sa modifici nimic pe Raspberry Pi.</p>
     <form method="post" action="/stations/{{ station.id }}/devices/activate" class="flex flex-wrap items-end gap-3">
       <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}" />
+      {% if wizard_step %}<input type="hidden" name="wizard" value="1" />{% endif %}
       <div>
         <label class="label">Device Code</label>
         <input class="input font-mono uppercase" name="activation_code" minlength="20" maxlength="64" autocomplete="one-time-code" required />
@@ -79,6 +81,7 @@
     <p class="mb-3 text-sm text-gray-500 dark:text-gray-400">Codul temporar este pastrat momentan pentru simulatoare si device-uri vechi. Unitățile noi folosesc Device Code de pe eticheta sigilata.</p>
     <form method="post" action="/stations/{{ station.id }}/claim-codes">
       <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}" />
+      {% if wizard_step %}<input type="hidden" name="wizard" value="1" />{% endif %}
       <button type="submit" class="btn-primary">Genereaza cod nou</button>
     </form>
   </div>
