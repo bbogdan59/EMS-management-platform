@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import threading
 import time
 from datetime import timedelta
 from uuid import uuid4
@@ -259,7 +260,7 @@ async def test_concurrent_connections_across_tenants_never_cross_contaminate(eng
             cleanup.commit()
 
 
-async def test_many_concurrent_connections_complete_promptly(committed, monkeypatch):
+async def test_many_concurrent_connections_execute_loads_in_parallel(committed, monkeypatch):
     """Sanity check usor de sarcina (nu un load-test complet, cerinta
     explicita a issue #50): N conexiuni concurente NU se serializeaza
     reciproc. Fiecare tur de polling isi deschide propria sesiune DB scurta
@@ -271,6 +272,27 @@ async def test_many_concurrent_connections_complete_promptly(committed, monkeypa
     monkeypatch.setattr(sse, "POLL_INTERVAL_SECONDS", 0)
     concurrency = 15
     ticks_per_connection = 3
+    original_loader = sse._load_authorized_live_metrics
+    lock = threading.Lock()
+    active_loaders = 0
+    max_active_loaders = 0
+
+    def tracked_loader(*args):
+        nonlocal active_loaders, max_active_loaders
+        with lock:
+            active_loaders += 1
+            max_active_loaders = max(max_active_loaders, active_loaders)
+        try:
+            # Largeste controlat fereastra de suprapunere. Assertia de mai
+            # jos masoara concurenta direct, fara un prag de timp dependent
+            # de viteza runner-ului CI.
+            time.sleep(0.03)
+            return original_loader(*args)
+        finally:
+            with lock:
+                active_loaders -= 1
+
+    monkeypatch.setattr(sse, "_load_authorized_live_metrics", tracked_loader)
 
     async def _consume():
         request = _FakeRequest(max_ticks=ticks_per_connection + 2)
@@ -283,13 +305,8 @@ async def test_many_concurrent_connections_complete_promptly(committed, monkeypa
         await gen.aclose()
         return events
 
-    started = time.monotonic()
     results = await asyncio.gather(*(_consume() for _ in range(concurrency)))
-    elapsed = time.monotonic() - started
 
     assert len(results) == concurrency
     assert all(r[0]["event"] == "snapshot" for r in results)
-    # Prag generos (mediu CI incarcat, nu un buget de performanta strict) --
-    # scopul e sa prinda o regresie gen "conexiunile se serializeaza", nu sa
-    # impuna un SLA de productie.
-    assert elapsed < 10.0
+    assert max_active_loaders > 1  # detecteaza direct o regresie la executie seriala
