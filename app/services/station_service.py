@@ -130,7 +130,14 @@ def setup_progress(db: Session, station: Station) -> dict:
         )
         is not None
     )
-    has_tariff = db.scalar(select(Tariff.id).where(Tariff.station_id == station.id).limit(1)) is not None
+    has_tariff = (
+        db.scalar(
+            select(Tariff.id)
+            .where(Tariff.station_id == station.id, Tariff.is_active.is_(True))
+            .limit(1)
+        )
+        is not None
+    )
     return {
         "has_device": has_device,
         "has_tariff": has_tariff,

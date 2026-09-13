@@ -215,7 +215,7 @@ def station_config_form(
         **_equipment_selection_context(config),
         **build_nav_context(db, user, station.id),
     }
-    if request.query_params.get("wizard"):
+    if request.query_params.get("wizard") == "1":
         context.update(wizard_chrome_context(db, "config", station=station))
     return templates.TemplateResponse(request, "stations/config.html", context)
 
@@ -249,7 +249,7 @@ def station_config_submit(
     user: User = Depends(get_current_user),
 ):
     station, _role = station_role
-    is_wizard = bool(wizard)
+    is_wizard = wizard == "1"
 
     try:
         panel_groups_raw = json.loads(panel_groups_json)
@@ -430,7 +430,7 @@ def preferences_form(
         "errors": request.query_params.getlist("error"),
         **build_nav_context(db, user, station.id),
     }
-    if request.query_params.get("wizard"):
+    if request.query_params.get("wizard") == "1":
         context.update(wizard_chrome_context(db, "preferences", station=station))
     return templates.TemplateResponse(request, "stations/preferences.html", context)
 
@@ -460,7 +460,7 @@ def preferences_submit(
     from app.models.preference import PreferenceVersion
 
     station, _role = station_role
-    is_wizard = bool(wizard)
+    is_wizard = wizard == "1"
 
     try:
         soc_targets_raw = json.loads(soc_targets_json) if soc_targets_json else []
@@ -619,7 +619,7 @@ def tariffs_page(
         "can_edit": can_manage_station_config(role),
         **build_nav_context(db, user, station.id),
     }
-    if request.query_params.get("wizard"):
+    if request.query_params.get("wizard") == "1":
         context.update(wizard_chrome_context(db, "tariffs", station=station))
     return templates.TemplateResponse(request, "stations/tariffs.html", context)
 
@@ -671,7 +671,7 @@ def tariffs_submit(
         actor_user_id=user.id, actor_label=user.email, station_id=station.id,
     )
     db.commit()
-    if wizard:
+    if wizard == "1":
         return _next_step_redirect(station.id, "tariffs")
     return RedirectResponse(f"/stations/{station.id}/tariffs", status_code=303)
 
@@ -699,7 +699,7 @@ def devices_page(
         "new_claim_code": None,
         **build_nav_context(db, user, station.id),
     }
-    if request.query_params.get("wizard"):
+    if request.query_params.get("wizard") == "1":
         context.update(wizard_chrome_context(db, "devices", station=station))
     return templates.TemplateResponse(request, "stations/devices.html", context)
 
@@ -714,7 +714,8 @@ def activate_device_code(
     user: User = Depends(get_current_user),
 ):
     station, _role = station_role
-    wizard_qs = "&wizard=1" if wizard else ""
+    is_wizard = wizard == "1"
+    wizard_qs = "&wizard=1" if is_wizard else ""
     try:
         check_fixed_window(
             f"device_activation:{user.id}:{station.id}",
@@ -736,7 +737,7 @@ def activate_device_code(
         metadata={"serial_number": device.serial_number},
     )
     db.commit()
-    if wizard:
+    if is_wizard:
         return _next_step_redirect(station.id, "devices")
     return RedirectResponse(f"/stations/{station.id}/devices?linked=1", status_code=303)
 
@@ -760,7 +761,7 @@ def create_claim_code(
     claim_codes = db.scalars(
         select(ClaimCode).where(ClaimCode.station_id == station.id).order_by(ClaimCode.created_at.desc()).limit(10)
     ).all()
-    extra_context = wizard_chrome_context(db, "devices", station=station) if wizard else {}
+    extra_context = wizard_chrome_context(db, "devices", station=station) if wizard == "1" else {}
     response = templates.TemplateResponse(
         request,
         "stations/devices.html",

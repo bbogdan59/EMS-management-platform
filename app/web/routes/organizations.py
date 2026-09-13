@@ -110,7 +110,7 @@ def create_station(
     user: User = Depends(get_current_user),
 ):
     organization, _role = org_role
-    is_wizard = bool(wizard)
+    is_wizard = wizard == "1"
     error_target = f"/organizations/{organization.id}/setup/station" if is_wizard else f"/organizations/{organization.id}"
 
     raw = {

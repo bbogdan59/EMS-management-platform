@@ -17,6 +17,7 @@ from sqlalchemy import select
 from app.core.rate_limit import reset_key
 from app.models.device import Device
 from app.models.station import Station
+from app.models.tariff import Tariff
 from app.services import device_service, station_service
 from tests.factories import make_membership, make_org, make_station, make_user
 from tests.web_helpers import get_csrf, login
@@ -144,6 +145,18 @@ def test_wizard_config_step_shows_progress_and_skip_to_devices(client, db):
     assert 'aria-current="step"' in resp.text
     assert f"/stations/{station.id}/devices?wizard=1" in resp.text  # link de skip catre pasul urmator
     assert f"/organizations/{org.id}" in resp.text  # back catre organizatie
+
+
+def test_wizard_mode_requires_explicit_one_marker(client, db):
+    org, admin = _setup(db)
+    station = make_station(db, org, admin, name="Strict Wizard Marker")
+    db.commit()
+    login(client, admin.email, "Password1234")
+
+    resp = client.get(f"/stations/{station.id}/config?wizard=0")
+
+    assert resp.status_code == 200
+    assert 'aria-current="step"' not in resp.text
 
 
 def test_wizard_config_submit_advances_to_devices_step(client, db):
@@ -411,3 +424,15 @@ def test_setup_progress_helper_reflects_real_state(db):
 
     progress = station_service.setup_progress(db, station)
     assert progress == {"has_device": False, "has_tariff": False, "completed": False}
+
+
+def test_setup_progress_ignores_inactive_tariff(db):
+    org = make_org(db, "Inactive Tariff Progress Org")
+    user = make_user(db, email="inactive-tariff-progress@test.local", password="Password1234")
+    station = make_station(db, org, user, name="Inactive Tariff Progress Station")
+    db.add(Tariff(station_id=station.id, direction="import", kind="fixed", name="Expirat", is_active=False))
+    db.commit()
+
+    progress = station_service.setup_progress(db, station)
+
+    assert progress["has_tariff"] is False

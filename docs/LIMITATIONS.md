@@ -1418,7 +1418,8 @@ nou.** Fiecare din cei 6 pasi ceruti de issue este pagina deja existenta si
 deja testata (creare statie, `stations/config.html`, `stations/devices.html`,
 `stations/tariffs.html`, `stations/preferences.html`), plus o pagina noua de
 rezumat -- niciodata o reimplementare a formularului sau a validarii.
-`?wizard=1` (query pe GET, camp ascuns pe POST) doar: (a) afiseaza
+`?wizard=1` (query pe GET, camp ascuns pe POST; valoarea trebuie sa fie exact
+`1`, nu doar un sir nenul) doar: (a) afiseaza
 `partials/_wizard_progress.html` (progres cu 6 pasi, Back, Sari-peste-pas)
 deasupra formularului deja existent, reutilizand breadcrumb-ul si
 `_form_errors.html`/`form-errors.js` de la issue #48 pentru rezumatul de
@@ -1437,7 +1438,7 @@ statia + o versiune v1 de configuratie tehnica + o versiune v1 de preferinte
 NU sunt niciodata cu adevarat incompleti dupa crearea statiei, doar
 rafinabili. Singurele stari genuin incomplete, derivate direct din date reale
 (nu dintr-un payload de formular nesalvat), sunt "niciun device activ
-asociat" si "niciun tarif configurat" (`station_service.setup_progress`).
+asociat" si "niciun tarif activ configurat" (`station_service.setup_progress`).
 Reluarea inseamna doar recalcularea pasului urmator din aceasta stare reala
 (`next_wizard_step`) -- refresh, inchiderea tab-ului sau revenirea a doua zi
 nu pierd nimic, pentru ca nu exista niciun payload intermediar nesalvat de
