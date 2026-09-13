@@ -1399,6 +1399,8 @@ stricat toate acestea pentru un beneficiu de securitate nul in productie
 Transferul si resetarea administrativa blocheaza randul device-ului cu
 `SELECT ... FOR UPDATE`; doua cereri concurente nu pot emite credentiale
 active conflictuale pe baza aceleiasi stari vechi.
+Acest lock completeaza testul de concurenta al activarii; operatiile de
+mentenanta si asocierea initiala au astfel garantii explicite separate.
 
 **4. Test de concurenta cu doua conturi/sesiuni Postgres --
 `test_concurrent_claim_two_accounts_same_code_exactly_one_wins`
