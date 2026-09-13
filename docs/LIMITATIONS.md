@@ -1343,6 +1343,8 @@ lista de rulari).
   a multiplicatorilor Lagrange reali ai solverului** -- planul, o data
   publicat, nu mai poarta acea informatie; documentat explicit in docstring
   si in UI.
+  Costul unui interval/segment ramane explicit necunoscut daca lipseste
+  tariful necesar fluxului efectiv; un pret absent nu este inlocuit cu zero.
 - `GET /admin/operations/optimization-runs/{run_id}` -- pagina noua cu:
   legenda coloanelor (definitie + unitate + conventie de semn explicita
   pentru baterie/retea, `+`/`-`), sectiunea de provenance/freshness
