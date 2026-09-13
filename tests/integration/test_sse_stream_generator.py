@@ -7,7 +7,9 @@ revocare mid-stream. Foloseste `engine` (date comise real), nu fixture-ul
 taskurile Celery testate in `test_admin_job_tasks.py`."""
 from __future__ import annotations
 
+import asyncio
 import json
+import time
 from datetime import timedelta
 from uuid import uuid4
 
@@ -185,3 +187,109 @@ async def test_cross_tenant_station_never_yields_any_event(engine):
             cleanup.execute(delete(UserSession).where(UserSession.id == ids["session_id"]))
             cleanup.execute(delete(User).where(User.id.in_([ids["user_id"], ids["owner_id"]])))
             cleanup.commit()
+
+
+async def test_concurrent_connections_across_tenants_never_cross_contaminate(engine, monkeypatch):
+    """Doua conexiuni SSE (statii/organizatii DIFERITE) avansate CONCURENT
+    (`asyncio.gather`, nu una dupa alta) -- simuleaza doi vizitatori reali cu
+    dashboard-uri diferite deschise in acelasi moment. Testele anterioare
+    (`test_cross_tenant_station_never_yields_any_event`) verifica izolarea
+    consumand un singur flux o data; acesta verifica in plus ca izolarea
+    tine si cand cele doua bucle de polling ruleaza efectiv in paralel, nu
+    doar secvential."""
+    monkeypatch.setattr(sse, "POLL_INTERVAL_SECONDS", 0)
+    suffix = uuid4().hex
+    tenants = []
+    with Session(engine) as setup:
+        for label in ("a", "b"):
+            user = make_user(setup, email=f"{suffix}-{label}@sse-concurrent.test")
+            org = make_org(setup, f"SSE Concurrent {label} {suffix}")
+            station = make_station(setup, org, user, name=f"SSE Concurrent Station {label} {suffix}")
+            make_membership(setup, user, org, role="viewer")
+            device = make_device(setup, station)
+            sess = UserSession(
+                user_id=user.id, token_hash=f"sse-concurrent-{label}-{suffix}", csrf_secret="csrf",
+                expires_at=utcnow() + timedelta(hours=1),
+            )
+            setup.add(sess)
+            setup.flush()
+            tenants.append({"label": label, "user_id": user.id, "org_id": org.id, "station_id": station.id, "session_id": sess.id, "device_id": device.id})
+        setup.commit()
+
+    try:
+        request_a = _FakeRequest(max_ticks=10)
+        request_b = _FakeRequest(max_ticks=10)
+        gen_a = sse.live_metric_events(request_a, tenants[0]["station_id"], tenants[0]["user_id"], tenants[0]["session_id"])
+        gen_b = sse.live_metric_events(request_b, tenants[1]["station_id"], tenants[1]["user_id"], tenants[1]["session_id"])
+
+        snap_a, snap_b = await asyncio.gather(gen_a.__anext__(), gen_b.__anext__())
+        assert snap_a["event"] == "snapshot"
+        assert snap_b["event"] == "snapshot"
+
+        with Session(engine) as write:
+            write.add(TelemetryRaw(
+                device_id=tenants[0]["device_id"], station_id=tenants[0]["station_id"], boot_id="concurrent-a", sequence=1,
+                measured_at=utcnow(), received_at=utcnow(), pv_power_w=4200, load_power_w=1000, is_simulated=False,
+            ))
+            write.commit()
+
+        # Numai organizatia A a primit telemetrie noua -- avansate CONCURENT,
+        # A trebuie sa produca `delta` cu valoarea ei, B doar `heartbeat`,
+        # niciodata amestecate intre fluxuri.
+        ev_a, ev_b = await asyncio.gather(gen_a.__anext__(), gen_b.__anext__())
+        assert ev_a["event"] == "delta"
+        payload_a = json.loads(ev_a["data"])
+        assert any(m["metric"] == "pv_power_kw" and m["value"] == 4.2 for m in payload_a["metrics"])
+        assert ev_b["event"] == "heartbeat"
+
+        await gen_a.aclose()
+        await gen_b.aclose()
+    finally:
+        with Session(engine) as cleanup:
+            for t in tenants:
+                cleanup.execute(delete(TelemetryRaw).where(TelemetryRaw.station_id == t["station_id"]))
+                cleanup.execute(delete(Device).where(Device.id == t["device_id"]))
+                cleanup.execute(delete(PanelGroup).where(PanelGroup.station_id == t["station_id"]))
+                cleanup.execute(delete(StationConfigVersion).where(StationConfigVersion.station_id == t["station_id"]))
+                cleanup.execute(delete(UserSession).where(UserSession.id == t["session_id"]))
+                cleanup.execute(delete(Membership).where(Membership.user_id == t["user_id"]))
+                cleanup.execute(delete(Station).where(Station.id == t["station_id"]))
+                cleanup.execute(delete(Organization).where(Organization.id == t["org_id"]))
+                cleanup.execute(delete(User).where(User.id == t["user_id"]))
+            cleanup.commit()
+
+
+async def test_many_concurrent_connections_complete_promptly(committed, monkeypatch):
+    """Sanity check usor de sarcina (nu un load-test complet, cerinta
+    explicita a issue #50): N conexiuni concurente NU se serializeaza
+    reciproc. Fiecare tur de polling isi deschide propria sesiune DB scurta
+    prin `SessionLocal()` (`_load_authorized_live_metrics`), deci timpul
+    total pentru N conexiuni concurente ar trebui sa ramana apropiat de
+    timpul unei singure conexiuni, nu N x cost-per-conexiune (ceea ce ar
+    insemna contentie/serializare -- exact tipul de regresie prins de fix-ul
+    critic anterior, vezi addendum-ul din LIMITATIONS.md)."""
+    monkeypatch.setattr(sse, "POLL_INTERVAL_SECONDS", 0)
+    concurrency = 15
+    ticks_per_connection = 3
+
+    async def _consume():
+        request = _FakeRequest(max_ticks=ticks_per_connection + 2)
+        gen = sse.live_metric_events(request, committed["station_id"], committed["user_id"], committed["session_id"])
+        events = []
+        async for ev in gen:
+            events.append(ev)
+            if len(events) >= ticks_per_connection:
+                break
+        await gen.aclose()
+        return events
+
+    started = time.monotonic()
+    results = await asyncio.gather(*(_consume() for _ in range(concurrency)))
+    elapsed = time.monotonic() - started
+
+    assert len(results) == concurrency
+    assert all(r[0]["event"] == "snapshot" for r in results)
+    # Prag generos (mediu CI incarcat, nu un buget de performanta strict) --
+    # scopul e sa prinda o regresie gen "conexiunile se serializeaza", nu sa
+    # impuna un SLA de productie.
+    assert elapsed < 10.0

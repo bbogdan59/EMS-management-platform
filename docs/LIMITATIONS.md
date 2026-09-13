@@ -1547,3 +1547,67 @@ care nu exista):
   mai relevante (unde exista formulare cu mai multe campuri corelate), nu
   literal pe fiecare pagina din aplicatie (ex. paginile de listare simple nu
   au fost modificate, intrucat nu au campuri de grupat).
+
+## Addendum: Hardening SSE live -- update per-widget si teste de concurenta reala (issue #50, follow-up)
+
+**Context important, verificat inainte de a scrie o singura linie de cod:**
+implementarea principala a issue #50 (ADR SSE vs. WebSocket, contract
+per-metrica versionat, reautorizare per-tur de polling, coalescing,
+snapshot-la-reconectare, stari de conexiune) exista deja pe `main`, mersa
+prin PR-ul anterior ("Add versioned realtime dashboard updates over SSE" +
+fix-ul critic de blocaj descris in addendumul de mai sus) -- vezi
+`docs/adr/0001-realtime-dashboard-transport.md` si addendumul
+"Actualizare live a dashboard-ului (issue #50)". Acest PR NU reface acea
+munca si NU scrie un ADR nou (ar duplica ADR 0001, deja acceptat). Verificat
+explicit inainte de a incepe: `git merge-base --is-ancestor` a confirmat ca
+acel commit e deja stramos al `main`-ului curent.
+
+**Ce a mai ramas real, gasit prin citirea codului existent (nu presupus):**
+
+- **Un singur widget schimbat retrimitea TOT panoul de KPI-uri.** Fluxul SSE
+  (server) trimite deja doar metricile schimbate intr-un `delta`
+  (`sse.diff_metrics`), asa cum cere issue #50 -- dar clientul
+  (`dashboard.js::applyMetrics`) apela `setKpis(liveMetrics)` la FIECARE
+  mesaj, care rescria toate cele 11 widget-uri KPI (inclusiv 10 neschimbate)
+  plus diagrama de flux, indiferent cate metrici veneau in acel `delta`.
+  Acesta era exact criteriul de acceptare neindeplinit "update doar al
+  widgetului relevant, fara rerandarea intregii pagini/chart". Rezolvat:
+  cele 11 update-uri de widget au fost extrase in functii individuale
+  (`updatePvKpi`, `updateGridKpi`, etc.), mapate explicit metrica -> widget
+  (`kpiWidgetByMetric`); un `delta` acum atinge in DOM STRICT widget-urile
+  ale caror metrici au fost chiar primite (plus diagrama de flux, doar daca
+  o metrica de flux s-a schimbat). `snapshot`-ul de la (re)conectare ramane
+  o randare completa (`setKpis`), proportionala cu datele -- acolo chiar
+  toate metricile sosesc.
+- **Fara test de conexiuni concurente avansate CU ADEVARAT in paralel.**
+  Testele existente (`tests/integration/test_sse_stream_generator.py`)
+  verificau izolarea cross-tenant consumand fluxurile SECVENTIAL, unul cate
+  unul. Adaugat `test_concurrent_connections_across_tenants_never_cross_contaminate`:
+  doua conexiuni (organizatii diferite) avansate cu `asyncio.gather` in
+  paralel, cu o scriere de telemetrie intre tururi -- confirma ca izolarea
+  tine si cand cele doua bucle de polling ruleaza efectiv simultan, nu doar
+  una dupa alta.
+- **Niciun test de sanity de sarcina** (cerinta explicita a issue #50).
+  Adaugat `test_many_concurrent_connections_complete_promptly`: 15 conexiuni
+  concurente pe aceeasi statie, verificat ca timpul total ramane apropiat de
+  cel al unei singure conexiuni (nu se serializeaza reciproc) -- un sanity
+  check usor, NU un load-test la scara de productie.
+
+**Ramas neschimbat, deliberat (nu un gap nou, doar reconfirmat):** contractul
+de resume (`snapshot` complet la fiecare reconectare, fara jurnal de
+evenimente pentru replay partial), decizia SSE-vs-WebSocket, si absenta unui
+token-bucket separat de coalescing -- toate documentate deja in ADR 0001 si
+addendumul anterior, neatinse aici.
+
+**Explicit in afara scopului acestui follow-up:**
+- Un pas dedicat de tuning al backoff-ului client (`emsConnectSSE` ramane
+  1s -> 30s exponential, neschimbat) sau observabilitate (metrici server
+  despre numarul de conexiuni SSE active) -- nicio nevoie reala semnalata,
+  nu doar "ar putea fi util candva".
+- Migrarea altor widget-uri ale dashboard-ului la acest contract SSE
+  (graficele de putere/SOC/preturi/plan raman incarcate prin fetch HTTP
+  separat, nu prin flux live) -- doar KPI-urile din panoul de sus consuma
+  fluxul SSE, la fel ca inainte de acest PR.
+- Un test de sarcina real la scara de productie (sute/mii de conexiuni,
+  profilare CPU/memorie) -- sanity check-ul de mai sus prinde o regresie de
+  tip "conexiunile se serializeaza", nu inlocuieste un load-test dedicat.

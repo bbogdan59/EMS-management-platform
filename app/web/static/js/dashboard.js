@@ -11,28 +11,61 @@ function emsInitDashboard(stationId) {
     return v === null || v === undefined ? "-" : Number(v).toFixed(digits);
   }
 
-  function setKpis(s) {
-    $("kpi-pv").textContent = s.pv_power_kw !== null ? fmt(s.pv_power_kw) + " kW" : "-";
-    $("kpi-load").textContent = s.load_power_kw !== null ? fmt(s.load_power_kw) + " kW" : "-";
+  // Fiecare functie actualizeaza un SINGUR widget KPI, din starea live
+  // completa (`s` = `liveMetrics`, mereu la zi). Extrase din fostul `setKpis`
+  // monolitic (issue #50, addendum) ca sa poata fi apelate INDIVIDUAL la un
+  // `delta` -- un update de `pv_power_kw` nu mai atinge DOM-ul celorlalte 10
+  // widget-uri KPI neschimbate. `setKpis` (mai jos) ramane folosit doar la
+  // `snapshot`/`replace`, cand chiar toate au nevoie de randare.
+  function updatePvKpi(s) { $("kpi-pv").textContent = s.pv_power_kw !== null ? fmt(s.pv_power_kw) + " kW" : "-"; }
+  function updateLoadKpi(s) { $("kpi-load").textContent = s.load_power_kw !== null ? fmt(s.load_power_kw) + " kW" : "-"; }
+  function updateGridKpi(s) {
     const grid = s.grid_power_kw;
-    if (grid === null || grid === undefined) {
-      $("kpi-grid").textContent = "-";
-    } else {
-      $("kpi-grid").textContent = (grid >= 0 ? "Import " : "Export ") + fmt(Math.abs(grid)) + " kW";
-    }
-    $("kpi-soc").textContent = s.battery_soc_percent !== null ? fmt(s.battery_soc_percent, 1) + " %" : "-";
+    $("kpi-grid").textContent = grid === null || grid === undefined ? "-" : (grid >= 0 ? "Import " : "Export ") + fmt(Math.abs(grid)) + " kW";
+  }
+  function updateSocKpi(s) { $("kpi-soc").textContent = s.battery_soc_percent !== null ? fmt(s.battery_soc_percent, 1) + " %" : "-"; }
+  function updateBatteryKpi(s) {
     const batt = s.battery_power_kw;
     $("kpi-battery").textContent = batt === null || batt === undefined ? "-" : (batt >= 0 ? "Incarcare " : "Descarcare ") + fmt(Math.abs(batt)) + " kW";
+  }
+  function updateEvKpi(s) {
     $("kpi-ev").textContent = s.ev_connected === null || s.ev_connected === undefined ? "necunoscut" : (s.ev_connected ? ("conectat" + (s.ev_power_kw ? ", " + fmt(s.ev_power_kw) + " kW" : "")) : "neconectat");
-    $("kpi-price-buy").textContent = s.price_buy_lei_kwh !== null ? fmt(s.price_buy_lei_kwh, 4) + " lei/kWh" : "indisponibil";
-    $("kpi-price-sell").textContent = s.price_sell_lei_kwh !== null ? fmt(s.price_sell_lei_kwh, 4) + " lei/kWh" : "indisponibil";
+  }
+  function updatePriceBuyKpi(s) { $("kpi-price-buy").textContent = s.price_buy_lei_kwh !== null ? fmt(s.price_buy_lei_kwh, 4) + " lei/kWh" : "indisponibil"; }
+  function updatePriceSellKpi(s) { $("kpi-price-sell").textContent = s.price_sell_lei_kwh !== null ? fmt(s.price_sell_lei_kwh, 4) + " lei/kWh" : "indisponibil"; }
+  function updateAutomationKpi(s) {
     $("kpi-automation").textContent = s.execution_mode === "shadow" ? "Mod shadow (informativ)" : (s.has_active_plan ? "Activa" : "Fara plan activ");
-    $("kpi-last-update").textContent = s.last_update ? new Date(s.last_update).toLocaleString("ro-RO") : "niciodata";
-
+  }
+  function updateLastUpdateKpi(s) { $("kpi-last-update").textContent = s.last_update ? new Date(s.last_update).toLocaleString("ro-RO") : "niciodata"; }
+  function updateQualityKpi(s) {
     const qualityBadge = $("kpi-quality");
     qualityBadge.className = "badge-" + ({ measured: "ok", estimated: "warn", simulated: "warn", stale: "error", missing: "muted" }[s.data_quality] || "muted");
     qualityBadge.textContent = { measured: "masurat", estimated: "estimat", simulated: "simulat", stale: "invechit", missing: "lipsa" }[s.data_quality] || s.data_quality;
+  }
 
+  // Metrica SSE (issue #50) -> widget-ul KPI pe care il afecteaza. Mai multe
+  // metrici pot alimenta acelasi widget compus (ex. `ev_connected` +
+  // `ev_power_kw` -> "kpi-ev"), dar niciun update nu mai atinge widget-uri
+  // neafectate de metrica primita.
+  const kpiWidgetByMetric = {
+    pv_power_kw: updatePvKpi,
+    load_power_kw: updateLoadKpi,
+    grid_power_kw: updateGridKpi,
+    battery_soc_percent: updateSocKpi,
+    battery_power_kw: updateBatteryKpi,
+    ev_connected: updateEvKpi,
+    ev_power_kw: updateEvKpi,
+    price_buy_lei_kwh: updatePriceBuyKpi,
+    price_sell_lei_kwh: updatePriceSellKpi,
+    execution_mode: updateAutomationKpi,
+    has_active_plan: updateAutomationKpi,
+    last_update: updateLastUpdateKpi,
+    data_quality: updateQualityKpi,
+  };
+  const FLOW_DIAGRAM_METRICS = new Set(["pv_power_kw", "battery_power_kw", "grid_power_kw", "ev_power_kw"]);
+
+  function setKpis(s) {
+    for (const widget of new Set(Object.values(kpiWidgetByMetric))) widget(s);
     updateFlowDiagram(s);
   }
 
@@ -380,7 +413,25 @@ function emsInitDashboard(stationId) {
   function applyMetrics(metrics, { replace = false } = {}) {
     if (replace) liveMetrics = {};
     for (const m of metrics) liveMetrics[m.metric] = m.value;
-    setKpis(liveMetrics);
+
+    if (replace) {
+      // Snapshot-ul de la (re)conectare acopera oricum toate metricile --
+      // singurul caz in care o randare completa e proportionala cu datele.
+      setKpis(liveMetrics);
+    } else {
+      // Delta (issue #50 addendum): actualizeaza DOAR widget-urile afectate
+      // de metricile chiar primite in acest eveniment, nu toate cele 11.
+      const widgetsToUpdate = new Set();
+      let flowDiagramAffected = false;
+      for (const m of metrics) {
+        const widget = kpiWidgetByMetric[m.metric];
+        if (widget) widgetsToUpdate.add(widget);
+        if (FLOW_DIAGRAM_METRICS.has(m.metric)) flowDiagramAffected = true;
+      }
+      for (const widget of widgetsToUpdate) widget(liveMetrics);
+      if (flowDiagramAffected) updateFlowDiagram(liveMetrics);
+    }
+
     lastMessageAt = Date.now();
     setConnectionStatus("live");
   }
