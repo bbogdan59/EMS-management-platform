@@ -8,9 +8,13 @@
     </a>
 
     {% if current_user %}
-    {% if nav_stations|length > 1 %}
-    {# Selectorul multi-statie apare doar cand e nevoie sa alegi intre mai multe
-       statii (issue #45) -- cu 0 sau 1 statie disponibila, nu are ce sa selecteze. #}
+    {% if nav_stations|length > 1 or (current_user.is_platform_admin and nav_stations|length >= 1) %}
+    {# Selectorul multi-statie apare cand e nevoie sa alegi intre mai multe
+       statii (issue #45) -- cu 0 statii, nu are ce sa selecteze. Un admin de
+       platforma vede intotdeauna selectorul real (nu textul simplu), chiar
+       daca sistemul are, la acel moment, o singura statie inregistrata --
+       ruta "/" nu il redirecteaza automat pe el intr-o statie oarecare
+       (vezi `home()`), asa ca nici navbar-ul nu trebuie sa-i ascunda alegerea. #}
     <form method="get" action="/" class="ml-1">
       <select name="station_id" class="input" onchange="this.form.submit()">
         <option value="">Selecteaza statia...</option>
