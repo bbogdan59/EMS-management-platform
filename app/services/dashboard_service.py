@@ -300,6 +300,53 @@ def get_timeseries_raw(db: Session, station: Station, start: datetime, end: date
     return rows
 
 
+def _query_aggregate_chart_rows(
+    db: Session,
+    station: Station,
+    start: datetime,
+    end: datetime,
+    period_type: str,
+) -> list[dict]:
+    """Citeste rollup-urile persistate, astfel incat ferestrele de 7-365 zile
+    sa nu materializeze in memoria workerului fiecare esantion brut."""
+    aggregates = db.scalars(
+        select(TelemetryAggregate)
+        .where(
+            TelemetryAggregate.station_id == station.id,
+            TelemetryAggregate.period_type == period_type,
+            TelemetryAggregate.period_start >= start,
+            TelemetryAggregate.period_start < end,
+        )
+        .order_by(TelemetryAggregate.period_start)
+    ).all()
+
+    def average_power(energy: Decimal | None, hours: float) -> float | None:
+        return float(energy) / hours if energy is not None and hours > 0 else None
+
+    result: list[dict] = []
+    for row in aggregates:
+        hours = (row.period_end - row.period_start).total_seconds() / 3600
+        battery_kw = None
+        if row.battery_charge_energy_kwh is not None and row.battery_discharge_energy_kwh is not None:
+            battery_kw = (float(row.battery_charge_energy_kwh) - float(row.battery_discharge_energy_kwh)) / hours
+        grid_kw = None
+        if row.grid_import_energy_kwh is not None and row.grid_export_energy_kwh is not None:
+            grid_kw = (float(row.grid_import_energy_kwh) - float(row.grid_export_energy_kwh)) / hours
+        result.append(
+            {
+                "t": row.period_start,
+                "pv_kw": average_power(row.pv_energy_kwh, hours),
+                "load_kw": average_power(row.load_energy_kwh, hours),
+                "battery_kw": battery_kw,
+                "grid_kw": grid_kw,
+                "soc_pct": float(row.avg_battery_soc_percent) if row.avg_battery_soc_percent is not None else None,
+                "is_simulated": row.data_quality == "simulated",
+                "is_late": False,
+            }
+        )
+    return result
+
+
 _TIMESERIES_METRICS: dict[str, str] = {
     "pv_kw": "mean",
     "load_kw": "mean",
@@ -318,13 +365,28 @@ def get_timeseries_chart(db: Session, station: Station, start: datetime, end: da
     pentru putere/SOC, niciodata suma pe SOC), plus metadate explicite
     (rezolutie, metoda de agregare per metrica, fus orar, acoperire) --
     clientul nu mai trebuie sa ghiceasca nimic din forma raspunsului."""
-    rows = _query_telemetry_rows(db, station, start, end)
     resolution = chart_aggregation.choose_resolution(range_key)
     bucket_seconds = chart_aggregation.RESOLUTION_SECONDS[resolution]
 
-    aggregated = chart_aggregation.aggregate_series(
-        rows, timestamp_key="t", bucket_seconds=bucket_seconds, metrics=_TIMESERIES_METRICS
+    # 24h ramane pe raw pentru valori recente. Ferestrele lungi folosesc
+    # rollup-urile create de aggregation_service: maximum ~672 randuri la 7d,
+    # 720 la 30d si 365 la 1y, independent de frecventa telemetriei brute.
+    # Randurile `day` sunt deja delimitate la miezul noptii locale a statiei
+    # (inclusiv zile DST de 23/25h), deci nu le rebucketizam pe epoch UTC.
+    source_period = {"7d": "interval_15m", "30d": "hour", "1y": "day"}.get(range_key)
+    rows = (
+        _query_aggregate_chart_rows(db, station, start, end, source_period)
+        if source_period is not None
+        else _query_telemetry_rows(db, station, start, end)
     )
+
+    if range_key in ("30d", "1y"):
+        # Sursa persistata are deja exact rezolutia ceruta (hour/day).
+        aggregated = [{key: row[key] for key in ("t", *_TIMESERIES_METRICS)} for row in rows]
+    else:
+        aggregated = chart_aggregation.aggregate_series(
+            rows, timestamp_key="t", bucket_seconds=bucket_seconds, metrics=_TIMESERIES_METRICS
+        )
     coverage = chart_aggregation.compute_coverage(
         rows, timestamp_key="t", start=start, end=end, bucket_seconds=bucket_seconds
     )
@@ -333,7 +395,11 @@ def get_timeseries_chart(db: Session, station: Station, start: datetime, end: da
     # -- pastrate separat de metricile numerice (nu au sens mediate).
     quality_by_bucket: dict[datetime, dict[str, bool]] = {}
     for row in rows:
-        bucket_ts = chart_aggregation.bucket_start(row["t"], bucket_seconds)
+        bucket_ts = (
+            row["t"]
+            if range_key in ("30d", "1y")
+            else chart_aggregation.bucket_start(row["t"], bucket_seconds)
+        )
         q = quality_by_bucket.setdefault(bucket_ts, {"is_simulated": False, "is_late": False})
         q["is_simulated"] = q["is_simulated"] or bool(row["is_simulated"])
         q["is_late"] = q["is_late"] or bool(row["is_late"])
