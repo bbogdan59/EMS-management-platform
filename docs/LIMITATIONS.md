@@ -1313,8 +1313,8 @@ pe device, serial public, Device Code sigilat stocat server-side numai ca
 hash, enrollment/polling idempotent, claim self-service atomic, RBAC/CSRF/
 rate-limit si raspuns generic anti-enumerare -- vezi sectiunea 14 de mai sus
 si docs/API.md. Nota de progres a issue-ului enumera patru bucati ramase;
-aceasta lucrare le acopera pe toate patru, cu scop deliberat redus la doua
-dintre ele (detaliat mai jos), nu ascuns.
+aceasta lucrare le acopera punctual pe toate patru, cu limitele fiecareia
+documentate explicit mai jos.
 
 **1. Integrare in wizard-ul multi-step -- NU exista niciun wizard multi-step
 in aplicatie** (verificat explicit: nicio ruta/template cu "wizard" in tot
