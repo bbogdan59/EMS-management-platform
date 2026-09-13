@@ -1,0 +1,27 @@
+{#
+  Input numeric compact cu sufix de unitate vizibil (issue #48). Unitatea e
+  strict decorativa (`aria-hidden`, in interiorul inputului) -- NU modifica
+  valoarea trimisa la server, care ramane un numar simplu in `name`.
+#}
+{% macro field(name, label, value=None, unit=None, step="0.001", min=None, max=None, required=False, disabled=False, help=None, id=None) %}
+{% set field_id = id or ("field-" ~ name) %}
+<div>
+  <label class="label" for="{{ field_id }}">{{ label }}</label>
+  <div class="input-unit-wrap">
+    <input
+      class="input{{ ' input-has-suffix' if unit }}"
+      id="{{ field_id }}"
+      type="number"
+      name="{{ name }}"
+      step="{{ step }}"
+      {% if min is not none %}min="{{ min }}"{% endif %}
+      {% if max is not none %}max="{{ max }}"{% endif %}
+      value="{{ value if value is not none else '' }}"
+      {% if required %}required{% endif %}
+      {% if disabled %}disabled{% endif %}
+    />
+    {% if unit %}<span class="input-unit-suffix" aria-hidden="true">{{ unit }}</span>{% endif %}
+  </div>
+  {% if help %}<p class="form-help">{{ help }}</p>{% endif %}
+</div>
+{% endmacro %}
