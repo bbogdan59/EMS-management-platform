@@ -7,15 +7,40 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.station import Station
-from app.models.tariff import Tariff, TariffVersion
+from app.models.tariff import (
+    TARIFF_KIND_DYNAMIC_INDEXED,
+    TARIFF_KIND_FIXED,
+    TARIFF_KINDS,
+    Tariff,
+    TariffVersion,
+)
+
+
+def validate_tariff_kind(kind: str) -> None:
+    """Blocheaza explicit un `kind` necunoscut (issue #46: tip de contract
+    trebuie sa fie unul dintre cele implementate, nu orice sir liber) --
+    esec clar la scriere, nu o eticheta ignorata tacit de restul calculului."""
+    if kind not in TARIFF_KINDS:
+        raise ValueError(
+            f"kind: tip de contract necunoscut ({kind!r}). Valorile permise sunt: {sorted(TARIFF_KINDS)}."
+        )
 
 
 def get_or_create_tariff(db: Session, station: Station, direction: str, kind: str, name: str) -> Tariff:
+    validate_tariff_kind(kind)
     tariff = db.scalar(
         select(Tariff).where(Tariff.station_id == station.id, Tariff.direction == direction, Tariff.is_active.is_(True))
     )
     if tariff is not None:
-        tariff.kind = kind
+        # `kind` apartine contractului parinte, nu versiunii. Mutarea lui pe
+        # un contract existent ar reclasifica retroactiv toate versiunile
+        # istorice. Pana cand tranzitia este modelata ca un contract nou cu
+        # inchiderea celui vechi, o refuzam explicit.
+        if tariff.kind != kind:
+            raise ValueError(
+                "kind: tipul unui contract existent nu poate fi schimbat; "
+                "tranzitia trebuie modelata ca un contract nou pentru a pastra istoricul."
+            )
         tariff.name = name
         db.add(tariff)
         db.flush()
@@ -25,6 +50,46 @@ def get_or_create_tariff(db: Session, station: Station, direction: str, kind: st
     db.add(tariff)
     db.flush()
     return tariff
+
+
+def _validate_version_matches_contract_kind(
+    kind: str,
+    *,
+    fixed_price_lei_per_kwh: Decimal | None,
+    opcom_margin_lei_per_kwh: Decimal | None,
+    economic_calculation_disabled: bool,
+) -> None:
+    """Impune ca versiunea noua sa aiba EXACT campurile care corespund
+    tipului de contract al tarifului parinte (issue #46: "Contract versionat
+    ... cu tip: fixed, dynamic-indexed" trebuie sa guverneze efectiv formula,
+    nu doar sa fie o eticheta afisata) -- esec explicit (ValueError), nu o
+    alegere tacita intre cele doua campuri bazata pe care e completat.
+
+    Fara aceasta validare, `compute_effective_price_lei_per_kwh` alege
+    ramura fix/indexat dupa care camp e nenul, IGNORAND `kind` -- un tarif
+    etichetat "indexed_opcom" caruia i s-a completat din greseala si
+    `fixed_price_lei_per_kwh` s-ar comporta ca fix, contrazicand eticheta lui
+    si contractul real (indexarea pe OPCOM nu s-ar mai aplica niciodata)."""
+    validate_tariff_kind(kind)
+    if kind == TARIFF_KIND_FIXED:
+        if fixed_price_lei_per_kwh is None and not economic_calculation_disabled:
+            raise ValueError(
+                "fixed_price_lei_per_kwh: obligatoriu pentru un contract fix (pretul fix de energie, lei/kWh)."
+            )
+        if opcom_margin_lei_per_kwh is not None:
+            raise ValueError(
+                "opcom_margin_lei_per_kwh: marja fata de OPCOM nu se aplica unui contract fix -- lasa acest camp gol."
+            )
+    elif kind == TARIFF_KIND_DYNAMIC_INDEXED:
+        if opcom_margin_lei_per_kwh is None and not economic_calculation_disabled:
+            raise ValueError(
+                "opcom_margin_lei_per_kwh: obligatoriu pentru un contract dinamic-indexat -- formula de "
+                "mapare (pret OPCOM + marja) trebuie sa fie explicita, nu implicita."
+            )
+        if fixed_price_lei_per_kwh is not None:
+            raise ValueError(
+                "fixed_price_lei_per_kwh: nu se aplica unui contract dinamic-indexat -- foloseste doar marja fata de OPCOM."
+            )
 
 
 def add_tariff_version(
@@ -45,6 +110,13 @@ def add_tariff_version(
     economic_calculation_disabled: bool = False,
     limitation_note: str | None = None,
 ) -> TariffVersion:
+    _validate_version_matches_contract_kind(
+        tariff.kind,
+        fixed_price_lei_per_kwh=fixed_price_lei_per_kwh,
+        opcom_margin_lei_per_kwh=opcom_margin_lei_per_kwh,
+        economic_calculation_disabled=economic_calculation_disabled,
+    )
+
     open_version = db.scalar(
         select(TariffVersion)
         .where(TariffVersion.tariff_id == tariff.id, TariffVersion.valid_to.is_(None))

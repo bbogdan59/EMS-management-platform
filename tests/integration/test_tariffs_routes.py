@@ -103,3 +103,58 @@ def test_tariffs_page_shows_reason_when_preview_unavailable_for_indexed_without_
     resp = client.get(f"/stations/{station.id}/tariffs")
     assert resp.status_code == 200
     assert "Exemplu indisponibil" in resp.text
+
+
+def test_fixed_contract_with_stray_opcom_margin_is_rejected_with_error_and_saves_nothing(client, db):
+    """Issue #46: `kind` guverneaza efectiv formula -- un contract fix caruia
+    i se completeaza si marja OPCOM e respins explicit (nu salvat tacit ca
+    fix, ignorand marja, sau invers), iar niciun rand nou nu ajunge in baza
+    de date."""
+    _org, admin, _viewer, station = _setup(db)
+    login(client, admin.email, "Password1234")
+    csrf = get_csrf(client)
+
+    resp = client.post(
+        f"/stations/{station.id}/tariffs",
+        data={
+            "csrf_token": csrf, "direction": "import", "kind": "fixed", "name": "Fix contaminat",
+            "fixed_price_lei_per_kwh": "0.85", "opcom_margin_lei_per_kwh": "0.10",
+            "settlement_method": "net_metering_15min", "settlement_interval_days": "30",
+        },
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    assert "/stations/" in resp.headers["location"] and "error=" in resp.headers["location"]
+
+    version = db.scalar(select(TariffVersion).join(Tariff).where(Tariff.station_id == station.id))
+    assert version is None
+
+    error_page = client.get(resp.headers["location"])
+    assert error_page.status_code == 200
+    assert "marja fata de OPCOM nu se aplica" in error_page.text
+    assert 'data-error-field="opcom_margin_lei_per_kwh"' in error_page.text
+
+
+def test_dynamic_contract_without_opcom_margin_is_rejected_with_error(client, db):
+    """Simetric: contract dinamic-indexat fara marja OPCOM (regula de mapare
+    lipsa) e respins explicit, nu salvat cu un pret nedefinit."""
+    _org, admin, _viewer, station = _setup(db)
+    login(client, admin.email, "Password1234")
+    csrf = get_csrf(client)
+
+    resp = client.post(
+        f"/stations/{station.id}/tariffs",
+        data={
+            "csrf_token": csrf, "direction": "import", "kind": "indexed_opcom", "name": "Dinamic fara marja",
+            "settlement_method": "net_metering_15min", "settlement_interval_days": "30",
+        },
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+
+    version = db.scalar(select(TariffVersion).join(Tariff).where(Tariff.station_id == station.id))
+    assert version is None
+
+    error_page = client.get(resp.headers["location"])
+    assert "obligatoriu pentru un contract dinamic-indexat" in error_page.text
+    assert 'data-error-field="opcom_margin_lei_per_kwh"' in error_page.text
