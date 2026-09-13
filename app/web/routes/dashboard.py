@@ -5,8 +5,8 @@ import io
 import uuid
 from datetime import datetime, timedelta
 
-from fastapi import APIRouter, Depends, Query, Request
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi import APIRouter, Depends, Query, Request, status
+from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -32,6 +32,20 @@ def home(
     station_id: uuid.UUID | None = Query(default=None),
 ):
     nav = build_nav_context(db, user, station_id)
+
+    if station_id is None and not user.is_platform_admin and len(nav["nav_stations"]) == 1:
+        # "Dashboard client one station first" (issue #45): clientul care are
+        # acces la o singura statie nu trebuie sa mai treaca printr-un selector
+        # cu o singura optiune -- ajunge direct la dashboard-ul acelei statii.
+        # Excludem administratorii platformei: ei vad TOATE statiile din sistem
+        # (nu doar ale lor), asa ca "o singura statie in tot sistemul" nu
+        # inseamna "clientul are o singura statie" -- si un admin trebuie sa
+        # ajunga in continuare la selector/panoul de administrare, nu redirectat
+        # implicit catre o statie oarecare.
+        only_station_id = nav["nav_stations"][0]["id"]
+        redirect_url = str(request.url.include_query_params(station_id=str(only_station_id)))
+        return RedirectResponse(redirect_url, status_code=status.HTTP_302_FOUND)
+
     if station_id is None or not nav["nav_stations"]:
         return templates.TemplateResponse(request, "dashboard/no_station.html", {**nav})
 

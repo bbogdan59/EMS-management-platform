@@ -33,8 +33,24 @@
     <div class="card"><p class="label !mb-1">SOC baterie</p><p id="kpi-soc" class="text-lg font-semibold">-</p></div>
     <div class="card"><p class="label !mb-1">Putere baterie</p><p id="kpi-battery" class="text-lg font-semibold">-</p></div>
     <div class="card"><p class="label !mb-1">EV</p><p id="kpi-ev" class="text-lg font-semibold">-</p></div>
-    <div class="card"><p class="label !mb-1" title="Cost efectiv de import conform contractului tau (nu pretul spot OPCOM) -- vezi /stations/{{ station.id }}/tariffs">Cost efectiv import (lei/kWh)</p><p id="kpi-price-buy" class="text-lg font-semibold">-</p></div>
-    <div class="card"><p class="label !mb-1" title="Venit efectiv de export conform contractului tau (nu pretul spot OPCOM) -- vezi /stations/{{ station.id }}/tariffs">Venit efectiv export (lei/kWh)</p><p id="kpi-price-sell" class="text-lg font-semibold">-</p></div>
+    <div class="card">
+      <p class="label !mb-1">Cost efectiv import (lei/kWh)</p>
+      <p id="kpi-price-buy" class="text-lg font-semibold">-</p>
+      <details class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+        <summary class="cursor-pointer select-none text-gray-600 dark:text-gray-300">Cum se calculeaza?</summary>
+        <p class="mt-1">Pretul FIX din contract, sau pretul OPCOM al orei curente + marja ta, la care se aduna distributia, transportul si alte taxe reglementate, apoi TVA (daca e configurat). Nu e pretul spot de piata -- vezi pagina Tarife pentru cifrele exacte din contract.</p>
+        <a class="mt-1 inline-block underline" href="/stations/{{ station.id }}/tariffs">Vezi tarifele statiei</a>
+      </details>
+    </div>
+    <div class="card">
+      <p class="label !mb-1">Venit efectiv export (lei/kWh)</p>
+      <p id="kpi-price-sell" class="text-lg font-semibold">-</p>
+      <details class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+        <summary class="cursor-pointer select-none text-gray-600 dark:text-gray-300">Cum se calculeaza?</summary>
+        <p class="mt-1">Aceeasi formula ca la import (fix sau OPCOM + marja, plus taxele aplicabile exportului), aplicata pretului platit pentru energia exportata in retea. Nu e pretul spot de piata -- vezi pagina Tarife pentru cifrele exacte din contract.</p>
+        <a class="mt-1 inline-block underline" href="/stations/{{ station.id }}/tariffs">Vezi tarifele statiei</a>
+      </details>
+    </div>
   </div>
   <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
     <div class="card"><p class="label !mb-1">Automatizare</p><p id="kpi-automation" class="text-sm font-medium">-</p></div>
@@ -44,11 +60,19 @@
       <p id="kpi-savings" class="text-sm font-medium">-</p>
       <p id="kpi-savings-note" class="mt-1 text-xs text-gray-500"></p>
       <p id="kpi-savings-coverage" class="mt-1 text-xs text-gray-400"></p>
+      <details class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+        <summary class="cursor-pointer select-none text-gray-600 dark:text-gray-300">Cum se calculeaza?</summary>
+        <p class="mt-1">Compara costul tau real (import - export, la preturile reale valabile in fiecare ora din ultimele 30 de zile) cu costul ipotetic daca TOT consumul ar fi fost cumparat din retea, fara panouri sau baterie instalate. Este o estimare fata de acest reper, nu o economie masurata cu un contor separat.</p>
+      </details>
     </div>
     <div class="card">
       <p class="label !mb-1">Beneficiu incremental EMS</p>
       <p id="kpi-ems-benefit" class="text-sm font-medium">-</p>
       <p id="kpi-ems-benefit-note" class="mt-1 text-xs text-gray-500"></p>
+      <details class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+        <summary class="cursor-pointer select-none text-gray-600 dark:text-gray-300">Cum se calculeaza?</summary>
+        <p class="mt-1">Compara costul tau real cu un al doilea reper: aceleasi panouri si baterie, dar FARA optimizare activa (surplusul PV s-ar exporta imediat, deficitul s-ar importa imediat, fara sa se astepte momentul cel mai ieftin/scump). Izoleaza astfel contributia proprie a platformei de beneficiul pe care l-ar aduce oricum orice sistem PV/baterie.</p>
+      </details>
     </div>
   </div>
 

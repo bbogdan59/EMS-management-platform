@@ -8,6 +8,9 @@
     </a>
 
     {% if current_user %}
+    {% if nav_stations|length > 1 %}
+    {# Selectorul multi-statie apare doar cand e nevoie sa alegi intre mai multe
+       statii (issue #45) -- cu 0 sau 1 statie disponibila, nu are ce sa selecteze. #}
     <form method="get" action="/" class="ml-1">
       <select name="station_id" class="input" onchange="this.form.submit()">
         <option value="">Selecteaza statia...</option>
@@ -18,6 +21,11 @@
         {% endfor %}
       </select>
     </form>
+    {% elif nav_stations|length == 1 %}
+    <span class="ml-1 text-sm font-medium text-gray-700 dark:text-gray-300">
+      {{ nav_stations[0].organization_name }} / {{ nav_stations[0].name }}{% if nav_stations[0].is_demo %} (demo){% endif %}
+    </span>
+    {% endif %}
 
     <nav class="ml-2 flex flex-wrap items-center gap-1">
       {% if current_station %}
