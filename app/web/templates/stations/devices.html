@@ -1,7 +1,14 @@
 {% extends "base.html" %}
+{% from "partials/_breadcrumb.html" import trail as breadcrumb %}
 {% block title %}Dispozitive {{ station.name }} - {{ app_name }}{% endblock %}
 {% block content %}
 <div class="space-y-6">
+  {{ breadcrumb([
+    {"label": "Dashboard", "url": "/"},
+    {"label": station.organization.name, "url": "/organizations/" ~ station.organization_id},
+    {"label": station.name, "url": "/?station_id=" ~ station.id},
+    {"label": "Dispozitive", "url": None},
+  ]) }}
   {% if onboarding %}
   <nav class="flex flex-wrap items-center gap-2 text-xs text-gray-500 dark:text-gray-400" aria-label="Pasii de configurare">
     <span class="badge-ok">1. Statie creata</span>

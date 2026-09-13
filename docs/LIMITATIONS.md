@@ -1373,9 +1373,9 @@ de integrare existente (`test_device_api.py`, `test_commands.py`,
 `test_device_protocol_hardening.py`) -- eliminarea lui completa ar fi
 stricat toate acestea pentru un beneficiu de securitate nul in productie
 (flag-ul rezolva deja riscul real). Asadar:
-- `Settings.legacy_claim_code_enabled` implicit `True` (dezvoltare/teste/
-  simulatoare), dar `model_post_init` **refuza pornirea aplicatiei** daca e
-  `True` si `ENVIRONMENT=production` -- acelasi tipar deja folosit pentru
+- `Settings.legacy_claim_code_enabled` este implicit `False` in orice mediu;
+  suitele istorice il activeaza explicit. `model_post_init` **refuza pornirea
+  aplicatiei** daca e `True` si `ENVIRONMENT=production` -- acelasi tipar folosit pentru
   `demo_mode_enabled`/`opcom_use_synthetic_fixture_on_failure`/
   `session_cookie_secure`/`email_backend`. Nu exista nicio cale de a porni
   serverul de productie cu acest bypass activ.
@@ -1395,6 +1395,10 @@ stricat toate acestea pentru un beneficiu de securitate nul in productie
   `EMS-device-code#3` (dependinta cross-repo mentionata in issue, inaccesibila
   din acest mediu) confirma ca simulatoarele/dispozitivele reale au migrat
   complet pe enrollment automat + Device Code.
+
+Transferul si resetarea administrativa blocheaza randul device-ului cu
+`SELECT ... FOR UPDATE`; doua cereri concurente nu pot emite credentiale
+active conflictuale pe baza aceleiasi stari vechi.
 
 **4. Test de concurenta cu doua conturi/sesiuni Postgres --
 `test_concurrent_claim_two_accounts_same_code_exactly_one_wins`
@@ -1426,3 +1430,51 @@ si nu apare niciun al doilea device dublat.
   progres ca ramase, deci nu au fost reluate aici.
 - Contractul cross-repo cu `EMS-device-code#3` -- repo inaccesibil din acest
   mediu, mentionat explicit in issue ca dependinta separata.
+## 20. Design system minim: breadcrumb, grupuri de campuri, focus pe eroare (issue #48)
+
+Issue #48 cerea un "design system" pentru UI -- domeniu larg, care poate
+insemna orice, de la un ghid de stil complet cu componente reutilizabile pana
+la teste de regresie vizuala automate. Ce s-a implementat efectiv, cu scop
+explicit limitat la ce era fezabil si verificabil in acest repo:
+
+- **Breadcrumb semantic** (`partials/_breadcrumb.html`, macro `trail`) adaugat
+  pe 8 pagini (configurare, preferinte, dispozitive, tarife, configurare
+  invertor, dashboard statie, detaliu organizatie self-service, detaliu
+  organizatie admin) -- `<nav aria-label="breadcrumb">` cu `aria-current="page"`
+  pe elementul curent, link-uri construite EXCLUSIV din ID-uri deja
+  autorizate din context (niciodata din query-uri neverificate), verificat
+  cu test dedicat ca nu exista risc de open-redirect.
+- **Grupuri de campuri corelate** (`_field_group.html`) -- `<fieldset>`
+  semantic cu `<legend>`, folosit pentru a grupa vizual campuri care se
+  citesc impreuna (locatie lat/lng, sistem PV/invertor, capacitate/putere
+  baterie, SOC).
+- **Input numeric cu sufix de unitate** (`_numeric_input.html`) -- sufixul
+  (`kW`, `kWh`, `%`) e strict decorativ (`aria-hidden`, in afara `name`-ului
+  campului), nu modifica valoarea trimisa la server.
+- **Progressive disclosure** prin `<details>/<summary>` native pentru
+  campuri avansate/rar-modificate (limite retea, preferinte flexibile EV).
+- **Focus + evidentiere pe primul camp invalid dupa un submit respins**
+  (`form-errors.js`) -- contract HTML generic (`data-error-summary`/
+  `data-error-field`), functioneaza pe orice pagina care foloseste macro-ul
+  `_form_errors.html`, verificat atat cu teste de integrare (maparea
+  `data-error-field` -> `name`) cat si cu un test Playwright pe browser real
+  (`document.activeElement`, imposibil de verificat doar din HTML static).
+
+**Explicit in afara scopului acestei implementari** (nu exista infrastructura
+in acest repo si nu a fost construita acum, ca sa nu se pretinda o acoperire
+care nu exista):
+
+- **Teste de regresie vizuala/snapshot** (comparatie pixel-cu-pixel intre
+  randari) -- nu exista in acest repo (nici pentru codul preexistent). Ce
+  exista sunt capturi de ecran facute manual in timpul dezvoltarii pentru
+  verificare vizuala punctuala si teste Playwright care verifica marcaj/
+  comportament (prezenta claselor, focus, continut), nu aspectul vizual
+  pixel-cu-pixel.
+- **Ghid de stil/catalog de componente formal** (ex. Storybook sau
+  echivalent) -- componentele noi sunt macro-uri Jinja documentate prin
+  comentarii, nu un catalog navigabil separat.
+- **Acoperire completa a tuturor paginilor** -- breadcrumb-ul si grupurile de
+  campuri au fost aplicate pe paginile de configurare/preferinte/admin cele
+  mai relevante (unde exista formulare cu mai multe campuri corelate), nu
+  literal pe fiecare pagina din aplicatie (ex. paginile de listare simple nu
+  au fost modificate, intrucat nu au campuri de grupat).
