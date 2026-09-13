@@ -1351,6 +1351,8 @@ frecventa telemetriei brute. Rollup-ul `day` este delimitat la miezul noptii
 locale a statiei si pastreaza corect zilele DST de 23/25 ore. Selectorul a capatat si
 optiunea "1 an" (`range=1y`), ca sa existe o cale reala prin UI catre
 rezolutia zilnica.
+Un test de regresie acopera explicit conversia energiei in putere medie
+pentru ziua locala de 23 de ore de la trecerea la ora de vara.
 
 **Widget independent cu empty/error state, nu doar "console.error".**
 `dashboard.js`: graficele de putere si SOC au acum propriile elemente
