@@ -1846,8 +1846,9 @@ inainte de a scrie cod nou, ca sa nu se reconstruiasca ce functioneaza):
   excluderea explicita a unei prognoze "din viitor" -- look-ahead --,
   raportarea separata a lipsei de prognoza/telemetrie/acoperire
   insuficienta).
-  Intervalul cerut trebuie sa fie timezone-aware si aliniat exact la 15 minute,
-  pentru ca numarul de esantioane asteptate sa nu fie aproximat.
+  Intervalul cerut este semi-deschis `[start, end)`, trebuie sa fie
+  timezone-aware si aliniat exact la 15 minute, pentru ca numarul de
+  esantioane asteptate sa nu fie aproximat.
 
 **Ramas explicit in afara scopului acestui PR (documentat, nu ascuns):**
 - **Interfata provider-agnostica formala** (un `Protocol`/clasa abstracta
