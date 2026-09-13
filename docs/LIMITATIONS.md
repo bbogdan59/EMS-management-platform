@@ -1873,3 +1873,108 @@ inainte de a scrie cod nou, ca sa nu se reconstruiasca ce functioneaza):
   nu exista deloc), deci nu exista inca un consumator pentru aceasta
   informatie in afara prognozei PV.
 - **Control HVAC** -- exclus explicit de prompt-ul issue-ului, neatins.
+
+## Addendum: Tip de contract explicit, izolare import/export si teste DST/rotunjire (issue #46, a doua iteratie)
+
+Issue #46 a fost re-specificat mai detaliat dupa ce prima iteratie (vezi
+sectiunea "Contracte tarifare: componente de cost distincte, TVA explicit,
+preview numeric" de mai sus, PR #56) acoperise deja versionarea cu
+valabilitate, componentele de cost distincte (energie/distributie/transport/
+alte taxe reglementate/TVA/cost fix), separarea marginal-fix, formula
+explicita de indexare OPCOM+marja, blocarea calculului la pret OPCOM lipsa
+(fara fallback tacut) si preview-ul numeric pe pagina de tarife. Aceasta
+iteratie a verificat concret ce mai lipsea fata de noul text al issue-ului si
+a adaugat DOAR gaurile reale gasite:
+
+**`Tariff.kind` guverneaza acum efectiv formula, nu doar eticheta afisata.**
+Inainte, `compute_effective_price_lei_per_kwh` alegea ramura fix/indexat
+dupa care camp (`fixed_price_lei_per_kwh` / `opcom_margin_lei_per_kwh`) era
+completat, IGNORAND complet `kind` -- un tarif etichetat "indexat OPCOM"
+caruia i s-ar fi completat din greseala si `fixed_price_lei_per_kwh` s-ar fi
+comportat tacit ca fix. `app/models/tariff.py` defineste acum
+`TARIFF_KIND_FIXED`/`TARIFF_KIND_DYNAMIC_INDEXED`/`TARIFF_KINDS`, iar
+`tariff_service.validate_tariff_kind` (apelat din `get_or_create_tariff`)
+respinge orice `kind` in afara acestor doua valori. `add_tariff_version`
+valideaza acum, la SCRIERE, ca versiunea noua are EXACT campurile care
+corespund tipului declarat -- `kind=fixed` cere `fixed_price_lei_per_kwh` si
+interzice `opcom_margin_lei_per_kwh`; `kind=indexed_opcom` cere
+`opcom_margin_lei_per_kwh` si interzice `fixed_price_lei_per_kwh` -- esec
+explicit (`ValueError`), niciodata o alegere tacita intre cele doua campuri.
+Exceptia explicita este o versiune cu `economic_calculation_disabled=True`:
+pretul corespunzator tipului poate lipsi, deoarece platforma declara ca nu
+poate calcula acea formula si va returna un rezultat necunoscut; campul de
+pret al celuilalt tip ramane interzis.
+Ruta `/stations/{id}/tariffs` (POST) prinde aceasta eroare si o afiseaza in
+formular (macro-ul `_form_errors.html`, issue #48), fara sa creeze niciun
+rand nou -- nu doar teste de model, comportament HTTP verificat capat-la-cap.
+Tipul unui contract existent nu poate fi schimbat in loc: asta ar
+reclasifica retroactiv toate versiunile istorice, deoarece `kind` apartine
+in prezent lui `Tariff`, nu lui `TariffVersion`. Serviciul refuza explicit
+tranzitia pana cand ea va fi modelata ca inchiderea contractului vechi si
+crearea unuia nou, fara pierderea istoricului.
+"provider"/"custom" din textul issue-ului raman doar etichete libere in
+`Tariff.name`, nu tipuri de calcul distincte -- niciunul nu are o formula
+proprie implementata (nu exista o formula "de provider" verificata de
+adaugat fara sa fie inventata, vezi sectiunea de mai jos).
+
+**Independenta import/export, verificata explicit cu test, nu doar presupusa
+din arhitectura.** Directia (`import`/`export`) era deja un `Tariff` separat
+inainte de acest PR (nicio schimbare de schema aici), deci exportul avea deja
+structural propriul pret/formula, fara sa scada componente de import. Ce
+lipsea era un test care sa demonstreze asta explicit (criteriul din issue:
+"componentele nerecuperabile nu sunt scazute fictiv din import") --
+`test_export_price_is_independent_of_import_components` creste drastic
+componentele de import (distributie, abonament) DUPA calcularea pretului de
+export si verifica ca pretul de export ramane identic, exact regresia pe
+care o cere issue-ul daca cineva ar "optimiza" vreodata cele doua formule sa
+partajeze cod.
+
+**Teste DST adaugate -- niciunul nu exista inainte pentru versionarea
+tarifelor.** `valid_from`/`valid_to` sunt deja `DateTime(timezone=True)`,
+comparate ca instante absolute UTC (nicio schimbare de cod necesara), dar
+issue-ul cere explicit teste numerice pentru tranzitiile de ora de vara/
+iarna. `test_tariff_version_resolves_correctly_across_spring_forward_dst`
+si `..._fall_back_dst` verifica `get_current_tariff_version` chiar la
+instanta UTC a tranzitiei din Europe/Bucharest pentru 2026 (29 martie -- ora
+locala 03:00-04:00 nu exista deloc; 25 octombrie -- ora locala 03:00-04:00
+se repeta), confirmand ca rezolutia pe instanta absoluta nu produce o
+selectie ambigua sau gresita a versiunii in niciunul din cele doua cazuri.
+
+**Test de rotunjire cu Decimal.** `test_decimal_precision_avoids_float_rounding_drift`
+insumeaza componente la limita de precizie a coloanei `NUMERIC(10,5)`
+(inclusiv o zecimala a cincea nenula) si verifica rezultatul exact -- Decimal
+nu introduce drift binar-float (ex. suma nu devine `0.30000999...`).
+
+**Teste:** `tests/unit/test_tariff_service.py` include validarea `kind`
+necunoscut, blocarea reclasificarii istoricului, 4 combinatii fix/dinamic cu camp
+lipsa/strain, o regresie ca versiunile corect formate tot trec, independenta
+export/import, 2 teste DST, 1 test de rotunjire). `tests/integration/
+test_tariffs_routes.py` are acum 6 (4 preexistente + 2 noi: contract fix cu
+marja straina si contract dinamic fara marja sunt respinse cu eroare
+afisata in formular si NU salveaza niciun rand).
+
+**Ramas in afara scopului (deliberat, nu ascuns, neschimbat fata de prima
+iteratie -- vezi si sectiunea de mai sus):**
+- **Wizard-ul dedicat cu preseturi explicabile** (issue #41) -- la momentul
+  acestui PR, #41 inca nu era mergeat pe `main` (dezvoltat in paralel, pe
+  `feature/setup-wizard-issue-41`). Configurarea ramane prin pagina de
+  tarife existenta (`/stations/{id}/tariffs`, extinsa acum cu validarea de
+  tip de contract si un rezumat de erori consistent cu restul aplicatiei),
+  NU o experienta ghidata pas-cu-pas cu preseturi "explicabile" (ex. "Enel
+  standard", "OMV Petrom dinamic") -- niciun asemenea preset comercial
+  verificat nu exista in acest cod, ca sa nu fie inventat. Cand #41 va fi
+  mergeat, pagina de tarife ramane reutilizabila ca pas de wizard (acelasi
+  serviciu `tariff_service`, aceleasi validari), dar integrarea explicita
+  (navigare pas-cu-pas, preseturi) e responsabilitatea acelui issue.
+- **Reguli legale/comerciale romanesti verificate** (cote OPANAF/ANRE reale,
+  formule reglementate de distributie/transport, preseturi de furnizor) --
+  deliberat NEINVENTATE, neschimbat fata de prima iteratie: operatorul
+  introduce valorile reale din contractul/factura lui.
+- **Constrangere la nivel de baza de date (CHECK constraint)** pentru
+  consistenta `kind`/campuri -- validarea noua e doar la nivel de serviciu
+  (`tariff_service`), singurul punct de scriere folosit de aplicatie; un
+  `INSERT` SQL direct in `tariff_versions`, ocolind `add_tariff_version`,
+  tot ar putea crea o versiune inconsistenta. Nu exista alt cod in acest
+  repo care sa scrie in acest tabel altfel decat prin acest serviciu.
+- **Decontare neta ora-cu-ora in preview, formula "provider"/"custom"
+  distincta** -- neschimbate fata de prima iteratie (vezi mai sus).
