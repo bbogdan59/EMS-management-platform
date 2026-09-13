@@ -1433,6 +1433,108 @@ si nu apare niciun al doilea device dublat.
 - Contractul cross-repo cu `EMS-device-code#3` -- repo inaccesibil din acest
   mediu, mentionat explicit in issue ca dependinta separata.
 
+## Addendum: Grafic principal al dashboard-ului (putere + SOC): agregare server-side metric-aware, empty/error state pe widget (issue #33)
+
+**Restul acestui issue era deja acoperit partial.** Sectiunea 18 de mai sus
+rezolvase deja agregarea adaptiva pe 3 niveluri pentru graficul de preturi
+OPCOM de pe `/market`. Fiecare widget al dashboard-ului statiei avea deja
+propriul endpoint si propriul `fetch()` independent (`dashboard.js` apela
+separat `/data/timeseries`, `/data/prices`, `/data/plan`, `/data/heatmap`
+etc.) -- premisa "un singur payload monolitic blocheaza tot dashboard-ul" nu
+mai era adevarata inainte de acest PR. Ramasesera insa doua goluri reale fata
+de criteriile explicite ale issue-ului, exact pe graficul cel mai probabil sa
+devina lent (putere + SOC, potential un an de telemetrie bruta):
+`/stations/{id}/data/timeseries` intorcea intotdeauna rezolutia BRUTA,
+indiferent de interval (un an de telemetrie la cateva zeci de secunde/esantion
+ar fi insemnat sute de mii de puncte trimise brut in browser), si niciun
+widget nu avea o stare de eroare vizibila -- un fetch esuat era doar
+`console.error`, fara nicio indicatie pentru utilizator si fara retry.
+
+**Contract de agregare nou, separat de cel al pretului OPCOM (nu s-a
+duplicat logica din `market_analytics_service`).** `app/services/
+chart_aggregation.py` e un modul PUR (fara acces la DB), reutilizabil:
+`choose_resolution(range_key)` aplica exact maparea din contractul issue-ului
+-- `24h -> 15m`, `7d -> 30m`, `30d -> 1h`, `1y -> 1d` -- iar `aggregate_series`
+grupeaza randuri pe bucket-uri si aplica o metoda de agregare DECLARATA per
+coloana (`mean`/`sum`/`min`/`max`). Metric-aware in mod activ, nu doar prin
+conventie: functia REFUZA (`ValueError`) o cerere de `sum` pe orice nume de
+coloana ce contine `soc`/`pct`/`percent` -- imposibil sa se reintroduca din
+greseala bug-ul "SOC insumat" intr-un apel viitor fara ca testele sa pice
+imediat. `dashboard_service.get_timeseries_chart` foloseste `mean` pentru
+puterile PV/consum/baterie/retea SI pentru SOC (niciodata suma). Fostul
+`get_timeseries` (folosit doar de exportul CSV, care are voie sa vrea date
+brute) a fost redenumit explicit `get_timeseries_raw` si NU a fost atins.
+
+**Raspunsul HTTP declara explicit rezolutia, agregarea, fusul orar si
+acoperirea** -- exact criteriul de acceptare din issue: `{"resolution":
+"15m", "aggregation": {"pv_kw": "mean", ..., "soc_pct": "mean"}, "timezone":
+"Europe/Bucharest", "coverage": 0.83, "points": [...]}`. `coverage` e
+fractia de bucket-uri asteptate in interval care contin date (0 daca nu
+exista deloc telemetrie) -- nu pretinde o precizie mai fina decat poate
+oferi onest seria selectata. Pentru 24h se folosesc punctele brute recente;
+pentru 7d/30d/1y se citesc rollup-urile persistate `interval_15m`/`hour`/
+`day`, limitand interogarea la aproximativ 672/720/365 randuri indiferent de
+frecventa telemetriei brute. Rollup-ul `day` este delimitat la miezul noptii
+locale a statiei si pastreaza corect zilele DST de 23/25 ore. Selectorul a capatat si
+optiunea "1 an" (`range=1y`), ca sa existe o cale reala prin UI catre
+rezolutia zilnica.
+Un test de regresie acopera explicit conversia energiei in putere medie
+pentru ziua locala de 23 de ore de la trecerea la ora de vara.
+Exportul CSV ramane separat si brut; limitarea cardinalitatii se aplica
+doar contractului JSON folosit de grafice.
+
+**Widget independent cu empty/error state, nu doar "console.error".**
+`dashboard.js`: graficele de putere si SOC au acum propriile elemente
+`.empty-state` / `.error-state` in `station.html` (SOC nu avea deloc
+empty-state inainte). O eroare de fetch (timeout, HTTP non-2xx, retea) arata
+DOAR acelui widget un mesaj + buton "Reincearca", fara sa afecteze celelalte
+grafice de pe pagina. Fiecare fetch are timeout propriu (`AbortController`,
+15s) SI e anulat explicit daca utilizatorul schimba intervalul inainte sa
+raspunda cererea anterioara (`cancel la schimbarea intervalului`, cerut
+explicit de issue) -- un raspuns intarziat al unei cereri deja inlocuite nu
+mai apuca sa deseneze peste graficul curent. Un cache scurt (30s, cheie =
+URL exacta cu tot cu interval) evita fetch-uri redundante cand ambele
+grafice (putere si SOC) cer aceeasi fereastra aproape simultan.
+
+**Teste:** `tests/unit/test_chart_aggregation.py` (rezolutie per range_key;
+putere mediata NU insumata; energie poate fi insumata; SOC si orice alta
+metrica "procentuala" REFUZA explicit suma -- parametrizat pe mai multe nume
+de coloana; bucketing pe mai multe intervale; lipsa de date ramane `None`,
+nu devine 0; acoperire calculata corect, inclusiv cazul fara date si cazul
+cu esantioane foarte dese intr-un singur bucket). `tests/unit/
+test_dashboard_service.py` adauga teste pentru `get_timeseries_chart`
+(metadate complete, mediere corecta pe bucket pentru putere si SOC, rezolutie
+diferita per interval, `points: []` + `coverage: 0.0` fara nicio telemetrie)
+si un test explicit ca `get_timeseries_raw` (exportul CSV) a ramas
+neagregat. `tests/integration/test_dashboard_timeseries_route.py` verifica
+direct raspunsul HTTP al rutei (metadate, rezolutie zilnica pentru `range=1y`,
+empty-state fara date, izolare RBAC intre organizatii).
+
+**Ramas explicit in afara scopului acestui PR (nu e o pretentie de acoperire
+completa a issue-ului #33):**
+
+- **Doar 2 din multele grafice ale dashboard-ului** (putere si SOC) au fost
+  migrate la contractul de rezolutie/agregare/empty-error-state descris mai
+  sus. Celelalte (preturi OPCOM, plan, prognoza PV/consum, heatmap, energii
+  zilnice/lunare) raman neschimbate -- fiecare are deja fetch propriu, dar
+  fara timeout/cancel/retry explicit si fara metadate de rezolutie in
+  raspuns. O migrare completa, widget cu widget, ramane pentru un PR viitor.
+- **Fara infrastructura generica de retry controlat** (backoff, numar maxim
+  de incercari) -- butonul "Reincearca" e manual, apasat de utilizator, nu
+  un retry automat cu backoff exponential.
+- **Fara benchmark de latenta pe o baza de productie reala** -- cardinalitatea
+  interogarii este acum marginita de rollup-uri pentru ferestrele lungi, iar
+  testul DST verifica numeric o zi locala de 23h, dar nu s-a rulat inca un
+  EXPLAIN/buget de timp pe volumul real al unei instalatii.
+- **Fara reprezentare vizuala distincta pentru stale/estimat/sintetic/gaps**
+  -- `is_simulated`/`is_late` sunt calculate per bucket (OR logic) si trimise
+  in raspuns, dar `dashboard.js` nu le foloseste inca pentru un stil vizual
+  distinct in chart (doar KPI-ul `data_quality` de mai sus, deja existent,
+  le reflecta la nivel de statie).
+- **Fara eliminare de point-symbols peste un prag configurabil** -- liniile
+  foloseau deja `showSymbol: false` dinainte de acest PR; un prag explicit
+  configurabil (marker doar sub un numar de puncte) nu a fost adaugat.
+
 ## 20. Tabel explicabil si reexecutare controlata a optimizarii (issue #47)
 
 **Scop deliberat restrans.** Issue #47 cere, in specificatia completa, un
