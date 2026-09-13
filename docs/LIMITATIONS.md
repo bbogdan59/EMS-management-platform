@@ -1405,7 +1405,99 @@ completa a issue-ului #33):**
 - **Fara eliminare de point-symbols peste un prag configurabil** -- liniile
   foloseau deja `showSymbol: false` dinainte de acest PR; un prag explicit
   configurabil (marker doar sub un numar de puncte) nu a fost adaugat.
-## 20. Design system minim: breadcrumb, grupuri de campuri, focus pe eroare (issue #48)
+## 20. Tabel explicabil si reexecutare controlata a optimizarii (issue #47)
+
+**Scop deliberat restrans.** Issue #47 cere, in specificatia completa, un
+flux asincron nou cu idempotenta si job dedicat, diff intre versiuni de
+plan, jurnal complet al actorului si teste de conflict/rulare concurenta --
+un proiect de mai multe zile. Acest PR NU incearca specificatia completa:
+implementeaza doar felia explicabila peste ce exista deja (tabel/coloane
+clare, rezumat in limbaj natural, provenance/freshness, confirmare inainte
+de a inlocui un plan activ), fara sa atinga deloc modelul matematic
+(`optimization_service._solve` ramane neschimbat -- nicio linie modificata).
+
+**Ce exista deja si NU a fost reconstruit.** Jobul asincron cu status,
+idempotenta si link catre noul run cerut explicit de criteriile de acceptare
+EXISTA deja din issue #11 (`AdminJob` + `admin_optimize_station_job_task`,
+vezi limitarea 15 "Joburi admin asincrone") -- `POST
+/admin/operations/optimize/{station_id}` deja nu blocheaza pagina, deja
+respinge o declansare duplicata pentru aceeasi statie (lock Postgres +
+verificare de job activ), iar rularea concurenta la nivel de solver e deja
+serializata prin lock Redis + `pg_advisory_xact_lock`
+(`OptimizationLockedError`, testat in `tests/unit/test_optimization.py`
+inclusiv cu thread-uri reale). Acest PR NU reimplementeaza niciuna dintre
+acestea -- doar le leaga vizibil de noul tabel explicabil (link direct catre
+`/admin/operations/optimization-runs/{run_id}` din lista de joburi si din
+lista de rulari).
+
+**Ce s-a adaugat efectiv:**
+- `app/services/optimization_view.py` -- view-model PUR (fara DB/solver):
+  `classify_action` clasifica fiecare interval intr-o actiune de baza
+  (incarca din PV / incarca din retea / descarca / exporta / importa /
+  mentine), `build_rows` adauga un "motiv" euristic (rezerva minima de SOC,
+  plafon SOC, pret, echilibru cerere-oferta) si costul/beneficiul net al
+  intervalului, iar `group_segments` grupeaza intervale consecutive cu
+  aceeasi actiune SI acelasi motiv intr-un segment rezumat in limbaj
+  natural. **Motivul e o euristica pe datele deja publicate, NU o extragere
+  a multiplicatorilor Lagrange reali ai solverului** -- planul, o data
+  publicat, nu mai poarta acea informatie; documentat explicit in docstring
+  si in UI.
+  Costul unui interval/segment ramane explicit necunoscut daca lipseste
+  tariful necesar fluxului efectiv; un pret absent nu este inlocuit cu zero.
+- `GET /admin/operations/optimization-runs/{run_id}` -- pagina noua cu:
+  legenda coloanelor (definitie + unitate + conventie de semn explicita
+  pentru baterie/retea, `+`/`-`), sectiunea de provenance/freshness
+  (SOC folosit ca punct de start si calitatea lui masurat/invechit/lipsa,
+  acoperirea prognozelor PV/consum, cate intervale de pret sunt estimate
+  vs. reale, versiunile de configuratie/preferinte folosite), rezumatul pe
+  segmente si tabelul detaliat pe interval. Pentru o rulare `fallback`
+  (date insuficiente), pagina explica EXPLICIT motivul
+  (`OptimizationRun.fallback_reason`, deja existent) in loc sa arate un
+  tabel gol fara context.
+- `GET /admin/operations/optimize-confirm?station_id=...` -- pasul de
+  confirmare cerut de issue: arata ce configuratie/preferinte vor fi
+  folosite, modul shadow/live curent al statiei si, daca exista, planul
+  activ care ar fi marcat `superseded`. `POST
+  /admin/operations/optimize/{station_id}` respinge acum server-side
+  (`error=optimization_confirmation_required`, fara sa creeze niciun
+  `AdminJob`) o reexecutare fara `confirmed=true` STRICT cand exista deja
+  un plan activ -- o statie fara plan activ (prima rulare) nu are nimic de
+  pierdut si ramane neschimbata (verificat explicit,
+  `test_trigger_optimization_without_active_plan_does_not_require_confirmation`).
+  Un camp optional "motiv" e retinut in `AdminJob.params` si in
+  `record_audit` -- nu schimba executia, doar imbogateste jurnalul actorului.
+
+**Ramas explicit in afara scopului acestui PR (nu ascuns):**
+- **Diff intre versiunea noua si cea precedenta a planului.** Pagina de
+  detaliu arata un singur run/plan izolat, nu o comparatie randuri-cu-randuri
+  intre `Plan v(n-1)` si `Plan v(n)`. Ar necesita alinierea a doua orizonturi
+  posibil diferite (start/durata) si o reprezentare vizuala dedicata --
+  proiect separat.
+- **Jurnal complet al actorului la nivel de UI**, dincolo de audit log-ul deja
+  existent (`record_audit`, vizibil in `/admin/audit`). Nu s-a construit o
+  vedere dedicata "istoricul deciziilor asupra acestui plan" in pagina de
+  detaliu.
+- **Conflict de rulare concurenta prin UI-ul admin, testat explicit la acest
+  nivel.** Serializarea reala (Redis + advisory lock la nivel de statie) e
+  deja acoperita de teste existente la nivelul serviciului
+  (`tests/unit/test_optimization.py`, thread-uri reale). Acest PR NU adauga
+  un test HTTP separat de "doua cereri POST simultane catre ruta admin" --
+  ar exercita aceeasi cale deja testata, prin `_lock_admin_job_target` +
+  verificarea de job activ (deja acoperite in
+  `test_trigger_optimization_rejects_duplicate_in_progress`).
+- **Enforcement server-side mai puternic al confirmarii** (ex. un token
+  legat de versiunea exacta a planului activ vazuta pe pagina de
+  confirmare, care sa expire sau sa devina invalid daca planul activ se
+  schimba intre timp). Verificarea actuala e binara (exista sau nu un plan
+  activ) -- suficienta pentru a preveni un click accidental din lista, dar
+  nu o garantie criptografica ca admin-ul a vazut EXACT starea curenta.
+- **Reason codes structurate** (enum) pentru motivul dominant, in loc de
+  text liber generat de `_dominant_reason` -- suficient pentru un om, dar
+  nu usor de filtrat/agregat programatic peste multe rulari.
+- **Modificarea modelului matematic** -- nu a fost cautat si nu a fost gasit
+  niciun bug de solver in cadrul acestui PR; `optimization_service._solve`
+  e neschimbat linie cu linie.
+## 21. Design system minim: breadcrumb, grupuri de campuri, focus pe eroare (issue #48)
 
 Issue #48 cerea un "design system" pentru UI -- domeniu larg, care poate
 insemna orice, de la un ghid de stil complet cu componente reutilizabile pana

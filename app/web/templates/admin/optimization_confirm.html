@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% block title %}Confirmare reexecutare - {{ app_name }}{% endblock %}
+{% block content %}
+<div class="mx-auto max-w-2xl space-y-6">
+  <h1 class="text-xl font-semibold">Confirmare reexecutare optimizare</h1>
+  <p class="text-sm text-gray-500 dark:text-gray-400">Statie: <strong>{{ station.name }}</strong></p>
+
+  <div class="card space-y-2">
+    <h2 class="font-medium">Ce va folosi aceasta rulare</h2>
+    <ul class="list-inside list-disc text-sm">
+      <li>
+        Configuratie statie:
+        {% if config %}<strong>v{{ config.version }}</strong> (cea mai recenta publicata){% else %}
+        <span class="badge-error">nicio configuratie publicata</span> -- rularea va produce direct un plan de asteptare (fallback), nu un plan optimizat{% endif %}
+      </li>
+      <li>
+        Preferinte statie:
+        {% if preference %}<strong>v{{ preference.version }}</strong> (SOC rezerva {{ preference.min_reserve_soc_percent }}% -
+        SOC normal maxim {{ preference.max_normal_soc_percent }}%){% else %}
+        <span class="badge-error">nicio preferinta publicata</span> -- la fel, plan de asteptare{% endif %}
+      </li>
+      <li>
+        Mod de executie al statiei:
+        {% if station.execution_mode == "live" %}<span class="badge-warn">live</span> -- un plan reusit poate autoriza executia fizica (daca datele de intrare sunt suficient de proaspete){% else %}<span class="badge-muted">shadow</span> -- planul e doar calculat si afisat, nu autorizeaza nicio executie fizica{% endif %}
+      </li>
+      <li>Prognoze PV/consum si preturi de import/export: cele mai recente disponibile in acest moment pentru statie.</li>
+    </ul>
+  </div>
+
+  {% if active_plan %}
+  <div class="card space-y-2 border-l-4 border-amber-500">
+    <h2 class="font-medium">Plan activ care ar fi inlocuit</h2>
+    <p class="text-sm">
+      Exista un plan activ <strong>v{{ active_plan.version }}</strong> (status <code>{{ active_plan.status }}</code>,
+      publicat la {{ active_plan.published_at.strftime("%d.%m.%Y %H:%M") if active_plan.published_at else "-" }}).
+      Daca aceasta reoptimizare reuseste, planul curent va fi marcat <code>superseded</code> imediat --
+      nu va mai fi cel activ pentru statie.
+    </p>
+  </div>
+  {% else %}
+  <div class="card">
+    <p class="text-sm text-gray-500 dark:text-gray-400">Statia nu are niciun plan activ momentan -- nu exista nimic de inlocuit.</p>
+  </div>
+  {% endif %}
+
+  <form method="post" action="/admin/operations/optimize/{{ station.id }}" class="card space-y-3">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}" />
+    <div>
+      <label class="label">Motiv reexecutare (optional, apare in jurnalul de audit)</label>
+      <textarea class="input" name="reason" rows="2" placeholder="ex: pret actualizat manual, SOC corectat dupa mentenanta"></textarea>
+    </div>
+    {% if active_plan %}
+    <label class="flex items-start gap-2 text-sm">
+      <input type="checkbox" name="confirmed" value="true" required class="mt-1" />
+      <span>Confirm ca inteleg ca planul activ v{{ active_plan.version }} va fi inlocuit daca aceasta rulare reuseste.</span>
+    </label>
+    {% else %}
+    <input type="hidden" name="confirmed" value="true" />
+    {% endif %}
+    <div class="flex items-center gap-3">
+      <button type="submit" class="btn-primary">Confirma si reexecuta</button>
+      <a class="text-sm text-gray-500 hover:underline dark:text-gray-400" href="/admin/operations">Renunta</a>
+    </div>
+  </form>
+</div>
+{% endblock %}
