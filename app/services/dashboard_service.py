@@ -551,6 +551,7 @@ def get_estimated_savings(db: Session, station: Station, start: datetime, end: d
     hours_expected = max(int((end - start).total_seconds() / 3600), 0)
     hours_priced = 0
     hours_with_load_but_no_price = 0
+    hours_with_incomplete_energy_data = 0
     hours_export_price_missing = 0
     total_load_kwh = 0.0
     total_pv_kwh = 0.0
@@ -563,23 +564,39 @@ def get_estimated_savings(db: Session, station: Station, start: datetime, end: d
     tariff_buy_provenance = {"fixed_contract": 0, "indexed_settled": 0, "indexed_synthetic": 0, "unknown": 0}
 
     for r in rows:
-        if r.load_energy_kwh is None:
+        # NULL inseamna necunoscut in TelemetryAggregate. Un calcul financiar
+        # necesita toate fluxurile; inlocuirea oricaruia cu zero ar fabrica o
+        # economie sau un venit care nu a fost masurat.
+        if any(
+            value is None
+            for value in (
+                r.load_energy_kwh,
+                r.pv_energy_kwh,
+                r.grid_import_energy_kwh,
+                r.grid_export_energy_kwh,
+            )
+        ):
+            hours_with_incomplete_energy_data += 1
             continue
         price_buy = _effective_price_at(tariff_versions_buy, market_intervals, r.period_start)
         if price_buy is None:
             hours_with_load_but_no_price += 1
             continue
-        # Nicio ipoteza de venit necunoscut daca nu exista tarif de export valabil
-        # in acea ora -- la fel ca `optimization_service._resolve_price`.
-        price_sell_resolved = _effective_price_at(tariff_versions_sell, market_intervals, r.period_start)
-        if price_sell_resolved is None:
-            hours_export_price_missing += 1
-        price_sell = price_sell_resolved or 0.0
 
         load = float(r.load_energy_kwh)
-        pv = float(r.pv_energy_kwh) if r.pv_energy_kwh is not None else 0.0
-        grid_import = float(r.grid_import_energy_kwh) if r.grid_import_energy_kwh is not None else 0.0
-        grid_export = float(r.grid_export_energy_kwh) if r.grid_export_energy_kwh is not None else 0.0
+        pv = float(r.pv_energy_kwh)
+        grid_import = float(r.grid_import_energy_kwh)
+        grid_export = float(r.grid_export_energy_kwh)
+        self_export = max(pv - load, 0.0)
+
+        # Pretul de export este obligatoriu numai daca scenariul real sau
+        # baseline-ul au export. Daca lipseste, excludem ora din toate sumele
+        # comparabile; necunoscutul nu devine venit zero.
+        price_sell_resolved = _effective_price_at(tariff_versions_sell, market_intervals, r.period_start)
+        if price_sell_resolved is None and (grid_export > 0.0 or self_export > 0.0):
+            hours_export_price_missing += 1
+            continue
+        price_sell = price_sell_resolved if price_sell_resolved is not None else 0.0
 
         hours_priced += 1
         total_load_kwh += load
@@ -588,7 +605,6 @@ def get_estimated_savings(db: Session, station: Station, start: datetime, end: d
         whole_system_baseline_cost += load * price_buy
 
         self_import = max(load - pv, 0.0)
-        self_export = max(pv - load, 0.0)
         ems_incremental_baseline_cost += self_import * price_buy - self_export * price_sell
 
         # Detaliere issue #49: NU sunt trei numere independente insumabile la
@@ -612,6 +628,7 @@ def get_estimated_savings(db: Session, station: Station, start: datetime, end: d
         "hours_priced": hours_priced,
         "hours_expected": hours_expected,
         "hours_with_load_but_no_price": hours_with_load_but_no_price,
+        "hours_with_incomplete_energy_data": hours_with_incomplete_energy_data,
         "coverage_ratio": round(hours_priced / hours_expected, 4) if hours_expected else None,
         "total_load_kwh": round(total_load_kwh, 3),
         "actual_net_cost_lei": round(actual_net_cost, 2),
