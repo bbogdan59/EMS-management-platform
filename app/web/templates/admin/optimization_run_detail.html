@@ -1,0 +1,177 @@
+{% extends "base.html" %}
+{% block title %}Rulare optimizare - {{ app_name }}{% endblock %}
+{% block content %}
+<div class="space-y-6">
+  <div class="flex items-center justify-between">
+    <div>
+      <h1 class="text-xl font-semibold">Plan explicabil -- {{ station.name if station else "statie stearsa" }}</h1>
+      <p class="text-sm text-gray-500 dark:text-gray-400">
+        Rulare #{{ run.id }} &middot; declansata de {{ run.triggered_by }}{% if triggered_by_user %} ({{ triggered_by_user.email }}){% endif %}
+        &middot; {{ run.created_at.strftime("%d.%m.%Y %H:%M") }} UTC
+      </p>
+    </div>
+    <a class="text-sm text-brand-700 hover:underline dark:text-brand-300" href="/admin/operations#optimization-runs">&larr; Operatiuni</a>
+  </div>
+
+  <div class="card space-y-1">
+    <p>
+      Status:
+      {% if run.status == "succeeded" %}<span class="badge-ok">succes</span>
+      {% elif run.status in ("infeasible", "failed", "solver_timeout") %}<span class="badge-error">{{ run.status }}</span>
+      {% else %}<span class="badge-warn">{{ run.status }}</span>{% endif %}
+      {% if run.is_fallback %}<span class="badge-warn">plan de asteptare (fallback)</span>{% endif %}
+      {% if plan %}<span class="badge-muted">plan v{{ plan.version }} &middot; {{ plan.status }} &middot; mod {{ plan.execution_mode }}</span>{% endif %}
+    </p>
+    {% if run.objective_value_lei is not none %}<p class="text-sm">Cost net estimat pe orizont: <strong>{{ run.objective_value_lei | lei }}</strong></p>{% endif %}
+    {% if run.explanation_summary %}<p class="text-sm text-gray-600 dark:text-gray-300">{{ run.explanation_summary }}</p>{% endif %}
+  </div>
+
+  {% if run.is_fallback %}
+  <div class="card space-y-1 border-l-4 border-amber-500">
+    <h2 class="font-medium">De ce nu exista un plan optimizat live</h2>
+    <p class="text-sm">{{ run.fallback_reason or "Motiv nespecificat." }}</p>
+    <p class="text-xs text-gray-500 dark:text-gray-400">
+      Planul publicat mai jos e unul de <strong>asteptare</strong> (baterie in hold, retea pass-through) --
+      valorile din tabel sunt 0 peste tot, NU o optimizare reala.
+    </p>
+  </div>
+  {% endif %}
+
+  <div class="card space-y-2" id="provenance">
+    <h2 class="font-medium">Provenance &amp; prospetime date de intrare</h2>
+    {% if input_snapshot %}
+    <table class="w-full text-sm">
+      <tbody>
+        <tr class="border-t border-gray-100 dark:border-gray-800">
+          <td class="py-1 pr-4 text-gray-500">Orizont</td>
+          <td>
+            {{ input_snapshot.horizon.start | local_dt(station.timezone if station else None) }} -
+            {{ input_snapshot.horizon.end | local_dt(station.timezone if station else None) }}
+            ({{ input_snapshot.horizon.n_intervals }} intervale &times; {{ input_snapshot.horizon.interval_minutes }} min, ora locala {{ station.timezone if station else "-" }})
+          </td>
+        </tr>
+        <tr class="border-t border-gray-100 dark:border-gray-800">
+          <td class="py-1 pr-4 text-gray-500">SOC baterie folosit ca punct de start</td>
+          <td>
+            {{ input_snapshot.soc.kwh }} kWh &middot;
+            {% if input_snapshot.soc.quality == "measured" %}<span class="badge-ok">masurat</span>
+            {% elif input_snapshot.soc.quality == "stale" %}<span class="badge-warn">invechit</span>
+            {% else %}<span class="badge-error">lipsa (presupunere 50%)</span>{% endif %}
+            {% if input_snapshot.soc.measured_at %} &middot; masurat la {{ input_snapshot.soc.measured_at | local_dt(station.timezone if station else None) }}{% endif %}
+            (prag prospetime {{ input_snapshot.soc.max_age_minutes }} min)
+          </td>
+        </tr>
+        <tr class="border-t border-gray-100 dark:border-gray-800">
+          <td class="py-1 pr-4 text-gray-500">Configuratie / preferinte folosite</td>
+          <td>config v{{ input_snapshot.config.version }} &middot; preferinte v{{ input_snapshot.preference.version }} &middot; prioritate <code>{{ input_snapshot.preference.priority }}</code></td>
+        </tr>
+        <tr class="border-t border-gray-100 dark:border-gray-800">
+          <td class="py-1 pr-4 text-gray-500">Acoperire prognoza PV</td>
+          <td>{{ input_snapshot.pv_coverage }} / {{ input_snapshot.horizon.n_intervals }} intervale au prognoza reala (restul: ultima valoare cunoscuta, propagata)</td>
+        </tr>
+        <tr class="border-t border-gray-100 dark:border-gray-800">
+          <td class="py-1 pr-4 text-gray-500">Acoperire prognoza consum</td>
+          <td>{{ input_snapshot.load_coverage }} / {{ input_snapshot.horizon.n_intervals }} intervale au prognoza reala</td>
+        </tr>
+        <tr class="border-t border-gray-100 dark:border-gray-800">
+          <td class="py-1 pr-4 text-gray-500">Pret import estimat (nu real)</td>
+          <td>
+            {{ input_snapshot.price_estimated_count }} / {{ input_snapshot.horizon.n_intervals }} intervale
+            {% if input_snapshot.price_estimated_count %}<span class="badge-warn">contine preturi estimate</span>{% else %}<span class="badge-ok">toate reale</span>{% endif %}
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    {% else %}
+    <p class="text-sm text-gray-500 dark:text-gray-400">
+      Nu exista un snapshot de intrare pentru aceasta rulare (tipic pentru un fallback timpuriu, ex. statie fara
+      configuratie/preferinte publicate) -- vezi motivul fallback-ului mai sus.
+    </p>
+    {% endif %}
+  </div>
+
+  <div class="card space-y-2" id="legend">
+    <h2 class="font-medium">Legenda coloanelor</h2>
+    <div class="overflow-x-auto">
+    <table class="w-full text-sm">
+      <thead class="text-left text-gray-500"><tr><th class="py-1 pr-4">Coloana</th><th>Definitie</th><th>Unitate / conventie de semn</th></tr></thead>
+      <tbody>
+        <tr class="border-t border-gray-100 dark:border-gray-800"><td class="py-1 pr-4">Interval (local)</td><td>Inceputul si sfarsitul intervalului, in fusul orar local al statiei</td><td>ora locala statiei, format zi.luna ora:minut</td></tr>
+        <tr class="border-t border-gray-100 dark:border-gray-800"><td class="py-1 pr-4">PV prognozat</td><td>Productia fotovoltaica prognozata pentru interval</td><td>kW, mereu &ge; 0</td></tr>
+        <tr class="border-t border-gray-100 dark:border-gray-800"><td class="py-1 pr-4">Consum prognozat</td><td>Consumul casei prognozat pentru interval (nu include EV, calculat separat)</td><td>kW, mereu &ge; 0</td></tr>
+        <tr class="border-t border-gray-100 dark:border-gray-800"><td class="py-1 pr-4">Baterie</td><td>Setpoint de putere baterie</td><td>kW &middot; <strong>+ incarcare, - descarcare</strong></td></tr>
+        <tr class="border-t border-gray-100 dark:border-gray-800"><td class="py-1 pr-4">Retea</td><td>Setpoint de putere schimbata cu reteaua</td><td>kW &middot; <strong>+ import, - export</strong></td></tr>
+        <tr class="border-t border-gray-100 dark:border-gray-800"><td class="py-1 pr-4">SOC tinta</td><td>Starea de incarcare a bateriei la SFARSITUL intervalului</td><td>%, din capacitatea disponibila</td></tr>
+        <tr class="border-t border-gray-100 dark:border-gray-800"><td class="py-1 pr-4">Pret import/export</td><td>Pretul folosit de solver pentru acel interval</td><td>lei/kWh</td></tr>
+        <tr class="border-t border-gray-100 dark:border-gray-800"><td class="py-1 pr-4">Cost interval</td><td>Cost net de retea pentru interval (import &times; pret import - export &times; pret export) &times; durata</td><td>lei &middot; <strong>+ cost, - beneficiu net</strong>; "-" cand lipsesc ambele preturi</td></tr>
+        <tr class="border-t border-gray-100 dark:border-gray-800"><td class="py-1 pr-4">Actiune</td><td>Rezumat in limbaj natural al setpoint-urilor de mai sus</td><td>text</td></tr>
+        <tr class="border-t border-gray-100 dark:border-gray-800"><td class="py-1 pr-4">Motiv</td><td>Constrangerea dominanta dedusa euristic (rezerva SOC, plafon SOC, pret, echilibru cerere-oferta) -- NU o extragere directa a solverului</td><td>text</td></tr>
+      </tbody>
+    </table>
+    </div>
+    <p class="text-xs text-gray-500 dark:text-gray-400">
+      Toate valorile de mai sus sunt rotunjite DOAR la afisare -- calculele interne folosesc precizia completa stocata in baza de date.
+    </p>
+  </div>
+
+  {% if segments %}
+  <div class="card space-y-2" id="summary">
+    <h2 class="font-medium">Rezumat in limbaj natural (segmente)</h2>
+    <ul class="list-inside list-disc space-y-1 text-sm">
+      {% for seg in segments %}
+      <li>
+        <strong>{{ seg.start | local_dt(station.timezone if station else None) }} - {{ seg.end | local_dt(station.timezone if station else None) }}</strong>
+        ({{ seg.interval_count }} intervale) -- {{ seg.action_label }}, motiv: {{ seg.dominant_reason }}.
+        Baterie medie {{ seg.avg_battery_power_kw }} kW, retea medie {{ seg.avg_grid_power_kw }} kW
+        {% if seg.total_cost_lei is not none %}, cost segment {{ seg.total_cost_lei }} lei{% endif %}.
+      </li>
+      {% endfor %}
+    </ul>
+  </div>
+  {% endif %}
+
+  {% if rows %}
+  <div class="card">
+    <h2 class="mb-2 font-medium">Tabel detaliat pe interval</h2>
+    <div class="overflow-x-auto">
+    <table class="w-full text-sm">
+      <thead class="text-left text-gray-500">
+        <tr>
+          <th class="py-1 pr-2">Interval (local)</th>
+          <th class="pr-2" title="kW, &ge;0">PV (kW)</th>
+          <th class="pr-2" title="kW, &ge;0">Consum (kW)</th>
+          <th class="pr-2" title="+ incarcare / - descarcare">Baterie (kW)</th>
+          <th class="pr-2" title="+ import / - export">Retea (kW)</th>
+          <th class="pr-2" title="SOC la sfarsitul intervalului">SOC tinta (%)</th>
+          <th class="pr-2" title="lei/kWh">Pret import</th>
+          <th class="pr-2" title="lei/kWh">Pret export</th>
+          <th class="pr-2" title="+ cost / - beneficiu net">Cost (lei)</th>
+          <th class="pr-2">Actiune</th>
+          <th>Motiv</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in rows %}
+        <tr class="border-t border-gray-100 dark:border-gray-800">
+          <td class="py-1 pr-2 whitespace-nowrap">{{ row.interval_start | local_dt(station.timezone if station else None) }}</td>
+          <td class="pr-2">{{ "%.2f"|format(row.pv_forecast_kw) }}</td>
+          <td class="pr-2">{{ "%.2f"|format(row.load_forecast_kw) }}</td>
+          <td class="pr-2">{{ "%.2f"|format(row.battery_power_target_kw) }}</td>
+          <td class="pr-2">{{ "%.2f"|format(row.grid_power_target_kw) }}</td>
+          <td class="pr-2">{{ "%.1f"|format(row.battery_soc_target_percent) }}</td>
+          <td class="pr-2">{{ "%.4f"|format(row.price_import_lei_kwh) if row.price_import_lei_kwh is not none else "-" }}</td>
+          <td class="pr-2">{{ "%.4f"|format(row.price_export_lei_kwh) if row.price_export_lei_kwh is not none else "-" }}</td>
+          <td class="pr-2">{{ "%.4f"|format(row.interval_cost_lei) if row.interval_cost_lei is not none else "-" }}</td>
+          <td class="pr-2">{{ row.action_label }}</td>
+          <td class="text-gray-500 dark:text-gray-400">{{ row.explanation or row.dominant_reason }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    </div>
+  </div>
+  {% else %}
+  <div class="card"><p class="text-sm text-gray-500 dark:text-gray-400">Nicio rulare intervale de plan disponibile.</p></div>
+  {% endif %}
+</div>
+{% endblock %}

@@ -22,6 +22,7 @@
         <option value="24h">24 ore</option>
         <option value="7d">7 zile</option>
         <option value="30d">30 zile</option>
+        <option value="1y">1 an</option>
       </select>
       <a id="export-link" class="btn-secondary" href="/stations/{{ station.id }}/export.csv?range=24h">Export CSV</a>
     </div>
@@ -58,6 +59,35 @@
     </div>
   </div>
 
+  <!-- Detaliere financiara (issue #49): valoare bruta PV / economie autoconsum /
+       venit export, fiecare cu formula proprie, ca sa nu fie confundate cu o
+       singura cifra de "economie totala". A NU se insuma orbeste cele trei
+       numere -- fiecare are propriul reper, vezi tooltip-urile. -->
+  <div class="card">
+    <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
+      <h2 class="font-medium">Detaliere valoare PV si export (30 zile)</h2>
+      <span id="kpi-tariff-provenance" class="badge-muted" title="Daca pretul de import folosit e din contract/piata reala (masurat) sau dintr-un fixture de test/demo (estimat)">-</span>
+    </div>
+    <div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
+      <div>
+        <p class="label !mb-1" id="kpi-gross-pv-value-label" title="">Valoare bruta PV</p>
+        <p id="kpi-gross-pv-value" class="text-sm font-medium">-</p>
+      </div>
+      <div>
+        <p class="label !mb-1" id="kpi-self-consumption-label" title="">Economie autoconsum</p>
+        <p id="kpi-self-consumption" class="text-sm font-medium">-</p>
+      </div>
+      <div>
+        <p class="label !mb-1" id="kpi-export-revenue-label" title="">Venit export</p>
+        <p id="kpi-export-revenue" class="text-sm font-medium">-</p>
+      </div>
+    </div>
+    <p id="kpi-financial-breakdown-note" class="mt-2 text-xs text-gray-500">
+      Valoarea bruta PV = cost de cumparare potential evitat, NU economie totala realizata --
+      autoconsumul si exportul efectiv conteaza separat (vezi tooltip-urile de mai sus).
+    </p>
+  </div>
+
   <!-- Diagrama fluxuri -->
   <div class="card">
     <h2 class="mb-3 font-medium">Fluxuri de energie</h2>
@@ -67,12 +97,27 @@
   <!-- Grafice principale -->
   <div class="grid gap-4 lg:grid-cols-2">
     <div class="card">
-      <h2 class="mb-2 font-medium">PV, consum, baterie, retea</h2>
+      <div class="mb-2 flex items-center justify-between gap-2">
+        <h2 class="font-medium">PV, consum, baterie, retea</h2>
+        <span id="chart-power-resolution" class="text-xs text-gray-400 dark:text-gray-500"></span>
+      </div>
       <div class="empty-state text-sm text-gray-500" hidden>Fara date de telemetrie in intervalul selectat.</div>
+      <div class="error-state text-sm text-red-700 dark:text-red-300 bg-red-50 dark:bg-red-900/30 rounded p-3" hidden>
+        <p class="mb-2">Nu am putut incarca acest grafic. Celelalte grafice nu sunt afectate.</p>
+        <button type="button" class="btn-secondary retry-btn">Reincearca</button>
+      </div>
       <div id="chart-power" style="height:280px"></div>
     </div>
     <div class="card">
-      <h2 class="mb-2 font-medium">Evolutie SOC baterie</h2>
+      <div class="mb-2 flex items-center justify-between gap-2">
+        <h2 class="font-medium">Evolutie SOC baterie</h2>
+        <span id="chart-soc-resolution" class="text-xs text-gray-400 dark:text-gray-500"></span>
+      </div>
+      <div class="empty-state text-sm text-gray-500" hidden>Fara date de telemetrie in intervalul selectat.</div>
+      <div class="error-state text-sm text-red-700 dark:text-red-300 bg-red-50 dark:bg-red-900/30 rounded p-3" hidden>
+        <p class="mb-2">Nu am putut incarca acest grafic. Celelalte grafice nu sunt afectate.</p>
+        <button type="button" class="btn-secondary retry-btn">Reincearca</button>
+      </div>
       <div id="chart-soc" style="height:280px"></div>
     </div>
     <div class="card">

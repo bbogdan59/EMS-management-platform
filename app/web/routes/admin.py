@@ -19,11 +19,12 @@ from app.models.alert import Alert
 from app.models.audit import AuditLog
 from app.models.command import Command
 from app.models.device import Device
-from app.models.enums import AdminJobStatus, AdminJobType, AlertStatus
+from app.models.enums import AdminJobStatus, AdminJobType, AlertStatus, PlanStatus
 from app.models.market import ImportRun
-from app.models.optimization import OptimizationRun
+from app.models.optimization import OptimizationRun, Plan
 from app.models.organization import Membership, Organization
-from app.models.station import Station
+from app.models.preference import PreferenceVersion
+from app.models.station import Station, StationConfigVersion
 from app.models.user import Invitation, User
 from app.services import (
     auth_service,
@@ -31,6 +32,7 @@ from app.services import (
     device_service,
     market_retention_service,
     membership_service,
+    optimization_view,
     organization_service,
     station_service,
 )
@@ -432,6 +434,20 @@ def operations(request: Request, db: Session = Depends(get_db), user: User = Dep
 
 
 _ACTIVE_ADMIN_JOB_STATUSES = (AdminJobStatus.queued.value, AdminJobStatus.running.value)
+# Statusurile de Plan care inseamna "inca in vigoare" -- un plan `completed` deja
+# si-a incheiat executia si nu mai e "activ" in sensul de "ar fi inlocuit de o
+# reoptimizare", iar unul `superseded` a fost deja inlocuit anterior. Trebuie sa
+# ramana identic cu filtrul din `optimization_service._publish_plan`.
+_ACTIVE_PLAN_STATUSES = (PlanStatus.published.value, PlanStatus.accepted_by_device.value, PlanStatus.executing.value)
+
+
+def _active_plan_for_station(db: Session, station_id: uuid.UUID) -> Plan | None:
+    return db.scalar(
+        select(Plan)
+        .where(Plan.station_id == station_id, Plan.status.in_(_ACTIVE_PLAN_STATUSES))
+        .order_by(Plan.version.desc())
+        .limit(1)
+    )
 
 
 def _lock_admin_job_target(db: Session, dedupe_key: str) -> None:
@@ -576,10 +592,53 @@ def trigger_market_retention(
     return RedirectResponse("/admin/operations", status_code=303)
 
 
+@router.get("/operations/optimize-confirm")
+def optimization_confirm(
+    request: Request,
+    station_id: uuid.UUID = Query(...),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Pasul de confirmare cerut de issue #47 inainte de reexecutare: arata
+    exact ce inputuri va folosi rularea (versiunea de configuratie/preferinte
+    curent PUBLICATA, modul shadow/live curent al statiei) si, daca exista,
+    planul activ care ar fi inlocuit (`superseded`) de o rulare reusita --
+    nu presupune nimic despre continutul viitor al planului (asta depinde de
+    solver), doar despre inputurile deja cunoscute acum."""
+    station = db.get(Station, station_id)
+    if station is None:
+        return RedirectResponse("/admin/operations?error=station_not_found", status_code=303)
+
+    config = db.scalar(
+        select(StationConfigVersion)
+        .where(StationConfigVersion.station_id == station_id)
+        .order_by(StationConfigVersion.version.desc())
+        .limit(1)
+    )
+    preference = db.scalar(
+        select(PreferenceVersion)
+        .where(PreferenceVersion.station_id == station_id)
+        .order_by(PreferenceVersion.version.desc())
+        .limit(1)
+    )
+    active_plan = _active_plan_for_station(db, station_id)
+
+    context = {
+        "station": station,
+        "config": config,
+        "preference": preference,
+        "active_plan": active_plan,
+        **build_nav_context(db, user),
+    }
+    return templates.TemplateResponse(request, "admin/optimization_confirm.html", context)
+
+
 @router.post("/operations/optimize/{station_id}", dependencies=[Depends(verify_csrf)])
 def trigger_optimization(
     request: Request,
     station_id: uuid.UUID,
+    confirmed: str | None = Form(None),
+    reason: str | None = Form(None),
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
@@ -588,6 +647,13 @@ def trigger_optimization(
     station = db.get(Station, station_id)
     if station is None:
         return RedirectResponse("/admin/operations?error=station_not_found", status_code=303)
+
+    active_plan = _active_plan_for_station(db, station_id)
+    # Confirmarea explicita e ceruta STRICT cand exista un plan activ de inlocuit --
+    # o statie fara plan activ inca (prima rulare) nu are nimic de pierdut, deci nu
+    # blocam fluxul existent (scripturi/teste care apeleaza direct aceasta ruta).
+    if active_plan is not None and not confirmed:
+        return RedirectResponse("/admin/operations?error=optimization_confirmation_required", status_code=303)
 
     _lock_admin_job_target(db, f"optimization:{station_id}")
     existing = db.scalar(
@@ -600,10 +666,11 @@ def trigger_optimization(
     if existing is not None:
         return RedirectResponse("/admin/operations?error=optimization_in_progress", status_code=303)
 
+    reason = (reason or "").strip() or None
     job = AdminJob(
         job_type=AdminJobType.optimization.value,
         status=AdminJobStatus.queued.value,
-        params={},
+        params={"reason": reason} if reason else {},
         target_label=station.name,
         station_id=station_id,
         triggered_by_user_id=user.id,
@@ -613,6 +680,7 @@ def trigger_optimization(
     record_audit(
         db, action="optimization_triggered", resource_type="admin_job", resource_id=str(job.id),
         actor_user_id=user.id, actor_label=user.email, station_id=station_id,
+        metadata={"reason": reason, "superseded_plan_version": active_plan.version if active_plan else None},
     )
     db.commit()
 
@@ -620,6 +688,50 @@ def trigger_optimization(
         return RedirectResponse("/admin/operations?error=enqueue_failed", status_code=303)
 
     return RedirectResponse("/admin/operations", status_code=303)
+
+
+@router.get("/operations/optimization-runs/{run_id}")
+def optimization_run_detail(
+    request: Request,
+    run_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Tabelul explicabil cerut de issue #47: coloane cu unitati/conventie de
+    semn explicite, rezumat in limbaj natural pe segmente (grupare de
+    intervale consecutive cu aceeasi actiune si acelasi motiv dominant) si
+    provenance/freshness pentru datele folosite la construirea rularii."""
+    run = db.get(OptimizationRun, run_id)
+    if run is None:
+        return RedirectResponse("/admin/operations?error=optimization_run_not_found", status_code=303)
+
+    station = db.get(Station, run.station_id)
+    preference = db.get(PreferenceVersion, run.preference_version_id) if run.preference_version_id else None
+
+    rows: list[optimization_view.IntervalRow] = []
+    segments: list[optimization_view.PlanSegment] = []
+    if run.plan is not None:
+        rows = optimization_view.build_rows(
+            run.plan.intervals,
+            min_reserve_soc_percent=float(preference.min_reserve_soc_percent) if preference else None,
+            max_normal_soc_percent=float(preference.max_normal_soc_percent) if preference else None,
+            interval_hours=run.interval_minutes / 60.0,
+        )
+        segments = optimization_view.group_segments(rows)
+
+    triggered_by_user = db.get(User, run.triggered_by_user_id) if run.triggered_by_user_id else None
+
+    context = {
+        "run": run,
+        "station": station,
+        "plan": run.plan,
+        "rows": rows,
+        "segments": segments,
+        "triggered_by_user": triggered_by_user,
+        "input_snapshot": run.input_snapshot or {},
+        **build_nav_context(db, user),
+    }
+    return templates.TemplateResponse(request, "admin/optimization_run_detail.html", context)
 
 
 @router.get("/audit")

@@ -51,10 +51,52 @@ function emsInitDashboard(stationId) {
     }
   }
 
-  async function fetchJson(url) {
-    const res = await fetch(url, { headers: { Accept: "application/json" } });
-    if (!res.ok) throw new Error("HTTP " + res.status);
-    return res.json();
+  async function fetchJson(url, { signal, timeoutMs = 15000 } = {}) {
+    // Timeout propriu, independent de un eventual `signal` extern (folosit
+    // pentru cancel la schimbarea intervalului) -- oricare din cele doua
+    // poate opri cererea, fara sa blocheze restul paginii (issue #33).
+    const timeoutController = new AbortController();
+    const timer = setTimeout(() => timeoutController.abort(), timeoutMs);
+    const onExternalAbort = () => timeoutController.abort();
+    if (signal) signal.addEventListener("abort", onExternalAbort);
+    try {
+      const res = await fetch(url, { headers: { Accept: "application/json" }, signal: timeoutController.signal });
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      return await res.json();
+    } finally {
+      clearTimeout(timer);
+      if (signal) signal.removeEventListener("abort", onExternalAbort);
+    }
+  }
+
+  // Widget independent: incarcare proprie, empty-state gri distinct de "zero",
+  // eroare izolata cu retry -- fara sa blocheze restul paginii (issue #33).
+  function widgetCard(chartElId) {
+    const chartEl = $(chartElId);
+    if (!chartEl) return null;
+    const card = chartEl.closest(".card");
+    return {
+      chartEl,
+      emptyEl: card ? card.querySelector(".empty-state") : null,
+      errorEl: card ? card.querySelector(".error-state") : null,
+    };
+  }
+
+  function showWidgetState(widget, state) {
+    if (!widget) return;
+    const { chartEl, emptyEl, errorEl } = widget;
+    if (emptyEl) emptyEl.hidden = state !== "empty";
+    if (errorEl) errorEl.hidden = state !== "error";
+    chartEl.hidden = state === "empty" || state === "error";
+  }
+
+  function wireRetry(widget, loadFn) {
+    if (!widget || !widget.errorEl) return;
+    const btn = widget.errorEl.querySelector(".retry-btn");
+    if (btn && !btn.dataset.wired) {
+      btn.dataset.wired = "1";
+      btn.addEventListener("click", () => loadFn());
+    }
   }
 
   function lineChart(el, series, opts = {}) {
@@ -70,25 +112,75 @@ function emsInitDashboard(stationId) {
     return chart;
   }
 
+  // Cache scurt pe URL exacta (interval inclus) -- evita re-fetch-uri
+  // redundante la re-render-uri apropiate, fara sa pretinda date "live".
+  const timeseriesCache = new Map(); // url -> { data, ts }
+  const TIMESERIES_CACHE_TTL_MS = 30000;
+  let powerChartController = null;
+  let socChartController = null;
+
+  async function fetchTimeseries(range, controller) {
+    const url = `/stations/${stationId}/data/timeseries?range=${range}`;
+    const cached = timeseriesCache.get(url);
+    if (cached && Date.now() - cached.ts < TIMESERIES_CACHE_TTL_MS) return cached.data;
+    const data = await fetchJson(url, { signal: controller.signal });
+    timeseriesCache.set(url, { data, ts: Date.now() });
+    return data;
+  }
+
+  function describeResolution(data) {
+    const pct = data.coverage !== null && data.coverage !== undefined ? Math.round(data.coverage * 100) : null;
+    const method = (data.aggregation && data.aggregation.pv_kw) || (data.aggregation && data.aggregation.soc_pct) || "medie";
+    return `rezolutie ${data.resolution} (${method})` + (pct !== null ? ` · acoperire ${pct}%` : "");
+  }
+
   async function loadPowerChart(range) {
-    const el = $("chart-power");
-    if (!el) return;
+    const widget = widgetCard("chart-power");
+    if (!widget) return;
+    wireRetry(widget, () => loadPowerChart(range));
+    // Cancel la schimbarea intervalului (issue #33): o cerere veche, inca in
+    // zbor, nu trebuie sa mai apuce sa deseneze peste raspunsul cererii noi.
+    if (powerChartController) powerChartController.abort();
+    const controller = new AbortController();
+    powerChartController = controller;
     try {
-      const data = await fetchJson(`/stations/${stationId}/data/timeseries?range=${range}`);
-      if (!data.length) { el.closest(".card").querySelector(".empty-state").hidden = false; return; }
-      el.closest(".card").querySelector(".empty-state").hidden = true;
-      const mk = (key, name) => ({ name, type: "line", showSymbol: false, data: data.map((d) => [d.t, d[key]]) });
-      lineChart(el, [mk("pv_kw", "PV"), mk("load_kw", "Consum"), mk("battery_kw", "Baterie"), mk("grid_kw", "Retea")], { yName: "kW" });
-    } catch (e) { console.error(e); }
+      const data = await fetchTimeseries(range, controller);
+      if (controller !== powerChartController) return; // inlocuita intre timp
+      const points = data.points || [];
+      const resEl = $("chart-power-resolution");
+      if (resEl) resEl.textContent = describeResolution(data);
+      if (!points.length) { showWidgetState(widget, "empty"); return; }
+      showWidgetState(widget, "ok");
+      const mk = (key, name) => ({ name, type: "line", showSymbol: false, data: points.map((d) => [d.t, d[key]]) });
+      lineChart(widget.chartEl, [mk("pv_kw", "PV"), mk("load_kw", "Consum"), mk("battery_kw", "Baterie"), mk("grid_kw", "Retea")], { yName: "kW" });
+    } catch (e) {
+      if (controller !== powerChartController) return; // inlocuita/anulata intre timp, nu e o eroare de afisat
+      console.error(e);
+      showWidgetState(widget, "error");
+    }
   }
 
   async function loadSocChart(range) {
-    const el = $("chart-soc");
-    if (!el) return;
+    const widget = widgetCard("chart-soc");
+    if (!widget) return;
+    wireRetry(widget, () => loadSocChart(range));
+    if (socChartController) socChartController.abort();
+    const controller = new AbortController();
+    socChartController = controller;
     try {
-      const data = await fetchJson(`/stations/${stationId}/data/timeseries?range=${range}`);
-      lineChart(el, [{ name: "SOC", type: "line", showSymbol: false, areaStyle: {}, data: data.map((d) => [d.t, d.soc_pct]) }], { yName: "%", legend: false });
-    } catch (e) { console.error(e); }
+      const data = await fetchTimeseries(range, controller);
+      if (controller !== socChartController) return;
+      const points = data.points || [];
+      const resEl = $("chart-soc-resolution");
+      if (resEl) resEl.textContent = describeResolution(data);
+      if (!points.length) { showWidgetState(widget, "empty"); return; }
+      showWidgetState(widget, "ok");
+      lineChart(widget.chartEl, [{ name: "SOC", type: "line", showSymbol: false, areaStyle: {}, data: points.map((d) => [d.t, d.soc_pct]) }], { yName: "%", legend: false });
+    } catch (e) {
+      if (controller !== socChartController) return;
+      console.error(e);
+      showWidgetState(widget, "error");
+    }
   }
 
   async function loadPricesChart() {
@@ -255,12 +347,40 @@ function emsInitDashboard(stationId) {
         $("kpi-savings-coverage").textContent = coveragePct !== null
           ? `Acoperire date: ${coveragePct}% din interval (${savings.hours_priced}/${savings.hours_expected} ore).`
           : "";
+
+        // Detaliere financiara (issue #49) -- fiecare card isi arata formula in
+        // tooltip (title), ca sa nu fie confundate una cu alta sau cu "economia totala".
+        $("kpi-gross-pv-value").textContent = fmt(savings.gross_pv_value_lei) + " lei (30 zile)";
+        $("kpi-gross-pv-value-label").title = savings.gross_pv_value_description || "";
+        $("kpi-self-consumption").textContent = fmt(savings.self_consumption_savings_lei) + " lei (30 zile)";
+        $("kpi-self-consumption-label").title = savings.self_consumption_savings_description || "";
+        let exportText = fmt(savings.export_revenue_lei) + " lei (30 zile)";
+        if (savings.hours_export_price_missing > 0) {
+          exportText += ` (${savings.hours_export_price_missing} ore cu export excluse: tarif necunoscut)`;
+        }
+        $("kpi-export-revenue").textContent = exportText;
+        $("kpi-export-revenue-label").title = savings.export_revenue_description || "";
+
+        const provenanceEl = $("kpi-tariff-provenance");
+        if (provenanceEl) {
+          const isMeasured = savings.tariff_provenance_summary === "measured";
+          provenanceEl.textContent = isMeasured ? "tarif import: masurat" : "tarif import: estimat (date de test)";
+          provenanceEl.className = isMeasured ? "badge-ok" : "badge-warn";
+        }
       } else {
         $("kpi-savings").textContent = "indisponibil";
         $("kpi-savings-note").textContent = savings.reason || "";
         $("kpi-ems-benefit").textContent = "indisponibil";
         $("kpi-ems-benefit-note").textContent = "";
         $("kpi-savings-coverage").textContent = "";
+        $("kpi-gross-pv-value").textContent = "indisponibil";
+        $("kpi-self-consumption").textContent = "indisponibil";
+        $("kpi-export-revenue").textContent = "indisponibil";
+        const provenanceEl = $("kpi-tariff-provenance");
+        if (provenanceEl) {
+          provenanceEl.textContent = "-";
+          provenanceEl.className = "badge-muted";
+        }
       }
     } catch (e) { console.error(e); }
   }

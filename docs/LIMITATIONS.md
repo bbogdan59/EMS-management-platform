@@ -1306,7 +1306,308 @@ SSE deschis). Regresie acoperita si de
 Postgres reale, nu fixture-ul `db` cu SAVEPOINT, care nu poate exercita
 contentie de lock reala).
 
-## 20. Design system minim: breadcrumb, grupuri de campuri, focus pe eroare (issue #48)
+## Addendum: Detaliere financiara PV/autoconsum/export, cu provenienta tarifului (issue #49)
+
+**Scop, limitat deliberat.** Issue #49 cere atat o detaliere financiara mai
+clara (carduri separate pentru valoare PV/economie autoconsum/venit export,
+cu formula si acoperire vizibile) cat si un motor de recomandari pentru ziua
+urmatoare (meteo, SOC, contract fix/dinamic, feedback, deduplicare/cooldown,
+backtest). Acest PR implementeaza DOAR prima parte -- detalierea financiara,
+peste `dashboard_service.get_estimated_savings` (issue #13) si formula unica
+de pret din `tariff_service` (issue #46). Motorul de recomandari NU e
+implementat deloc (vezi sectiunea "Ramas in afara scopului" mai jos) -- nu
+exista nicio recomandare hardcodata/mock in acest PR.
+
+**Trei numere noi, fiecare cu formula lui proprie, NU "economie totala".**
+Definitia din issue #49 e explicita: `pret contractual x productie PV` poate
+fi afisat ca valoare bruta/cost de cumparare potential evitat, dar NU automat
+ca economie totala. `get_estimated_savings` adauga acum, langa cele doua
+repere deja existente (`whole_system_benefit_lei`/`ems_incremental_benefit_lei`,
+neschimbate):
+- `gross_pv_value_lei` = productie PV (kWh) x pret de cumparare efectiv,
+  ora-cu-ora -- costul de cumparare POTENTIAL evitat de toata productia PV,
+  indiferent daca a fost efectiv autoconsumata, exportata sau pierduta.
+- `self_consumption_savings_lei` = min(PV, consum) (kWh) x pret de cumparare
+  efectiv, ora-cu-ora -- economia REALA prin autoconsum direct (aproximare
+  orara, nu tine cont de decalaje in cadrul orei).
+- `export_revenue_lei` = energie exportata (kWh) x pret de export efectiv,
+  ora-cu-ora -- venit REAL, deja parte din `actual_net_cost_lei`, expus aici
+  separat pentru claritate (nu un numar nou/dublu-numarat).
+
+Fiecare are un camp `_description` cu formula exacta in romana, afisat ca
+tooltip in UI (`title` pe eticheta cardului) -- niciun numar nu apare fara
+explicatia lui alaturata.
+
+**Acoperire lipsa pentru export, raportata explicit.** Cand exista export
+real sau in baseline, dar tariful de export nu are o versiune valabila,
+ora este exclusa din sumele comparabile si numarata in
+`hours_export_price_missing`; pretul necunoscut nu devine zero. La fel, o
+ora cu oricare flux energetic necesar `NULL` este exclusa si raportata prin
+`hours_with_incomplete_energy_data`.
+Prin urmare, `coverage_ratio` descrie numai orele complet evaluabile, nu
+pretinde acoperire pentru intervalele financiare necunoscute.
+Aceasta semantica este independenta de rezolutia adaptiva a graficelor:
+valorile financiare continua sa foloseasca agregatele orare istorice.
+
+**Provenienta tarifului de import: masurat vs. estimat.** Nu exista in schema
+o notiune de tarif "modelat" (o prognoza de pret viitor) -- doar tarif fix
+contractual, tarif indexat cu pret PZU real decontat, sau (folosit exclusiv
+pentru teste/demo) un fixture sintetic de piata (`ImportRun.is_synthetic_fixture`,
+deja existent din issue #35/#51). `_price_provenance_at` (nou,
+`dashboard_service.py`) clasifica fiecare ora platita in `fixed_contract`
+(pret exact din contract), `indexed_settled` (pret OPCOM real, decontat) sau
+`indexed_synthetic` (fixture de test, NU un pret real) -- `tariff_buy_provenance`
+raporteaza numarul de ore din fiecare categorie, iar `tariff_provenance_summary`
+e `"estimated"` daca ORICE ora foloseste un fixture sintetic, altfel
+`"measured"`. Indicatorul e deci binar (masurat/estimat), nu cu trei stari
+(masurat/modelat/estimat) din criteriul de acceptare -- pentru ca platforma
+nu are inca nicio sursa REALA de "tarif modelat" (ex. o prognoza de pret
+contractual viitor); adaugarea uneia ar fi o functionalitate noua, in afara
+scopului acestui PR.
+
+**UI.** `dashboard/station.html` capata un card nou "Detaliere valoare PV si
+export" cu cele trei numere si un badge de provenienta a tarifului
+(`kpi-tariff-provenance`, `badge-ok`/`badge-warn`), populat de
+`loadEfcAndSavings` din `dashboard.js` (aceeasi cerere HTTP existenta,
+`/stations/{id}/data/savings`, extinsa cu campurile noi -- nicio ruta noua).
+Cardurile "Beneficiu sistem PV/baterie" si "Beneficiu incremental EMS"
+existente raman neschimbate (aceleasi elemente, acelasi text).
+
+**Teste.** `tests/unit/test_dashboard_service.py` include teste pentru
+in fisier) -- productie zero (valoare PV/economie autoconsum = 0), consum
+zero (autoconsum 0, valoare PV != venit export, ca sa nu fie confundate),
+caz mixt autoconsum+export, interval de pret NEGATIV (valoare PV negativa,
+nu trunchiata la 0), provenienta `fixed_contract`/`indexed_settled`/
+`indexed_synthetic` (cu `tests.factories.make_market_day(is_synthetic=...)`),
+raportarea `hours_export_price_missing` si excluderea energiei incomplete. `tests/integration/
+test_dashboard_savings_route.py` (2 teste noi) -- campurile noi ajung in
+raspunsul JSON real al rutei `/stations/{id}/data/savings`, si ruta ramane
+protejata (403 pentru un utilizator fara acces la statie). Toate cele 9 teste
+existente pentru `get_estimated_savings`/alte functii din `dashboard_service`
+trec neschimbate (verificat explicit) -- nicio modificare de comportament
+pentru `whole_system_benefit_lei`/`ems_incremental_benefit_lei`.
+
+**Ramas in afara scopului (deliberat, nu ascuns -- domeniu de multe zile):**
+- **Motorul de recomandari pentru ziua urmatoare** (meteo/ore de soare, PV/
+  consum, SOC, contract fix/dinamic, preferinte client) -- NEIMPLEMENTAT.
+  Infrastructura de prognoza EXISTA deja (`weather_service`, `pv_forecast_
+  service`, `consumption_forecast_service`, folosita de `get_forecast_vs_actual`),
+  deci nu e un blocaj total, dar o recomandare demna de incredere mai are
+  nevoie de: reguli deterministe explicite pentru fix vs. dinamic (fix: NU
+  recomanda mutarea consumului doar din cauza OPCOM; dinamic: explica
+  intervalul si diferenta estimata), reason codes, impact estimat, incredere,
+  deadline -- niciuna dintre acestea nu exista inca in cod.
+- **Feedback "util/nu e relevant" si deduplicare/cooldown** -- necesita un
+  model de date nou (persistarea recomandarilor emise + feedback-ul lor) care
+  nu exista deloc; adaugarea lui e o schimbare de schema separata, in afara
+  scopului acestui PR (care se limiteaza la `dashboard_service`, fara migratii
+  noi).
+- **"Nu genereaza verdict cand datele sunt insuficiente/stale"** pentru
+  recomandari -- moot cat timp nu exista nicio recomandare; regula echivalenta
+  pentru detalierea financiara (excluderea orelor fara pret rezolvabil) EXISTA
+  deja din issue #13 si e mostenita neschimbata de campurile noi.
+- **Backtest/calibrare si teste numerice pentru prognoza gresita** -- nu exista
+  un motor de recomandari de calibrat; testele numerice adaugate in acest PR
+  acopera doar formulele de detaliere financiara (productie/consum zero,
+  pret negativ, tarif lipsa), nu o prognoza meteo/PV gresita.
+- **Trei stari masurat/modelat/estimat** pentru provenienta tarifului -- vezi
+  mai sus; implementat doar binar (masurat/estimat), pentru ca nu exista o
+  sursa reala de "tarif modelat" in schema curenta.
+
+## Addendum: Grafic principal al dashboard-ului (putere + SOC): agregare server-side metric-aware, empty/error state pe widget (issue #33)
+
+**Restul acestui issue era deja acoperit partial.** Sectiunea 18 de mai sus
+rezolvase deja agregarea adaptiva pe 3 niveluri pentru graficul de preturi
+OPCOM de pe `/market`. Fiecare widget al dashboard-ului statiei avea deja
+propriul endpoint si propriul `fetch()` independent (`dashboard.js` apela
+separat `/data/timeseries`, `/data/prices`, `/data/plan`, `/data/heatmap`
+etc.) -- premisa "un singur payload monolitic blocheaza tot dashboard-ul" nu
+mai era adevarata inainte de acest PR. Ramasesera insa doua goluri reale fata
+de criteriile explicite ale issue-ului, exact pe graficul cel mai probabil sa
+devina lent (putere + SOC, potential un an de telemetrie bruta):
+`/stations/{id}/data/timeseries` intorcea intotdeauna rezolutia BRUTA,
+indiferent de interval (un an de telemetrie la cateva zeci de secunde/esantion
+ar fi insemnat sute de mii de puncte trimise brut in browser), si niciun
+widget nu avea o stare de eroare vizibila -- un fetch esuat era doar
+`console.error`, fara nicio indicatie pentru utilizator si fara retry.
+
+**Contract de agregare nou, separat de cel al pretului OPCOM (nu s-a
+duplicat logica din `market_analytics_service`).** `app/services/
+chart_aggregation.py` e un modul PUR (fara acces la DB), reutilizabil:
+`choose_resolution(range_key)` aplica exact maparea din contractul issue-ului
+-- `24h -> 15m`, `7d -> 30m`, `30d -> 1h`, `1y -> 1d` -- iar `aggregate_series`
+grupeaza randuri pe bucket-uri si aplica o metoda de agregare DECLARATA per
+coloana (`mean`/`sum`/`min`/`max`). Metric-aware in mod activ, nu doar prin
+conventie: functia REFUZA (`ValueError`) o cerere de `sum` pe orice nume de
+coloana ce contine `soc`/`pct`/`percent` -- imposibil sa se reintroduca din
+greseala bug-ul "SOC insumat" intr-un apel viitor fara ca testele sa pice
+imediat. `dashboard_service.get_timeseries_chart` foloseste `mean` pentru
+puterile PV/consum/baterie/retea SI pentru SOC (niciodata suma). Fostul
+`get_timeseries` (folosit doar de exportul CSV, care are voie sa vrea date
+brute) a fost redenumit explicit `get_timeseries_raw` si NU a fost atins.
+
+**Raspunsul HTTP declara explicit rezolutia, agregarea, fusul orar si
+acoperirea** -- exact criteriul de acceptare din issue: `{"resolution":
+"15m", "aggregation": {"pv_kw": "mean", ..., "soc_pct": "mean"}, "timezone":
+"Europe/Bucharest", "coverage": 0.83, "points": [...]}`. `coverage` e
+fractia de bucket-uri asteptate in interval care contin date (0 daca nu
+exista deloc telemetrie) -- nu pretinde o precizie mai fina decat poate
+oferi onest seria selectata. Pentru 24h se folosesc punctele brute recente;
+pentru 7d/30d/1y se citesc rollup-urile persistate `interval_15m`/`hour`/
+`day`, limitand interogarea la aproximativ 672/720/365 randuri indiferent de
+frecventa telemetriei brute. Rollup-ul `day` este delimitat la miezul noptii
+locale a statiei si pastreaza corect zilele DST de 23/25 ore. Selectorul a capatat si
+optiunea "1 an" (`range=1y`), ca sa existe o cale reala prin UI catre
+rezolutia zilnica.
+Un test de regresie acopera explicit conversia energiei in putere medie
+pentru ziua locala de 23 de ore de la trecerea la ora de vara.
+Exportul CSV ramane separat si brut; limitarea cardinalitatii se aplica
+doar contractului JSON folosit de grafice.
+
+**Widget independent cu empty/error state, nu doar "console.error".**
+`dashboard.js`: graficele de putere si SOC au acum propriile elemente
+`.empty-state` / `.error-state` in `station.html` (SOC nu avea deloc
+empty-state inainte). O eroare de fetch (timeout, HTTP non-2xx, retea) arata
+DOAR acelui widget un mesaj + buton "Reincearca", fara sa afecteze celelalte
+grafice de pe pagina. Fiecare fetch are timeout propriu (`AbortController`,
+15s) SI e anulat explicit daca utilizatorul schimba intervalul inainte sa
+raspunda cererea anterioara (`cancel la schimbarea intervalului`, cerut
+explicit de issue) -- un raspuns intarziat al unei cereri deja inlocuite nu
+mai apuca sa deseneze peste graficul curent. Un cache scurt (30s, cheie =
+URL exacta cu tot cu interval) evita fetch-uri redundante cand ambele
+grafice (putere si SOC) cer aceeasi fereastra aproape simultan.
+
+**Teste:** `tests/unit/test_chart_aggregation.py` (rezolutie per range_key;
+putere mediata NU insumata; energie poate fi insumata; SOC si orice alta
+metrica "procentuala" REFUZA explicit suma -- parametrizat pe mai multe nume
+de coloana; bucketing pe mai multe intervale; lipsa de date ramane `None`,
+nu devine 0; acoperire calculata corect, inclusiv cazul fara date si cazul
+cu esantioane foarte dese intr-un singur bucket). `tests/unit/
+test_dashboard_service.py` adauga teste pentru `get_timeseries_chart`
+(metadate complete, mediere corecta pe bucket pentru putere si SOC, rezolutie
+diferita per interval, `points: []` + `coverage: 0.0` fara nicio telemetrie)
+si un test explicit ca `get_timeseries_raw` (exportul CSV) a ramas
+neagregat. `tests/integration/test_dashboard_timeseries_route.py` verifica
+direct raspunsul HTTP al rutei (metadate, rezolutie zilnica pentru `range=1y`,
+empty-state fara date, izolare RBAC intre organizatii).
+
+**Ramas explicit in afara scopului acestui PR (nu e o pretentie de acoperire
+completa a issue-ului #33):**
+
+- **Doar 2 din multele grafice ale dashboard-ului** (putere si SOC) au fost
+  migrate la contractul de rezolutie/agregare/empty-error-state descris mai
+  sus. Celelalte (preturi OPCOM, plan, prognoza PV/consum, heatmap, energii
+  zilnice/lunare) raman neschimbate -- fiecare are deja fetch propriu, dar
+  fara timeout/cancel/retry explicit si fara metadate de rezolutie in
+  raspuns. O migrare completa, widget cu widget, ramane pentru un PR viitor.
+- **Fara infrastructura generica de retry controlat** (backoff, numar maxim
+  de incercari) -- butonul "Reincearca" e manual, apasat de utilizator, nu
+  un retry automat cu backoff exponential.
+- **Fara benchmark de latenta pe o baza de productie reala** -- cardinalitatea
+  interogarii este acum marginita de rollup-uri pentru ferestrele lungi, iar
+  testul DST verifica numeric o zi locala de 23h, dar nu s-a rulat inca un
+  EXPLAIN/buget de timp pe volumul real al unei instalatii.
+- **Fara reprezentare vizuala distincta pentru stale/estimat/sintetic/gaps**
+  -- `is_simulated`/`is_late` sunt calculate per bucket (OR logic) si trimise
+  in raspuns, dar `dashboard.js` nu le foloseste inca pentru un stil vizual
+  distinct in chart (doar KPI-ul `data_quality` de mai sus, deja existent,
+  le reflecta la nivel de statie).
+- **Fara eliminare de point-symbols peste un prag configurabil** -- liniile
+  foloseau deja `showSymbol: false` dinainte de acest PR; un prag explicit
+  configurabil (marker doar sub un numar de puncte) nu a fost adaugat.
+## 20. Tabel explicabil si reexecutare controlata a optimizarii (issue #47)
+
+**Scop deliberat restrans.** Issue #47 cere, in specificatia completa, un
+flux asincron nou cu idempotenta si job dedicat, diff intre versiuni de
+plan, jurnal complet al actorului si teste de conflict/rulare concurenta --
+un proiect de mai multe zile. Acest PR NU incearca specificatia completa:
+implementeaza doar felia explicabila peste ce exista deja (tabel/coloane
+clare, rezumat in limbaj natural, provenance/freshness, confirmare inainte
+de a inlocui un plan activ), fara sa atinga deloc modelul matematic
+(`optimization_service._solve` ramane neschimbat -- nicio linie modificata).
+
+**Ce exista deja si NU a fost reconstruit.** Jobul asincron cu status,
+idempotenta si link catre noul run cerut explicit de criteriile de acceptare
+EXISTA deja din issue #11 (`AdminJob` + `admin_optimize_station_job_task`,
+vezi limitarea 15 "Joburi admin asincrone") -- `POST
+/admin/operations/optimize/{station_id}` deja nu blocheaza pagina, deja
+respinge o declansare duplicata pentru aceeasi statie (lock Postgres +
+verificare de job activ), iar rularea concurenta la nivel de solver e deja
+serializata prin lock Redis + `pg_advisory_xact_lock`
+(`OptimizationLockedError`, testat in `tests/unit/test_optimization.py`
+inclusiv cu thread-uri reale). Acest PR NU reimplementeaza niciuna dintre
+acestea -- doar le leaga vizibil de noul tabel explicabil (link direct catre
+`/admin/operations/optimization-runs/{run_id}` din lista de joburi si din
+lista de rulari).
+
+**Ce s-a adaugat efectiv:**
+- `app/services/optimization_view.py` -- view-model PUR (fara DB/solver):
+  `classify_action` clasifica fiecare interval intr-o actiune de baza
+  (incarca din PV / incarca din retea / descarca / exporta / importa /
+  mentine), `build_rows` adauga un "motiv" euristic (rezerva minima de SOC,
+  plafon SOC, pret, echilibru cerere-oferta) si costul/beneficiul net al
+  intervalului, iar `group_segments` grupeaza intervale consecutive cu
+  aceeasi actiune SI acelasi motiv intr-un segment rezumat in limbaj
+  natural. **Motivul e o euristica pe datele deja publicate, NU o extragere
+  a multiplicatorilor Lagrange reali ai solverului** -- planul, o data
+  publicat, nu mai poarta acea informatie; documentat explicit in docstring
+  si in UI.
+  Costul unui interval/segment ramane explicit necunoscut daca lipseste
+  tariful necesar fluxului efectiv; un pret absent nu este inlocuit cu zero.
+- `GET /admin/operations/optimization-runs/{run_id}` -- pagina noua cu:
+  legenda coloanelor (definitie + unitate + conventie de semn explicita
+  pentru baterie/retea, `+`/`-`), sectiunea de provenance/freshness
+  (SOC folosit ca punct de start si calitatea lui masurat/invechit/lipsa,
+  acoperirea prognozelor PV/consum, cate intervale de pret sunt estimate
+  vs. reale, versiunile de configuratie/preferinte folosite), rezumatul pe
+  segmente si tabelul detaliat pe interval. Pentru o rulare `fallback`
+  (date insuficiente), pagina explica EXPLICIT motivul
+  (`OptimizationRun.fallback_reason`, deja existent) in loc sa arate un
+  tabel gol fara context.
+- `GET /admin/operations/optimize-confirm?station_id=...` -- pasul de
+  confirmare cerut de issue: arata ce configuratie/preferinte vor fi
+  folosite, modul shadow/live curent al statiei si, daca exista, planul
+  activ care ar fi marcat `superseded`. `POST
+  /admin/operations/optimize/{station_id}` respinge acum server-side
+  (`error=optimization_confirmation_required`, fara sa creeze niciun
+  `AdminJob`) o reexecutare fara `confirmed=true` STRICT cand exista deja
+  un plan activ -- o statie fara plan activ (prima rulare) nu are nimic de
+  pierdut si ramane neschimbata (verificat explicit,
+  `test_trigger_optimization_without_active_plan_does_not_require_confirmation`).
+  Un camp optional "motiv" e retinut in `AdminJob.params` si in
+  `record_audit` -- nu schimba executia, doar imbogateste jurnalul actorului.
+
+**Ramas explicit in afara scopului acestui PR (nu ascuns):**
+- **Diff intre versiunea noua si cea precedenta a planului.** Pagina de
+  detaliu arata un singur run/plan izolat, nu o comparatie randuri-cu-randuri
+  intre `Plan v(n-1)` si `Plan v(n)`. Ar necesita alinierea a doua orizonturi
+  posibil diferite (start/durata) si o reprezentare vizuala dedicata --
+  proiect separat.
+- **Jurnal complet al actorului la nivel de UI**, dincolo de audit log-ul deja
+  existent (`record_audit`, vizibil in `/admin/audit`). Nu s-a construit o
+  vedere dedicata "istoricul deciziilor asupra acestui plan" in pagina de
+  detaliu.
+- **Conflict de rulare concurenta prin UI-ul admin, testat explicit la acest
+  nivel.** Serializarea reala (Redis + advisory lock la nivel de statie) e
+  deja acoperita de teste existente la nivelul serviciului
+  (`tests/unit/test_optimization.py`, thread-uri reale). Acest PR NU adauga
+  un test HTTP separat de "doua cereri POST simultane catre ruta admin" --
+  ar exercita aceeasi cale deja testata, prin `_lock_admin_job_target` +
+  verificarea de job activ (deja acoperite in
+  `test_trigger_optimization_rejects_duplicate_in_progress`).
+- **Enforcement server-side mai puternic al confirmarii** (ex. un token
+  legat de versiunea exacta a planului activ vazuta pe pagina de
+  confirmare, care sa expire sau sa devina invalid daca planul activ se
+  schimba intre timp). Verificarea actuala e binara (exista sau nu un plan
+  activ) -- suficienta pentru a preveni un click accidental din lista, dar
+  nu o garantie criptografica ca admin-ul a vazut EXACT starea curenta.
+- **Reason codes structurate** (enum) pentru motivul dominant, in loc de
+  text liber generat de `_dominant_reason` -- suficient pentru un om, dar
+  nu usor de filtrat/agregat programatic peste multe rulari.
+- **Modificarea modelului matematic** -- nu a fost cautat si nu a fost gasit
+  niciun bug de solver in cadrul acestui PR; `optimization_service._solve`
+  e neschimbat linie cu linie.
+## 21. Design system minim: breadcrumb, grupuri de campuri, focus pe eroare (issue #48)
 
 Issue #48 cerea un "design system" pentru UI -- domeniu larg, care poate
 insemna orice, de la un ghid de stil complet cu componente reutilizabile pana
