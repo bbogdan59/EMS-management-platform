@@ -303,21 +303,36 @@ def test_estimated_savings_tariff_provenance_indexed_synthetic_is_not_measured(d
 
 
 def test_estimated_savings_hours_export_price_missing_is_reported(db):
-    """Fara tarif de export valabil, venitul e tratat ca 0 (fallback deja
-    existent), dar numarul de ore afectate trebuie raportat explicit, nu
-    absorbit tacit -- utilizatorul trebuie sa stie ca export_revenue_lei
-    subestimeaza realitatea in acele ore."""
+    """O ora cu export si tarif necunoscut este exclusa, nu evaluata la zero."""
     station = _station(db, "noexporttariff")
     t0 = utcnow().replace(minute=0, second=0, microsecond=0) - timedelta(days=10)
     _add_tariff_version(db, station, "import", valid_from=t0 - timedelta(days=1), fixed_price="1.0")
-    _add_hour(db, station, t0, load=5, pv=8, grid_import=0, grid_export=3)
+    # Prima ora ramane evaluabila, a doua are export cu pret necunoscut.
+    _add_hour(db, station, t0, load=5, pv=5, grid_import=0, grid_export=0)
+    _add_hour(db, station, t0 + timedelta(hours=1), load=5, pv=8, grid_import=0, grid_export=3)
     db.commit()
 
-    result = dashboard.get_estimated_savings(db, station, t0, t0 + timedelta(hours=1))
+    result = dashboard.get_estimated_savings(db, station, t0, t0 + timedelta(hours=2))
 
     assert result["available"] is True
     assert result["hours_export_price_missing"] == 1
+    assert result["hours_priced"] == 1
     assert result["export_revenue_lei"] == 0.0
+
+
+def test_estimated_savings_excludes_incomplete_energy_instead_of_zero_filling(db):
+    station = _station(db, "incomplete-energy")
+    t0 = utcnow().replace(minute=0, second=0, microsecond=0) - timedelta(days=10)
+    _add_tariff_version(db, station, "import", valid_from=t0 - timedelta(days=1), fixed_price="1.0")
+    _add_hour(db, station, t0, load=5, pv=2, grid_import=3, grid_export=0)
+    _add_hour(db, station, t0 + timedelta(hours=1), load=5, pv=None, grid_import=3, grid_export=0)
+    db.commit()
+
+    result = dashboard.get_estimated_savings(db, station, t0, t0 + timedelta(hours=2))
+
+    assert result["available"] is True
+    assert result["hours_priced"] == 1
+    assert result["hours_with_incomplete_energy_data"] == 1
 
 
 # --- get_forecast_vs_actual ---------------------------------------------
