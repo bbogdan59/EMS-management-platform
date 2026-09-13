@@ -1306,6 +1306,240 @@ SSE deschis). Regresie acoperita si de
 Postgres reale, nu fixture-ul `db` cu SAVEPOINT, care nu poate exercita
 contentie de lock reala).
 
+## Addendum: Provisioning prin serial -- wizard, transfer/factory reset, dezactivare legacy (issue #44, dupa PR #59)
+
+PR #59 a livrat deja partea grea a issue-ului #44: provisioning secret separat
+pe device, serial public, Device Code sigilat stocat server-side numai ca
+hash, enrollment/polling idempotent, claim self-service atomic, RBAC/CSRF/
+rate-limit si raspuns generic anti-enumerare -- vezi sectiunea 14 de mai sus
+si docs/API.md. Nota de progres a issue-ului enumera patru bucati ramase;
+aceasta lucrare le acopera punctual pe toate patru, cu limitele fiecareia
+documentate explicit mai jos.
+
+**1. Integrare in wizard-ul multi-step -- NU exista niciun wizard multi-step
+in aplicatie** (verificat explicit: nicio ruta/template cu "wizard" in tot
+codul, in afara acestei mentiuni). In loc sa construiesc un subsistem nou de
+wizard de la zero (scop propriu, mult mai mare decat acest issue), am
+integrat pasul de asociere prin serial in singurul loc unde chiar apare in
+fluxul real: crearea unei statii (`POST /organizations/{id}/stations`)
+redirecteaza acum direct la `/stations/{id}/devices?onboarding=1` (in loc de
+pagina organizatiei), iar `stations/devices.html` afiseaza un indicator de
+pasi ("1. Statie creata -> 2. Asociaza device-ul -> 3. Configurare") si, dupa
+o asociere reusita in acest context, un buton explicit spre pasul 3
+(`/stations/{id}/config`). Parametrul `onboarding=1` e purtat prin toate
+redirect-urile intermediare (form ascuns + query string), fara stare server
+noua. Un wizard dedicat, cu preseturi si validare progresiva intre pasi,
+ramane issue-ul #41 -- neatins aici, doar secventiat ce exista deja.
+
+**2. Transfer / factory reset -- implementate, strict `platform_admin`,
+deliberat cross-tenant-capabile.** Pagina noua `/admin/devices/assigned`
+(tab nou in `admin/_tabs.html`) listeaza orice device activ, asociat unei
+statii, cu doua actiuni noi in `device_service.py`:
+- `transfer_device` muta un device ACTIV la o alta statie (inclusiv intre
+  organizatii diferite -- decizie deliberata: e un scenariu administrativ
+  real, hardware revandut/reinstalat la alt client, nu o preluare
+  neautorizata de utilizator; niciun organization_admin nu are acces la
+  aceasta ruta). Revoca IMEDIAT credentiala curenta si genereaza una noua,
+  livrabila device-ului prin exact acelasi canal idempotent deja existent
+  (`POST /api/v1/devices/enroll` -> raspuns `assigned` cu
+  `credential_secret`) -- niciun cod nou de editat manual pe device, niciun
+  protocol nou. Device-ul nu primeste config/secrete ale statiei noi inainte
+  de acest transfer explicit.
+- `factory_reset_device` detaseaza un device ACTIV de statia lui, revoca
+  imediat credentiala curenta si il intoarce la `pending_claim` fara statie
+  -- exact starea unui enrollment proaspat, deci realocabil imediat prin
+  `/admin/devices/pending` sau printr-un nou Device Code. Identitatea proprie
+  a dispozitivului (`installation_uuid`/`provisioning_secret_hash`) NU e
+  atinsa -- un factory reset FIZIC real, pe hardware, si-ar regenera-o
+  singur la urmatorul enroll; acest capat administrativ acopera doar partea
+  controlata de server (detasare + revocare), nu simuleaza reset-ul fizic.
+- Ambele cer in formular confirmarea explicita, server-side, a serialului
+  (sau `installation_uuid` daca inca nu are serial public) afisat pe pagina
+  -- nu doar un dialog JS `confirm()`, ocolibil trivial cu un POST direct --
+  si sunt inregistrate in audit (`device_transferred`, `device_factory_reset`,
+  plus varianta `_failed` la confirmare gresita sau stare invalida).
+- **"Device inlocuit" nu are un capat nou dedicat** -- e deja acoperit complet
+  de primitivele existente: `revoke_device` pe unitatea veche (stricata) +
+  fluxul normal de enrollment/Device Code pentru unitatea noua, la aceeasi
+  statie. Un capat separat "replace" ar fi doar aceasta compunere, fara
+  comportament nou -- l-am documentat aici in loc sa adaug cod redundant.
+
+**3. Dezactivare completa a fluxului legacy -- flag explicit
+`legacy_claim_code_enabled` (`app/config.py`), interzis in productie, NU
+stergere destructiva.** Codul temporar de 15 minute (`ClaimCode`,
+`device_service.create_claim_code`/`claim_device`) ramane folosit direct de
+`scripts/mock_device_cli.py`, `scripts/seed_demo.py` si o parte din testele
+de integrare existente (`test_device_api.py`, `test_commands.py`,
+`test_device_protocol_hardening.py`) -- eliminarea lui completa ar fi
+stricat toate acestea pentru un beneficiu de securitate nul in productie
+(flag-ul rezolva deja riscul real). Asadar:
+- `Settings.legacy_claim_code_enabled` este implicit `False` in orice mediu;
+  suitele istorice il activeaza explicit. `model_post_init` **refuza pornirea
+  aplicatiei** daca e `True` si `ENVIRONMENT=production` -- acelasi tipar folosit pentru
+  `demo_mode_enabled`/`opcom_use_synthetic_fixture_on_failure`/
+  `session_cookie_secure`/`email_backend`. Nu exista nicio cale de a porni
+  serverul de productie cu acest bypass activ.
+- Independent de acel guard de pornire, si ruta web
+  (`POST /stations/{id}/claim-codes`) si cea de dispozitiv
+  (`POST /api/v1/devices/claim`) verifica flag-ul la fiecare cerere si refuza
+  explicit (redirect cu `error=legacy_disabled`, respectiv `410 Gone`) cand e
+  dezactivat -- deci flag-ul chiar opreste functional fluxul oriunde e setat
+  pe `False`, nu doar la pornirea in productie. UI-ul (`stations/devices.html`)
+  ascunde complet cardul "Flux legacy" cand flag-ul e dezactivat.
+- Codurile deja emise si neconsumate NU sunt invalidate retroactiv la
+  dezactivare (flag-ul blocheaza doar EMITEREA/CONSUMUL de la acel moment
+  incolo) -- acceptabil, fiindca in productie flag-ul nu poate fi activat
+  niciodata, deci nu exista coduri legacy emise acolo.
+- **Ramas explicit pentru un PR viitor:** stergerea fizica a modelului
+  `ClaimCode`/`claim_device` si a scripturilor care il folosesc, dupa ce
+  `EMS-device-code#3` (dependinta cross-repo mentionata in issue, inaccesibila
+  din acest mediu) confirma ca simulatoarele/dispozitivele reale au migrat
+  complet pe enrollment automat + Device Code.
+
+Transferul si resetarea administrativa blocheaza randul device-ului cu
+`SELECT ... FOR UPDATE`; doua cereri concurente nu pot emite credentiale
+active conflictuale pe baza aceleiasi stari vechi.
+Acest lock completeaza testul de concurenta al activarii; operatiile de
+mentenanta si asocierea initiala au astfel garantii explicite separate.
+
+**4. Test de concurenta cu doua conturi/sesiuni Postgres --
+`test_concurrent_claim_two_accounts_same_code_exactly_one_wins`
+(`tests/integration/test_device_provisioning_issue44.py`).** Doua conturi
+DIFERITE, din doua organizatii DIFERITE, incearca sa revendice ACELASI cod
+de asociere in acelasi timp, prin doua sesiuni SQLAlchemy separate legate de
+`engine` (conexiuni Postgres reale, commit-uri reale) intr-un
+`ThreadPoolExecutor`, sincronizate cu `threading.Barrier` si citite cu
+`future.result(timeout=10)` -- niciodata fixtura `db` cu SAVEPOINT, care nu
+poate exercita contentie reala de lock (acelasi tipar ca testele de cursa
+deja existente in `test_device_protocol_hardening.py` si
+`test_device_enrollment.py`). Verificat explicit: exact un cont castiga
+(celalalt primeste eroare curata, fara deadlock si fara timeout), rezultatul
+apartine statiei pentru care codul a fost emis (niciodata celeilalte,
+indiferent care cont a castigat cursa -- fara asociere cross-tenant tacita),
+si nu apare niciun al doilea device dublat.
+
+**Ramas in afara scopului acestui PR (deliberat, nu ascuns):**
+- Un wizard multi-step dedicat, cu preseturi si pasi de validare separati --
+  issue #41, neatins; am secventiat doar fluxul existent (vezi punctul 1).
+- Un capat "replace device" dedicat -- deja acoperit de compunerea
+  revoke + enrollment nou (vezi punctul 2).
+- Stergerea fizica a fluxului legacy cu cod de 15 minute -- gatat complet
+  functional (flag + interdictie de pornire in productie), dar codul insusi
+  ramane in repo pentru simulatoare/dezvoltare pana la migrarea confirmata
+  mentionata la punctul 3.
+- Testele de replay/enumerare-de-seriale/brute-force explicite -- deja
+  acoperite de PR #59 ("raspuns generic anti-enumerare"); nu erau in nota de
+  progres ca ramase, deci nu au fost reluate aici.
+- Contractul cross-repo cu `EMS-device-code#3` -- repo inaccesibil din acest
+  mediu, mentionat explicit in issue ca dependinta separata.
+## Addendum: Detaliere financiara PV/autoconsum/export, cu provenienta tarifului (issue #49)
+
+**Scop, limitat deliberat.** Issue #49 cere atat o detaliere financiara mai
+clara (carduri separate pentru valoare PV/economie autoconsum/venit export,
+cu formula si acoperire vizibile) cat si un motor de recomandari pentru ziua
+urmatoare (meteo, SOC, contract fix/dinamic, feedback, deduplicare/cooldown,
+backtest). Acest PR implementeaza DOAR prima parte -- detalierea financiara,
+peste `dashboard_service.get_estimated_savings` (issue #13) si formula unica
+de pret din `tariff_service` (issue #46). Motorul de recomandari NU e
+implementat deloc (vezi sectiunea "Ramas in afara scopului" mai jos) -- nu
+exista nicio recomandare hardcodata/mock in acest PR.
+
+**Trei numere noi, fiecare cu formula lui proprie, NU "economie totala".**
+Definitia din issue #49 e explicita: `pret contractual x productie PV` poate
+fi afisat ca valoare bruta/cost de cumparare potential evitat, dar NU automat
+ca economie totala. `get_estimated_savings` adauga acum, langa cele doua
+repere deja existente (`whole_system_benefit_lei`/`ems_incremental_benefit_lei`,
+neschimbate):
+- `gross_pv_value_lei` = productie PV (kWh) x pret de cumparare efectiv,
+  ora-cu-ora -- costul de cumparare POTENTIAL evitat de toata productia PV,
+  indiferent daca a fost efectiv autoconsumata, exportata sau pierduta.
+- `self_consumption_savings_lei` = min(PV, consum) (kWh) x pret de cumparare
+  efectiv, ora-cu-ora -- economia REALA prin autoconsum direct (aproximare
+  orara, nu tine cont de decalaje in cadrul orei).
+- `export_revenue_lei` = energie exportata (kWh) x pret de export efectiv,
+  ora-cu-ora -- venit REAL, deja parte din `actual_net_cost_lei`, expus aici
+  separat pentru claritate (nu un numar nou/dublu-numarat).
+
+Fiecare are un camp `_description` cu formula exacta in romana, afisat ca
+tooltip in UI (`title` pe eticheta cardului) -- niciun numar nu apare fara
+explicatia lui alaturata.
+
+**Acoperire lipsa pentru export, raportata explicit.** Cand exista export
+real sau in baseline, dar tariful de export nu are o versiune valabila,
+ora este exclusa din sumele comparabile si numarata in
+`hours_export_price_missing`; pretul necunoscut nu devine zero. La fel, o
+ora cu oricare flux energetic necesar `NULL` este exclusa si raportata prin
+`hours_with_incomplete_energy_data`.
+Prin urmare, `coverage_ratio` descrie numai orele complet evaluabile, nu
+pretinde acoperire pentru intervalele financiare necunoscute.
+Aceasta semantica este independenta de rezolutia adaptiva a graficelor:
+valorile financiare continua sa foloseasca agregatele orare istorice.
+
+**Provenienta tarifului de import: masurat vs. estimat.** Nu exista in schema
+o notiune de tarif "modelat" (o prognoza de pret viitor) -- doar tarif fix
+contractual, tarif indexat cu pret PZU real decontat, sau (folosit exclusiv
+pentru teste/demo) un fixture sintetic de piata (`ImportRun.is_synthetic_fixture`,
+deja existent din issue #35/#51). `_price_provenance_at` (nou,
+`dashboard_service.py`) clasifica fiecare ora platita in `fixed_contract`
+(pret exact din contract), `indexed_settled` (pret OPCOM real, decontat) sau
+`indexed_synthetic` (fixture de test, NU un pret real) -- `tariff_buy_provenance`
+raporteaza numarul de ore din fiecare categorie, iar `tariff_provenance_summary`
+e `"estimated"` daca ORICE ora foloseste un fixture sintetic, altfel
+`"measured"`. Indicatorul e deci binar (masurat/estimat), nu cu trei stari
+(masurat/modelat/estimat) din criteriul de acceptare -- pentru ca platforma
+nu are inca nicio sursa REALA de "tarif modelat" (ex. o prognoza de pret
+contractual viitor); adaugarea uneia ar fi o functionalitate noua, in afara
+scopului acestui PR.
+
+**UI.** `dashboard/station.html` capata un card nou "Detaliere valoare PV si
+export" cu cele trei numere si un badge de provenienta a tarifului
+(`kpi-tariff-provenance`, `badge-ok`/`badge-warn`), populat de
+`loadEfcAndSavings` din `dashboard.js` (aceeasi cerere HTTP existenta,
+`/stations/{id}/data/savings`, extinsa cu campurile noi -- nicio ruta noua).
+Cardurile "Beneficiu sistem PV/baterie" si "Beneficiu incremental EMS"
+existente raman neschimbate (aceleasi elemente, acelasi text).
+
+**Teste.** `tests/unit/test_dashboard_service.py` include teste pentru
+in fisier) -- productie zero (valoare PV/economie autoconsum = 0), consum
+zero (autoconsum 0, valoare PV != venit export, ca sa nu fie confundate),
+caz mixt autoconsum+export, interval de pret NEGATIV (valoare PV negativa,
+nu trunchiata la 0), provenienta `fixed_contract`/`indexed_settled`/
+`indexed_synthetic` (cu `tests.factories.make_market_day(is_synthetic=...)`),
+raportarea `hours_export_price_missing` si excluderea energiei incomplete. `tests/integration/
+test_dashboard_savings_route.py` (2 teste noi) -- campurile noi ajung in
+raspunsul JSON real al rutei `/stations/{id}/data/savings`, si ruta ramane
+protejata (403 pentru un utilizator fara acces la statie). Toate cele 9 teste
+existente pentru `get_estimated_savings`/alte functii din `dashboard_service`
+trec neschimbate (verificat explicit) -- nicio modificare de comportament
+pentru `whole_system_benefit_lei`/`ems_incremental_benefit_lei`.
+
+**Ramas in afara scopului (deliberat, nu ascuns -- domeniu de multe zile):**
+- **Motorul de recomandari pentru ziua urmatoare** (meteo/ore de soare, PV/
+  consum, SOC, contract fix/dinamic, preferinte client) -- NEIMPLEMENTAT.
+  Infrastructura de prognoza EXISTA deja (`weather_service`, `pv_forecast_
+  service`, `consumption_forecast_service`, folosita de `get_forecast_vs_actual`),
+  deci nu e un blocaj total, dar o recomandare demna de incredere mai are
+  nevoie de: reguli deterministe explicite pentru fix vs. dinamic (fix: NU
+  recomanda mutarea consumului doar din cauza OPCOM; dinamic: explica
+  intervalul si diferenta estimata), reason codes, impact estimat, incredere,
+  deadline -- niciuna dintre acestea nu exista inca in cod.
+- **Feedback "util/nu e relevant" si deduplicare/cooldown** -- necesita un
+  model de date nou (persistarea recomandarilor emise + feedback-ul lor) care
+  nu exista deloc; adaugarea lui e o schimbare de schema separata, in afara
+  scopului acestui PR (care se limiteaza la `dashboard_service`, fara migratii
+  noi).
+- **"Nu genereaza verdict cand datele sunt insuficiente/stale"** pentru
+  recomandari -- moot cat timp nu exista nicio recomandare; regula echivalenta
+  pentru detalierea financiara (excluderea orelor fara pret rezolvabil) EXISTA
+  deja din issue #13 si e mostenita neschimbata de campurile noi.
+- **Backtest/calibrare si teste numerice pentru prognoza gresita** -- nu exista
+  un motor de recomandari de calibrat; testele numerice adaugate in acest PR
+  acopera doar formulele de detaliere financiara (productie/consum zero,
+  pret negativ, tarif lipsa), nu o prognoza meteo/PV gresita.
+- **Trei stari masurat/modelat/estimat** pentru provenienta tarifului -- vezi
+  mai sus; implementat doar binar (masurat/estimat), pentru ca nu exista o
+  sursa reala de "tarif modelat" in schema curenta.
+
 ## Addendum: Grafic principal al dashboard-ului (putere + SOC): agregare server-side metric-aware, empty/error state pe widget (issue #33)
 
 **Restul acestui issue era deja acoperit partial.** Sectiunea 18 de mai sus
@@ -1407,6 +1641,7 @@ completa a issue-ului #33):**
 - **Fara eliminare de point-symbols peste un prag configurabil** -- liniile
   foloseau deja `showSymbol: false` dinainte de acest PR; un prag explicit
   configurabil (marker doar sub un numar de puncte) nu a fost adaugat.
+
 ## 20. Tabel explicabil si reexecutare controlata a optimizarii (issue #47)
 
 **Scop deliberat restrans.** Issue #47 cere, in specificatia completa, un
@@ -1711,3 +1946,108 @@ obligatoriu, flow complet connect/select/disconnect) +
 SAVEPOINT: taskul Celery ingereaza telemetrie, ignora conexiuni deconectate,
 o eroare la o conexiune nu blocheaza pe celelalte, gating fata de dispozitiv
 local activ). Niciun apel de retea real catre Deye Cloud in teste.
+
+## Addendum: Tip de contract explicit, izolare import/export si teste DST/rotunjire (issue #46, a doua iteratie)
+
+Issue #46 a fost re-specificat mai detaliat dupa ce prima iteratie (vezi
+sectiunea "Contracte tarifare: componente de cost distincte, TVA explicit,
+preview numeric" de mai sus, PR #56) acoperise deja versionarea cu
+valabilitate, componentele de cost distincte (energie/distributie/transport/
+alte taxe reglementate/TVA/cost fix), separarea marginal-fix, formula
+explicita de indexare OPCOM+marja, blocarea calculului la pret OPCOM lipsa
+(fara fallback tacut) si preview-ul numeric pe pagina de tarife. Aceasta
+iteratie a verificat concret ce mai lipsea fata de noul text al issue-ului si
+a adaugat DOAR gaurile reale gasite:
+
+**`Tariff.kind` guverneaza acum efectiv formula, nu doar eticheta afisata.**
+Inainte, `compute_effective_price_lei_per_kwh` alegea ramura fix/indexat
+dupa care camp (`fixed_price_lei_per_kwh` / `opcom_margin_lei_per_kwh`) era
+completat, IGNORAND complet `kind` -- un tarif etichetat "indexat OPCOM"
+caruia i s-ar fi completat din greseala si `fixed_price_lei_per_kwh` s-ar fi
+comportat tacit ca fix. `app/models/tariff.py` defineste acum
+`TARIFF_KIND_FIXED`/`TARIFF_KIND_DYNAMIC_INDEXED`/`TARIFF_KINDS`, iar
+`tariff_service.validate_tariff_kind` (apelat din `get_or_create_tariff`)
+respinge orice `kind` in afara acestor doua valori. `add_tariff_version`
+valideaza acum, la SCRIERE, ca versiunea noua are EXACT campurile care
+corespund tipului declarat -- `kind=fixed` cere `fixed_price_lei_per_kwh` si
+interzice `opcom_margin_lei_per_kwh`; `kind=indexed_opcom` cere
+`opcom_margin_lei_per_kwh` si interzice `fixed_price_lei_per_kwh` -- esec
+explicit (`ValueError`), niciodata o alegere tacita intre cele doua campuri.
+Exceptia explicita este o versiune cu `economic_calculation_disabled=True`:
+pretul corespunzator tipului poate lipsi, deoarece platforma declara ca nu
+poate calcula acea formula si va returna un rezultat necunoscut; campul de
+pret al celuilalt tip ramane interzis.
+Ruta `/stations/{id}/tariffs` (POST) prinde aceasta eroare si o afiseaza in
+formular (macro-ul `_form_errors.html`, issue #48), fara sa creeze niciun
+rand nou -- nu doar teste de model, comportament HTTP verificat capat-la-cap.
+Tipul unui contract existent nu poate fi schimbat in loc: asta ar
+reclasifica retroactiv toate versiunile istorice, deoarece `kind` apartine
+in prezent lui `Tariff`, nu lui `TariffVersion`. Serviciul refuza explicit
+tranzitia pana cand ea va fi modelata ca inchiderea contractului vechi si
+crearea unuia nou, fara pierderea istoricului.
+"provider"/"custom" din textul issue-ului raman doar etichete libere in
+`Tariff.name`, nu tipuri de calcul distincte -- niciunul nu are o formula
+proprie implementata (nu exista o formula "de provider" verificata de
+adaugat fara sa fie inventata, vezi sectiunea de mai jos).
+
+**Independenta import/export, verificata explicit cu test, nu doar presupusa
+din arhitectura.** Directia (`import`/`export`) era deja un `Tariff` separat
+inainte de acest PR (nicio schimbare de schema aici), deci exportul avea deja
+structural propriul pret/formula, fara sa scada componente de import. Ce
+lipsea era un test care sa demonstreze asta explicit (criteriul din issue:
+"componentele nerecuperabile nu sunt scazute fictiv din import") --
+`test_export_price_is_independent_of_import_components` creste drastic
+componentele de import (distributie, abonament) DUPA calcularea pretului de
+export si verifica ca pretul de export ramane identic, exact regresia pe
+care o cere issue-ul daca cineva ar "optimiza" vreodata cele doua formule sa
+partajeze cod.
+
+**Teste DST adaugate -- niciunul nu exista inainte pentru versionarea
+tarifelor.** `valid_from`/`valid_to` sunt deja `DateTime(timezone=True)`,
+comparate ca instante absolute UTC (nicio schimbare de cod necesara), dar
+issue-ul cere explicit teste numerice pentru tranzitiile de ora de vara/
+iarna. `test_tariff_version_resolves_correctly_across_spring_forward_dst`
+si `..._fall_back_dst` verifica `get_current_tariff_version` chiar la
+instanta UTC a tranzitiei din Europe/Bucharest pentru 2026 (29 martie -- ora
+locala 03:00-04:00 nu exista deloc; 25 octombrie -- ora locala 03:00-04:00
+se repeta), confirmand ca rezolutia pe instanta absoluta nu produce o
+selectie ambigua sau gresita a versiunii in niciunul din cele doua cazuri.
+
+**Test de rotunjire cu Decimal.** `test_decimal_precision_avoids_float_rounding_drift`
+insumeaza componente la limita de precizie a coloanei `NUMERIC(10,5)`
+(inclusiv o zecimala a cincea nenula) si verifica rezultatul exact -- Decimal
+nu introduce drift binar-float (ex. suma nu devine `0.30000999...`).
+
+**Teste:** `tests/unit/test_tariff_service.py` include validarea `kind`
+necunoscut, blocarea reclasificarii istoricului, 4 combinatii fix/dinamic cu camp
+lipsa/strain, o regresie ca versiunile corect formate tot trec, independenta
+export/import, 2 teste DST, 1 test de rotunjire). `tests/integration/
+test_tariffs_routes.py` are acum 6 (4 preexistente + 2 noi: contract fix cu
+marja straina si contract dinamic fara marja sunt respinse cu eroare
+afisata in formular si NU salveaza niciun rand).
+
+**Ramas in afara scopului (deliberat, nu ascuns, neschimbat fata de prima
+iteratie -- vezi si sectiunea de mai sus):**
+- **Wizard-ul dedicat cu preseturi explicabile** (issue #41) -- la momentul
+  acestui PR, #41 inca nu era mergeat pe `main` (dezvoltat in paralel, pe
+  `feature/setup-wizard-issue-41`). Configurarea ramane prin pagina de
+  tarife existenta (`/stations/{id}/tariffs`, extinsa acum cu validarea de
+  tip de contract si un rezumat de erori consistent cu restul aplicatiei),
+  NU o experienta ghidata pas-cu-pas cu preseturi "explicabile" (ex. "Enel
+  standard", "OMV Petrom dinamic") -- niciun asemenea preset comercial
+  verificat nu exista in acest cod, ca sa nu fie inventat. Cand #41 va fi
+  mergeat, pagina de tarife ramane reutilizabila ca pas de wizard (acelasi
+  serviciu `tariff_service`, aceleasi validari), dar integrarea explicita
+  (navigare pas-cu-pas, preseturi) e responsabilitatea acelui issue.
+- **Reguli legale/comerciale romanesti verificate** (cote OPANAF/ANRE reale,
+  formule reglementate de distributie/transport, preseturi de furnizor) --
+  deliberat NEINVENTATE, neschimbat fata de prima iteratie: operatorul
+  introduce valorile reale din contractul/factura lui.
+- **Constrangere la nivel de baza de date (CHECK constraint)** pentru
+  consistenta `kind`/campuri -- validarea noua e doar la nivel de serviciu
+  (`tariff_service`), singurul punct de scriere folosit de aplicatie; un
+  `INSERT` SQL direct in `tariff_versions`, ocolind `add_tariff_version`,
+  tot ar putea crea o versiune inconsistenta. Nu exista alt cod in acest
+  repo care sa scrie in acest tabel altfel decat prin acest serviciu.
+- **Decontare neta ora-cu-ora in preview, formula "provider"/"custom"
+  distincta** -- neschimbate fata de prima iteratie (vezi mai sus).

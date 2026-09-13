@@ -110,6 +110,7 @@ jobs:
             -e ENVIRONMENT="production" \
             -e SESSION_COOKIE_SECURE="true" \
             -e EMAIL_BACKEND="smtp" \
+            -e LEGACY_CLAIM_CODE_ENABLED="false" \
             -e RUN_MIGRATIONS_ON_START="true" \
             -e PORT=8000 \
             ems-platform:ci web
