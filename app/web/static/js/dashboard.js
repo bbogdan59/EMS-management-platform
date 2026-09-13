@@ -264,7 +264,7 @@ function emsInitDashboard(stationId) {
         $("kpi-self-consumption-label").title = savings.self_consumption_savings_description || "";
         let exportText = fmt(savings.export_revenue_lei) + " lei (30 zile)";
         if (savings.hours_export_price_missing > 0) {
-          exportText += ` (subestimat -- ${savings.hours_export_price_missing} ore fara tarif de export cunoscut)`;
+          exportText += ` (${savings.hours_export_price_missing} ore cu export excluse: tarif necunoscut)`;
         }
         $("kpi-export-revenue").textContent = exportText;
         $("kpi-export-revenue-label").title = savings.export_revenue_description || "";
