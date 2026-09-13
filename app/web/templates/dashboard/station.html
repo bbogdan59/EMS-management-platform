@@ -1,9 +1,15 @@
 {% extends "base.html" %}
+{% from "partials/_breadcrumb.html" import trail as breadcrumb %}
 {% block title %}{{ station.name }} - {{ app_name }}{% endblock %}
 {% block content %}
 <div class="space-y-6">
   <div class="flex flex-wrap items-center justify-between gap-3">
     <div>
+      {{ breadcrumb([
+        {"label": "Dashboard", "url": "/"},
+        {"label": station.organization.name, "url": "/organizations/" ~ station.organization_id},
+        {"label": station.name, "url": None},
+      ]) }}
       <h1 class="text-xl font-semibold">{{ station.name }}</h1>
       <p class="text-sm text-gray-500 dark:text-gray-400">
         Fus orar: {{ station.timezone }} &middot; actualizat: <span id="kpi-last-update">-</span>

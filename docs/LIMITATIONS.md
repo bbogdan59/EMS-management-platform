@@ -1306,7 +1306,6 @@ SSE deschis). Regresie acoperita si de
 Postgres reale, nu fixture-ul `db` cu SAVEPOINT, care nu poate exercita
 contentie de lock reala).
 
-
 ## Addendum: Detaliere financiara PV/autoconsum/export, cu provenienta tarifului (issue #49)
 
 **Scop, limitat deliberat.** Issue #49 cere atat o detaliere financiara mai
@@ -1339,12 +1338,12 @@ Fiecare are un camp `_description` cu formula exacta in romana, afisat ca
 tooltip in UI (`title` pe eticheta cardului) -- niciun numar nu apare fara
 explicatia lui alaturata.
 
-**Acoperire lipsa pentru export, raportata explicit.** Cand tariful de export
-nu are o versiune valabila intr-o ora (acelasi fallback la 0 deja existent
-din issue #13, pastrat neschimbat pentru `actual_net_cost_lei`),
-`hours_export_price_missing` numara acele ore -- UI-ul adauga o nota
-"subestimat" langa venitul de export cand acest numar e peste 0, in loc sa
-prezinte tacit un venit incomplet ca fiind complet.
+**Acoperire lipsa pentru export, raportata explicit.** Cand exista export
+real sau in baseline, dar tariful de export nu are o versiune valabila,
+ora este exclusa din sumele comparabile si numarata in
+`hours_export_price_missing`; pretul necunoscut nu devine zero. La fel, o
+ora cu oricare flux energetic necesar `NULL` este exclusa si raportata prin
+`hours_with_incomplete_energy_data`.
 
 **Provenienta tarifului de import: masurat vs. estimat.** Nu exista in schema
 o notiune de tarif "modelat" (o prognoza de pret viitor) -- doar tarif fix
@@ -1370,13 +1369,13 @@ export" cu cele trei numere si un badge de provenienta a tarifului
 Cardurile "Beneficiu sistem PV/baterie" si "Beneficiu incremental EMS"
 existente raman neschimbate (aceleasi elemente, acelasi text).
 
-**Teste.** `tests/unit/test_dashboard_service.py` (+8 teste noi, 17 in total
+**Teste.** `tests/unit/test_dashboard_service.py` include teste pentru
 in fisier) -- productie zero (valoare PV/economie autoconsum = 0), consum
 zero (autoconsum 0, valoare PV != venit export, ca sa nu fie confundate),
 caz mixt autoconsum+export, interval de pret NEGATIV (valoare PV negativa,
 nu trunchiata la 0), provenienta `fixed_contract`/`indexed_settled`/
 `indexed_synthetic` (cu `tests.factories.make_market_day(is_synthetic=...)`),
-si raportarea `hours_export_price_missing`. `tests/integration/
+raportarea `hours_export_price_missing` si excluderea energiei incomplete. `tests/integration/
 test_dashboard_savings_route.py` (2 teste noi) -- campurile noi ajung in
 raspunsul JSON real al rutei `/stations/{id}/data/savings`, si ruta ramane
 protejata (403 pentru un utilizator fara acces la statie). Toate cele 9 teste
@@ -1410,3 +1409,51 @@ pentru `whole_system_benefit_lei`/`ems_incremental_benefit_lei`.
 - **Trei stari masurat/modelat/estimat** pentru provenienta tarifului -- vezi
   mai sus; implementat doar binar (masurat/estimat), pentru ca nu exista o
   sursa reala de "tarif modelat" in schema curenta.
+## 20. Design system minim: breadcrumb, grupuri de campuri, focus pe eroare (issue #48)
+
+Issue #48 cerea un "design system" pentru UI -- domeniu larg, care poate
+insemna orice, de la un ghid de stil complet cu componente reutilizabile pana
+la teste de regresie vizuala automate. Ce s-a implementat efectiv, cu scop
+explicit limitat la ce era fezabil si verificabil in acest repo:
+
+- **Breadcrumb semantic** (`partials/_breadcrumb.html`, macro `trail`) adaugat
+  pe 8 pagini (configurare, preferinte, dispozitive, tarife, configurare
+  invertor, dashboard statie, detaliu organizatie self-service, detaliu
+  organizatie admin) -- `<nav aria-label="breadcrumb">` cu `aria-current="page"`
+  pe elementul curent, link-uri construite EXCLUSIV din ID-uri deja
+  autorizate din context (niciodata din query-uri neverificate), verificat
+  cu test dedicat ca nu exista risc de open-redirect.
+- **Grupuri de campuri corelate** (`_field_group.html`) -- `<fieldset>`
+  semantic cu `<legend>`, folosit pentru a grupa vizual campuri care se
+  citesc impreuna (locatie lat/lng, sistem PV/invertor, capacitate/putere
+  baterie, SOC).
+- **Input numeric cu sufix de unitate** (`_numeric_input.html`) -- sufixul
+  (`kW`, `kWh`, `%`) e strict decorativ (`aria-hidden`, in afara `name`-ului
+  campului), nu modifica valoarea trimisa la server.
+- **Progressive disclosure** prin `<details>/<summary>` native pentru
+  campuri avansate/rar-modificate (limite retea, preferinte flexibile EV).
+- **Focus + evidentiere pe primul camp invalid dupa un submit respins**
+  (`form-errors.js`) -- contract HTML generic (`data-error-summary`/
+  `data-error-field`), functioneaza pe orice pagina care foloseste macro-ul
+  `_form_errors.html`, verificat atat cu teste de integrare (maparea
+  `data-error-field` -> `name`) cat si cu un test Playwright pe browser real
+  (`document.activeElement`, imposibil de verificat doar din HTML static).
+
+**Explicit in afara scopului acestei implementari** (nu exista infrastructura
+in acest repo si nu a fost construita acum, ca sa nu se pretinda o acoperire
+care nu exista):
+
+- **Teste de regresie vizuala/snapshot** (comparatie pixel-cu-pixel intre
+  randari) -- nu exista in acest repo (nici pentru codul preexistent). Ce
+  exista sunt capturi de ecran facute manual in timpul dezvoltarii pentru
+  verificare vizuala punctuala si teste Playwright care verifica marcaj/
+  comportament (prezenta claselor, focus, continut), nu aspectul vizual
+  pixel-cu-pixel.
+- **Ghid de stil/catalog de componente formal** (ex. Storybook sau
+  echivalent) -- componentele noi sunt macro-uri Jinja documentate prin
+  comentarii, nu un catalog navigabil separat.
+- **Acoperire completa a tuturor paginilor** -- breadcrumb-ul si grupurile de
+  campuri au fost aplicate pe paginile de configurare/preferinte/admin cele
+  mai relevante (unde exista formulare cu mai multe campuri corelate), nu
+  literal pe fiecare pagina din aplicatie (ex. paginile de listare simple nu
+  au fost modificate, intrucat nu au campuri de grupat).

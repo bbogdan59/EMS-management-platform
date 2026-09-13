@@ -1,19 +1,22 @@
 {% extends "base.html" %}
+{% from "partials/_breadcrumb.html" import trail as breadcrumb %}
 {% block title %}{{ organization.name }} - {{ app_name }}{% endblock %}
 {% block content %}
 <div class="space-y-6">
-  <div class="flex flex-wrap items-center justify-between gap-3">
-    <div>
-      <h1 class="text-xl font-semibold">{{ organization.name }}</h1>
-      <p class="text-sm text-gray-500 dark:text-gray-400">
-        {{ organization.slug }}
-        {% if organization.status == "active" %}<span class="badge-ok">activa</span>
-        {% elif organization.status == "suspended" %}<span class="badge-warn">suspendata</span>
-        {% else %}<span class="badge-error">arhivata</span>{% endif %}
-        {% if organization.is_demo %}<span class="badge-warn">demo</span>{% endif %}
-      </p>
-    </div>
-    <a class="nav-link" href="/admin/organizations">&larr; toate organizatiile</a>
+  <div>
+    {{ breadcrumb([
+      {"label": "Administrare", "url": "/admin"},
+      {"label": "Organizatii", "url": "/admin/organizations"},
+      {"label": organization.name, "url": None},
+    ]) }}
+    <h1 class="text-xl font-semibold">{{ organization.name }}</h1>
+    <p class="text-sm text-gray-500 dark:text-gray-400">
+      {{ organization.slug }}
+      {% if organization.status == "active" %}<span class="badge-ok">activa</span>
+      {% elif organization.status == "suspended" %}<span class="badge-warn">suspendata</span>
+      {% else %}<span class="badge-error">arhivata</span>{% endif %}
+      {% if organization.is_demo %}<span class="badge-warn">demo</span>{% endif %}
+    </p>
   </div>
 
   {% for error in errors %}

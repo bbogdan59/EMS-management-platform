@@ -1,0 +1,27 @@
+{#
+  Breadcrumb semantic si clicabil (issue #48). `items` e o lista de dict-uri
+  {"label": str, "url": str|None} -- ultimul element e intotdeauna tratat ca
+  pagina curenta (`aria-current="page"`), indiferent daca are `url` sau nu.
+  Toate URL-urile trebuie sa fie cai relative construite din ID-uri deja
+  autorizate de ruta curenta (niciodata dintr-un parametru de query
+  necontrolat) -- nu exista risc de open-redirect, breadcrumb-ul nu accepta
+  o destinatie externa.
+#}
+{% macro trail(items) %}
+<nav aria-label="breadcrumb" class="breadcrumb">
+  <ol class="flex flex-wrap items-center gap-1.5">
+    {% for item in items %}
+    <li class="flex items-center gap-1.5">
+      {% if not loop.first %}<span class="breadcrumb-sep" aria-hidden="true">/</span>{% endif %}
+      {% if loop.last %}
+      <span aria-current="page" class="breadcrumb-current">{{ item.label }}</span>
+      {% elif item.url %}
+      <a href="{{ item.url }}" class="breadcrumb-link">{{ item.label }}</a>
+      {% else %}
+      <span>{{ item.label }}</span>
+      {% endif %}
+    </li>
+    {% endfor %}
+  </ol>
+</nav>
+{% endmacro %}

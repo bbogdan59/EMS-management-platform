@@ -1,0 +1,19 @@
+{#
+  Rezumat de erori (issue #48) -- fiecare intrare din `errors` e formatata
+  ca "camp: mesaj" (vezi `stations.py::_validation_errors`); extragem
+  numele campului in `data-error-field` ca `form-errors.js` sa poata marca
+  inputul corespunzator invalid si sa mute focusul pe primul dintre ele,
+  fara sa schimbe formatul mesajelor afisate.
+#}
+{% macro summary(errors, title="Nu s-a salvat -- nicio versiune noua nu a fost creata:") %}
+{% if errors %}
+<div class="rounded-lg bg-red-50 p-3 text-sm text-red-800 dark:bg-red-900/30 dark:text-red-200" data-error-summary tabindex="-1">
+  <p class="mb-1 font-medium">{{ title }}</p>
+  <ul class="list-inside list-disc">
+    {% for e in errors %}
+    <li data-error-field="{{ e.split(':', 1)[0].strip() if ':' in e else '' }}">{{ e }}</li>
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}
+{% endmacro %}
