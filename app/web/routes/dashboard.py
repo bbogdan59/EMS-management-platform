@@ -69,6 +69,8 @@ def _parse_range(range_key: str) -> tuple[datetime, datetime]:
         return now - timedelta(days=7), now
     if range_key == "30d":
         return now - timedelta(days=30), now
+    if range_key == "1y":
+        return now - timedelta(days=365), now
     return now - timedelta(hours=24), now
 
 
@@ -79,9 +81,13 @@ def data_timeseries(
     db: Session = Depends(get_db),
     station_role: tuple = Depends(StationAccess(min_role="viewer")),
 ):
+    """Grafic principal PV/consum/baterie/retea + SOC (issue #33): rezolutia
+    e aleasa server-side dupa `range` (vezi `chart_aggregation.choose_resolution`)
+    si agregarea e metric-aware -- raspunsul declara explicit `resolution`,
+    `aggregation`, `timezone` si `coverage`, nu doar punctele."""
     station, _role = station_role
     start, end = _parse_range(range)
-    return JSONResponse(dashboard_service.get_timeseries(db, station, start, end))
+    return JSONResponse(dashboard_service.get_timeseries_chart(db, station, start, end, range))
 
 
 @router.get("/stations/{station_id}/data/prices")
@@ -204,7 +210,7 @@ def export_csv(
         raise HTTPException(status.HTTP_403_FORBIDDEN, detail="Nu ai voie sa exporti date.")
 
     start, end = _parse_range(range)
-    rows = dashboard_service.get_timeseries(db, station, start, end)
+    rows = dashboard_service.get_timeseries_raw(db, station, start, end)
 
     buffer = io.StringIO()
     writer = csv.writer(buffer)
