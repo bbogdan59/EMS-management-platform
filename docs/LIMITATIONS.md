@@ -1848,7 +1848,8 @@ inainte de a scrie cod nou, ca sa nu se reconstruiasca ce functioneaza):
   insuficienta).
   Intervalul cerut este semi-deschis `[start, end)`, trebuie sa fie
   timezone-aware si aliniat exact la 15 minute, pentru ca numarul de
-  esantioane asteptate sa nu fie aproximat.
+  esantioane asteptate sa nu fie aproximat; limitele naive sau decalate sunt
+  refuzate explicit.
 
 **Ramas explicit in afara scopului acestui PR (documentat, nu ascuns):**
 - **Interfata provider-agnostica formala** (un `Protocol`/clasa abstracta
