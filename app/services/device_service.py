@@ -601,7 +601,16 @@ def transfer_device(db: Session, device: Device, target_station: Station, actor:
     Returneaza (statia_veche_id, secret_nou_in_clar) -- apelantul afiseaza
     secretul o singura data, ca la alocare, pentru recuperare manuala daca
     device-ul nu reia singur polling-ul de enrollment."""
-    if device.status != DeviceStatus.active.value or device.station_id is None:
+    # Serializam transfer/reset pe randul device-ului. Fara lock, doua POST-uri
+    # concurente puteau emite doua credentiale active sau muta hardware-ul in
+    # doua statii succesiv pe baza aceleiasi stari citite anterior.
+    device = db.scalar(
+        select(Device)
+        .where(Device.id == device.id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if device is None or device.status != DeviceStatus.active.value or device.station_id is None:
         raise DeviceServiceError("Doar un device activ, deja asociat unei statii, poate fi transferat.")
     if device.station_id == target_station.id:
         raise DeviceServiceError("Device-ul este deja asociat acestei statii.")
@@ -639,7 +648,13 @@ def factory_reset_device(db: Session, device: Device) -> None:
     factory reset FIZIC real, pe hardware, ar regenera-o de partea
     device-ului insusi la urmatorul enroll; acest capat administrativ doar
     detaseaza si revoca partea controlata de server."""
-    if device.status != DeviceStatus.active.value or device.station_id is None:
+    device = db.scalar(
+        select(Device)
+        .where(Device.id == device.id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if device is None or device.status != DeviceStatus.active.value or device.station_id is None:
         raise DeviceServiceError("Doar un device activ, deja asociat unei statii, poate fi resetat din fabrica.")
 
     db.execute(
