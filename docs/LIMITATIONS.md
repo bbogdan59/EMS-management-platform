@@ -1344,6 +1344,8 @@ ora este exclusa din sumele comparabile si numarata in
 `hours_export_price_missing`; pretul necunoscut nu devine zero. La fel, o
 ora cu oricare flux energetic necesar `NULL` este exclusa si raportata prin
 `hours_with_incomplete_energy_data`.
+Prin urmare, `coverage_ratio` descrie numai orele complet evaluabile, nu
+pretinde acoperire pentru intervalele financiare necunoscute.
 
 **Provenienta tarifului de import: masurat vs. estimat.** Nu exista in schema
 o notiune de tarif "modelat" (o prognoza de pret viitor) -- doar tarif fix
