@@ -19,7 +19,7 @@ from app.models.alert import Alert
 from app.models.audit import AuditLog
 from app.models.command import Command
 from app.models.device import Device
-from app.models.enums import AdminJobStatus, AdminJobType, AlertStatus, PlanStatus
+from app.models.enums import AdminJobStatus, AdminJobType, AlertStatus, DeviceStatus, PlanStatus
 from app.models.market import ImportRun
 from app.models.optimization import OptimizationRun, Plan
 from app.models.organization import Membership, Organization
@@ -833,3 +833,132 @@ def revoke_pending_device(
         )
         db.commit()
     return RedirectResponse("/admin/devices/pending", status_code=303)
+
+
+# --- Device-uri asociate: transfer / factory reset (issue #44) -----------
+#
+# Ambele actiuni sunt strict platform_admin (acelasi guard ca restul acestui
+# router) si deliberat cross-tenant-capabile -- un transfer poate muta un
+# device intre statii ale unor organizatii DIFERITE (hardware revandut/
+# reinstalat la alt client), un scenariu administrativ real, distinct de o
+# preluare neautorizata initiata de un utilizator de organizatie. Fiecare
+# actiune cere confirmarea explicita a serialului/installation_uuid afisat pe
+# pagina (nu doar un dialog JS `confirm()`, usor de ocolit printr-un POST
+# direct) si e inregistrata in audit.
+
+
+@router.get("/devices/assigned")
+def assigned_devices_list(request: Request, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    devices = db.scalars(
+        select(Device).where(Device.status == DeviceStatus.active.value, Device.station_id.isnot(None)).order_by(Device.name)
+    ).all()
+    stations = db.scalars(select(Station).order_by(Station.name)).all()
+    stations_by_id = {s.id: s for s in stations}
+    context = {
+        "devices": devices,
+        "stations": stations,
+        "stations_by_id": stations_by_id,
+        "now": utcnow(),
+        **build_nav_context(db, user),
+    }
+    return templates.TemplateResponse(request, "admin/devices_assigned.html", context)
+
+
+def _confirm_matches(device: Device, confirm_value: str) -> bool:
+    expected = (device.serial_number or device.installation_uuid or "").strip().upper()
+    return bool(expected) and confirm_value.strip().upper() == expected
+
+
+@router.post("/devices/{device_id}/transfer", dependencies=[Depends(verify_csrf)])
+def transfer_device(
+    request: Request,
+    device_id: uuid.UUID,
+    target_station_id: uuid.UUID = Form(...),
+    confirm_identifier: str = Form(...),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    device = db.get(Device, device_id)
+    target_station = db.get(Station, target_station_id)
+    if device is None or target_station is None:
+        return RedirectResponse("/admin/devices/assigned?error=1", status_code=303)
+
+    if not _confirm_matches(device, confirm_identifier):
+        record_audit(
+            db, action="device_transfer_failed", resource_type="device", resource_id=str(device.id),
+            actor_user_id=user.id, actor_label=user.email,
+            metadata={"reason": "confirmation_mismatch"}, outcome="failure",
+        )
+        db.commit()
+        return RedirectResponse("/admin/devices/assigned?error=confirm_mismatch", status_code=303)
+
+    try:
+        old_station_id, secret = device_service.transfer_device(db, device, target_station, user)
+    except device_service.DeviceServiceError as exc:
+        db.rollback()
+        record_audit(
+            db, action="device_transfer_failed", resource_type="device", resource_id=str(device.id),
+            actor_user_id=user.id, actor_label=user.email,
+            metadata={"reason": str(exc)}, outcome="failure",
+        )
+        db.commit()
+        return RedirectResponse("/admin/devices/assigned?error=1", status_code=303)
+
+    record_audit(
+        db, action="device_transferred", resource_type="device", resource_id=str(device.id),
+        actor_user_id=user.id, actor_label=user.email, station_id=target_station.id,
+        metadata={"from_station_id": str(old_station_id), "to_station_id": str(target_station.id)},
+    )
+    db.commit()
+    return templates.TemplateResponse(
+        request,
+        "admin/device_allocated.html",
+        {
+            "device": device, "station": target_station, "credential_secret": secret,
+            "back_url": "/admin/devices/assigned", "back_label": "Inapoi la device-uri asociate",
+            **build_nav_context(db, user),
+        },
+    )
+
+
+@router.post("/devices/{device_id}/factory-reset", dependencies=[Depends(verify_csrf)])
+def factory_reset_device(
+    request: Request,
+    device_id: uuid.UUID,
+    confirm_identifier: str = Form(...),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    device = db.get(Device, device_id)
+    if device is None:
+        return RedirectResponse("/admin/devices/assigned?error=1", status_code=303)
+
+    if not _confirm_matches(device, confirm_identifier):
+        record_audit(
+            db, action="device_factory_reset_failed", resource_type="device", resource_id=str(device.id),
+            actor_user_id=user.id, actor_label=user.email,
+            metadata={"reason": "confirmation_mismatch"}, outcome="failure",
+        )
+        db.commit()
+        return RedirectResponse("/admin/devices/assigned?error=confirm_mismatch", status_code=303)
+
+    old_station_id = device.station_id
+    try:
+        device_service.factory_reset_device(db, device)
+    except device_service.DeviceServiceError as exc:
+        db.rollback()
+        record_audit(
+            db, action="device_factory_reset_failed", resource_type="device", resource_id=str(device.id),
+            actor_user_id=user.id, actor_label=user.email,
+            metadata={"reason": str(exc)}, outcome="failure",
+        )
+        db.commit()
+        return RedirectResponse("/admin/devices/assigned?error=1", status_code=303)
+
+    record_audit(
+        db, action="device_factory_reset", resource_type="device", resource_id=str(device.id),
+        actor_user_id=user.id, actor_label=user.email, station_id=old_station_id,
+        metadata={"installation_uuid": device.installation_uuid},
+    )
+    db.commit()
+    return RedirectResponse("/admin/devices/assigned?reset=1", status_code=303)
