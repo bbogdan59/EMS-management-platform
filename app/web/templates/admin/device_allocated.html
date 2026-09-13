@@ -22,6 +22,6 @@
     <p class="text-sm"><span class="text-gray-500">Statie:</span> {{ station.name }}</p>
   </div>
 
-  <a class="btn-secondary" href="/admin/devices/pending">Inapoi la device-uri neasociate</a>
+  <a class="btn-secondary" href="{{ back_url or '/admin/devices/pending' }}">{{ back_label or "Inapoi la device-uri neasociate" }}</a>
 </div>
 {% endblock %}

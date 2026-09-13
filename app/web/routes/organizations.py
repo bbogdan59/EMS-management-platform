@@ -136,7 +136,10 @@ def create_station(
         actor_user_id=user.id, actor_label=user.email, organization_id=organization.id, station_id=station.id,
     )
     db.commit()
-    return RedirectResponse(f"/organizations/{organization.id}", status_code=303)
+    # Nu exista inca un wizard multi-step dedicat -- pana atunci, statia noua
+    # duce direct la pasul 2 firesc: asociaza device-ul prin serial/Device Code
+    # sigilat (issue #44), inainte de configurare. Vezi docs/LIMITATIONS.md.
+    return RedirectResponse(f"/stations/{station.id}/devices?onboarding=1", status_code=303)
 
 
 @router.post("/organizations/{organization_id}/invitations", dependencies=[Depends(verify_csrf)])

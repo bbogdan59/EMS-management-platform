@@ -77,6 +77,15 @@ class Settings(BaseSettings):
     # generat de operator).
     device_enrollment_ttl_hours: int = 72
     device_activation_attempts_per_hour: int = 10
+    # Fluxul clasic cu cod de asociere manual (`ClaimCode`, 15 minute, doar
+    # cunoastere = posesie) ramas din perioada dinaintea Device Code-ului
+    # sigilat (issue #44/#59). Este dezactivat implicit in orice mediu;
+    # testele sau simulatoarele legacy trebuie sa-l activeze explicit --
+    # NICIODATA in productie, unde `model_post_init` refuza pornirea daca e
+    # activat. Cand e dezactivat, atat ruta web (`/stations/{id}/claim-codes`)
+    # cat si cea de dispozitiv (`POST /api/v1/devices/claim`) refuza cererea
+    # explicit, in loc sa raspunda tacit cu succes.
+    legacy_claim_code_enabled: bool = False
 
     # --- OPCOM ---
     opcom_base_url: str = "https://www.opcom.ro/rapoarte-pzu-raportPIP-export-csv"
@@ -152,6 +161,12 @@ class Settings(BaseSettings):
             raise RuntimeError("SESSION_COOKIE_SECURE trebuie activat in productie.")
         if self.is_production and self.email_backend == "console":
             raise RuntimeError("EMAIL_BACKEND=console nu poate fi folosit in productie.")
+        if self.is_production and self.legacy_claim_code_enabled:
+            raise RuntimeError(
+                "Fluxul legacy de asociere prin cod manual (15 minute) nu poate fi activat in productie. "
+                "Seteaza LEGACY_CLAIM_CODE_ENABLED=false (implicit dezactivat trebuie confirmat explicit "
+                "doar pentru medii non-productie)."
+            )
 
 
 @lru_cache
