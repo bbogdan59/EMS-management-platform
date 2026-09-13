@@ -1385,6 +1385,11 @@ explicit (`ValueError`), niciodata o alegere tacita intre cele doua campuri.
 Ruta `/stations/{id}/tariffs` (POST) prinde aceasta eroare si o afiseaza in
 formular (macro-ul `_form_errors.html`, issue #48), fara sa creeze niciun
 rand nou -- nu doar teste de model, comportament HTTP verificat capat-la-cap.
+Tipul unui contract existent nu poate fi schimbat in loc: asta ar
+reclasifica retroactiv toate versiunile istorice, deoarece `kind` apartine
+in prezent lui `Tariff`, nu lui `TariffVersion`. Serviciul refuza explicit
+tranzitia pana cand ea va fi modelata ca inchiderea contractului vechi si
+crearea unuia nou, fara pierderea istoricului.
 "provider"/"custom" din textul issue-ului raman doar etichete libere in
 `Tariff.name`, nu tipuri de calcul distincte -- niciunul nu are o formula
 proprie implementata (nu exista o formula "de provider" verificata de
@@ -1418,8 +1423,8 @@ insumeaza componente la limita de precizie a coloanei `NUMERIC(10,5)`
 (inclusiv o zecimala a cincea nenula) si verifica rezultatul exact -- Decimal
 nu introduce drift binar-float (ex. suma nu devine `0.30000999...`).
 
-**Teste:** `tests/unit/test_tariff_service.py` are acum 25 (15 preexistente +
-10 noi: validarea `kind` necunoscut, 4 combinatii fix/dinamic cu camp
+**Teste:** `tests/unit/test_tariff_service.py` include validarea `kind`
+necunoscut, blocarea reclasificarii istoricului, 4 combinatii fix/dinamic cu camp
 lipsa/strain, o regresie ca versiunile corect formate tot trec, independenta
 export/import, 2 teste DST, 1 test de rotunjire). `tests/integration/
 test_tariffs_routes.py` are acum 6 (4 preexistente + 2 noi: contract fix cu
