@@ -161,3 +161,15 @@ def test_backtest_rejects_invalid_range(db):
     t0 = utcnow()
     with pytest.raises(ValueError):
         backtest.backtest_pv_forecast(db, station, t0, t0)
+
+
+def test_backtest_rejects_unaligned_or_naive_range(db):
+    from datetime import datetime
+
+    station = _station(db, "unaligned")
+    aligned = utcnow().replace(minute=0, second=0, microsecond=0)
+
+    with pytest.raises(ValueError, match="grila de 15 minute"):
+        backtest.backtest_pv_forecast(db, station, aligned + timedelta(minutes=1), aligned + timedelta(minutes=16))
+    with pytest.raises(ValueError, match="timezone-aware"):
+        backtest.backtest_pv_forecast(db, station, datetime(2026, 1, 1), datetime(2026, 1, 1, 0, 15))
