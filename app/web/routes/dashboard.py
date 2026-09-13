@@ -5,7 +5,7 @@ import io
 import uuid
 from datetime import datetime, timedelta
 
-from fastapi import APIRouter, Depends, Query, Request, status
+from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -43,8 +43,9 @@ def home(
         # ajunga in continuare la selector/panoul de administrare, nu redirectat
         # implicit catre o statie oarecare.
         only_station_id = nav["nav_stations"][0]["id"]
-        redirect_url = str(request.url.include_query_params(station_id=str(only_station_id)))
-        return RedirectResponse(redirect_url, status_code=status.HTTP_302_FOUND)
+        # Location relativ: nu reflectam schema/host-ul controlabil din
+        # request intr-un redirect (Host-header/open-redirect).
+        return RedirectResponse(f"/?station_id={only_station_id}", status_code=302)
 
     if station_id is None or not nav["nav_stations"]:
         return templates.TemplateResponse(request, "dashboard/no_station.html", {**nav})
