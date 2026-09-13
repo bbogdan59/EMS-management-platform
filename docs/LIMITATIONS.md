@@ -1343,10 +1343,13 @@ brute) a fost redenumit explicit `get_timeseries_raw` si NU a fost atins.
 acoperirea** -- exact criteriul de acceptare din issue: `{"resolution":
 "15m", "aggregation": {"pv_kw": "mean", ..., "soc_pct": "mean"}, "timezone":
 "Europe/Bucharest", "coverage": 0.83, "points": [...]}`. `coverage` e
-fractia de bucket-uri asteptate in interval care contin macar un punct brut
-(0 daca nu exista deloc telemetrie) -- nu pretinde o precizie mai fina
-(cate esantioane lipsesc DINTR-un bucket dens) decat poate oferi onest un
-calcul simplu. Selectorul de interval al dashboard-ului a capatat si
+fractia de bucket-uri asteptate in interval care contin date (0 daca nu
+exista deloc telemetrie) -- nu pretinde o precizie mai fina decat poate
+oferi onest seria selectata. Pentru 24h se folosesc punctele brute recente;
+pentru 7d/30d/1y se citesc rollup-urile persistate `interval_15m`/`hour`/
+`day`, limitand interogarea la aproximativ 672/720/365 randuri indiferent de
+frecventa telemetriei brute. Rollup-ul `day` este delimitat la miezul noptii
+locale a statiei si pastreaza corect zilele DST de 23/25 ore. Selectorul a capatat si
 optiunea "1 an" (`range=1y`), ca sa existe o cale reala prin UI catre
 rezolutia zilnica.
 
@@ -1389,22 +1392,10 @@ completa a issue-ului #33):**
 - **Fara infrastructura generica de retry controlat** (backoff, numar maxim
   de incercari) -- butonul "Reincearca" e manual, apasat de utilizator, nu
   un retry automat cu backoff exponential.
-- **Bucket-urile de "1 zi" sunt ancorate la epoch UTC, nu la miezul noptii
-  LOCAL** (`chart_aggregation.bucket_start` foloseste `timestamp() //
-  bucket_seconds`) -- spre deosebire de agregatele `TelemetryAggregate`
-  zi/luna din issue #13, care sunt calendar-local. Pentru fusul orar
-  Romaniei (UTC+2/+3), un bucket "zilnic" de un an de date brute s-ar putea
-  sa nu coincida exact cu ziua locala. Neconsecvent minor, dar real; de
-  rezolvat daca se generalizeaza rezolutia zilnica dincolo de acest grafic.
-- **Fara teste numerice DST (92/96/100 sferturi)** -- nu exista inca
-  infrastructura de bucketing calendar-local necesara pentru un asemenea
-  test relevant; adaugarea ei fara sens ar fi fost doar de forma.
-- **Fara masurare de payload/latenta pe volum real de un an** -- testele
-  numerice verifica corectitudinea agregarii cu date sintetice, nu
-  performanta interogarii `TelemetryRaw` pe un an intreg de esantioane
-  reale; `_query_telemetry_rows` foloseste indexul existent pe
-  `(station_id, measured_at)`, dar niciun EXPLAIN/buget de timp nu a fost
-  verificat pe volum de productie.
+- **Fara benchmark de latenta pe o baza de productie reala** -- cardinalitatea
+  interogarii este acum marginita de rollup-uri pentru ferestrele lungi, iar
+  testul DST verifica numeric o zi locala de 23h, dar nu s-a rulat inca un
+  EXPLAIN/buget de timp pe volumul real al unei instalatii.
 - **Fara reprezentare vizuala distincta pentru stale/estimat/sintetic/gaps**
   -- `is_simulated`/`is_late` sunt calculate per bucket (OR logic) si trimise
   in raspuns, dar `dashboard.js` nu le foloseste inca pentru un stil vizual
