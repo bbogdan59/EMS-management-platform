@@ -1,15 +1,16 @@
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
+from zoneinfo import ZoneInfo
 
 from app.core.security import utcnow
 from app.models.forecast import ConsumptionForecast, PvForecast
 from app.models.optimization import OptimizationRun, Plan, PlanInterval
 from app.models.tariff import Tariff, TariffVersion
-from app.models.telemetry import TelemetryAggregate
+from app.models.telemetry import TelemetryAggregate, TelemetryRaw
 from app.services import dashboard_service as dashboard
-from tests.factories import make_org, make_station, make_user
+from tests.factories import make_device, make_market_day, make_org, make_station, make_user
 
 
 def _add_tariff_version(db, station, direction, *, valid_from, valid_to=None, fixed_price):
@@ -22,6 +23,21 @@ def _add_tariff_version(db, station, direction, *, valid_from, valid_to=None, fi
         TariffVersion(
             tariff_id=tariff.id, valid_from=valid_from, valid_to=valid_to,
             fixed_price_lei_per_kwh=Decimal(str(fixed_price)), opcom_margin_lei_per_kwh=None,
+            fixed_monthly_fee_lei=Decimal("0"), variable_component_lei_per_kwh=Decimal("0"),
+        )
+    )
+    db.flush()
+    return tariff
+
+
+def _add_indexed_tariff_version(db, station, direction, *, valid_from, valid_to=None, margin):
+    tariff = Tariff(station_id=station.id, direction=direction, kind="indexed_opcom", name=f"idx-{direction}")
+    db.add(tariff)
+    db.flush()
+    db.add(
+        TariffVersion(
+            tariff_id=tariff.id, valid_from=valid_from, valid_to=valid_to,
+            fixed_price_lei_per_kwh=None, opcom_margin_lei_per_kwh=Decimal(str(margin)),
             fixed_monthly_fee_lei=Decimal("0"), variable_component_lei_per_kwh=Decimal("0"),
         )
     )
@@ -47,6 +63,153 @@ def _station(db, suffix=""):
     user = make_user(db, email=f"dash{suffix}@test.local")
     org = make_org(db, f"Dash Org {suffix}")
     return make_station(db, org, user, name=f"Dash Station {suffix}")
+
+
+def _add_raw(db, station, device, measured_at, *, pv=None, load=None, battery=None, grid=None, soc=None, sequence=0, is_simulated=False, is_late=False):
+    db.add(
+        TelemetryRaw(
+            device_id=device.id, station_id=station.id, boot_id="boot-1", sequence=sequence,
+            measured_at=measured_at, received_at=measured_at,
+            pv_power_w=Decimal(str(pv * 1000)) if pv is not None else None,
+            load_power_w=Decimal(str(load * 1000)) if load is not None else None,
+            battery_power_w=Decimal(str(battery * 1000)) if battery is not None else None,
+            grid_power_w=Decimal(str(grid * 1000)) if grid is not None else None,
+            battery_soc_percent=Decimal(str(soc)) if soc is not None else None,
+            is_simulated=is_simulated, is_late=is_late,
+        )
+    )
+    db.flush()
+
+
+def _add_chart_aggregate(db, station, period_type, start, end, *, pv_kwh, soc=50):
+    db.add(
+        TelemetryAggregate(
+            station_id=station.id,
+            period_type=period_type,
+            period_start=start,
+            period_end=end,
+            pv_energy_kwh=Decimal(str(pv_kwh)),
+            load_energy_kwh=Decimal("0"),
+            battery_charge_energy_kwh=Decimal("0"),
+            battery_discharge_energy_kwh=Decimal("0"),
+            grid_import_energy_kwh=Decimal("0"),
+            grid_export_energy_kwh=Decimal("0"),
+            avg_battery_soc_percent=Decimal(str(soc)),
+            sample_count=1,
+            data_quality="measured",
+            coverage={"pv": 1.0, "load": 1.0, "battery": 1.0, "grid": 1.0, "soc": 1.0},
+        )
+    )
+    db.flush()
+
+
+# --- get_timeseries_chart (issue #33: rezolutie server-side + agregare metric-aware) --
+
+
+def test_timeseries_chart_declares_resolution_aggregation_timezone_and_coverage(db):
+    station = _station(db, "ts1")
+    device = make_device(db, station)
+    t0 = utcnow().replace(minute=0, second=0, microsecond=0) - timedelta(hours=1)
+    _add_raw(db, station, device, t0, pv=1.0, load=2.0, battery=0.5, grid=1.5, soc=50.0, sequence=1)
+    db.commit()
+
+    result = dashboard.get_timeseries_chart(db, station, t0 - timedelta(minutes=5), t0 + timedelta(minutes=5), "24h")
+
+    assert result["resolution"] == "15m"
+    assert result["aggregation"]["pv_kw"] == "mean"
+    assert result["aggregation"]["soc_pct"] == "mean"
+    assert result["timezone"] == station.timezone
+    assert 0.0 <= result["coverage"] <= 1.0
+    assert len(result["points"]) == 1
+
+
+def test_timeseries_chart_averages_power_within_a_bucket_not_sums(db):
+    """Doua esantioane brute in acelasi bucket de 15 min -- puterea trebuie
+    mediata, nu insumata (ar dubla artificial valoarea afisata)."""
+    station = _station(db, "ts2")
+    device = make_device(db, station)
+    t0 = utcnow().replace(minute=0, second=0, microsecond=0) - timedelta(hours=1)
+    _add_raw(db, station, device, t0, pv=2.0, sequence=1)
+    _add_raw(db, station, device, t0 + timedelta(minutes=5), pv=4.0, sequence=2)
+    db.commit()
+
+    result = dashboard.get_timeseries_chart(db, station, t0, t0 + timedelta(minutes=10), "24h")
+
+    assert len(result["points"]) == 1
+    assert abs(result["points"][0]["pv_kw"] - 3.0) < 0.001  # medie (2+4)/2, nu suma (6)
+
+
+def test_timeseries_chart_soc_is_averaged_never_summed_across_bucket(db):
+    station = _station(db, "ts3")
+    device = make_device(db, station)
+    t0 = utcnow().replace(minute=0, second=0, microsecond=0) - timedelta(hours=1)
+    _add_raw(db, station, device, t0, soc=40.0, sequence=1)
+    _add_raw(db, station, device, t0 + timedelta(minutes=5), soc=60.0, sequence=2)
+    db.commit()
+
+    result = dashboard.get_timeseries_chart(db, station, t0, t0 + timedelta(minutes=10), "24h")
+
+    # Medie (40+60)/2 = 50 -- daca ar fi insumat gresit ar iesi 100 (peste 100%, imposibil fizic).
+    assert abs(result["points"][0]["soc_pct"] - 50.0) < 0.001
+
+
+def test_timeseries_chart_uses_coarser_resolution_for_longer_ranges(db):
+    station = _station(db, "ts4")
+    device = make_device(db, station)
+    t0 = utcnow().replace(minute=0, second=0, microsecond=0) - timedelta(days=1)
+    _add_raw(db, station, device, t0, pv=1.0, sequence=1)
+    db.commit()
+
+    assert dashboard.get_timeseries_chart(db, station, t0, t0 + timedelta(hours=1), "24h")["resolution"] == "15m"
+    assert dashboard.get_timeseries_chart(db, station, t0, t0 + timedelta(hours=1), "7d")["resolution"] == "30m"
+    assert dashboard.get_timeseries_chart(db, station, t0, t0 + timedelta(hours=1), "30d")["resolution"] == "1h"
+    assert dashboard.get_timeseries_chart(db, station, t0, t0 + timedelta(hours=1), "1y")["resolution"] == "1d"
+
+
+def test_one_year_chart_uses_local_calendar_day_rollup_including_dst_duration(db):
+    station = _station(db, "ts-local-day")
+    tz = ZoneInfo(station.timezone)
+    start = datetime(2026, 3, 29, 0, tzinfo=tz).astimezone(UTC)
+    end = datetime(2026, 3, 30, 0, tzinfo=tz).astimezone(UTC)
+    assert end - start == timedelta(hours=23)
+    _add_chart_aggregate(db, station, "day", start, end, pv_kwh=23)
+    db.commit()
+
+    result = dashboard.get_timeseries_chart(db, station, start, end, "1y")
+
+    assert len(result["points"]) == 1
+    assert result["points"][0]["t"] == start.isoformat()
+    assert result["points"][0]["pv_kw"] == 1.0
+
+
+def test_timeseries_chart_missing_data_is_not_a_zero_filled_series(db):
+    """Fara nicio telemetrie in interval -- raspunsul trebuie sa aiba `points`
+    goale (ca UI-ul sa arate un empty-state gri), NU o serie umpluta cu 0."""
+    station = _station(db, "ts5")
+    make_device(db, station)
+    db.commit()
+    t0 = utcnow() - timedelta(hours=2)
+
+    result = dashboard.get_timeseries_chart(db, station, t0, t0 + timedelta(hours=1), "24h")
+
+    assert result["points"] == []
+    assert result["coverage"] == 0.0
+
+
+def test_timeseries_raw_export_still_returns_flat_list_unaggregated(db):
+    """Exportul CSV foloseste `get_timeseries_raw`, care trebuie sa ramana
+    neschimbat (fara agregare) -- contractul vechi al exportului."""
+    station = _station(db, "ts6")
+    device = make_device(db, station)
+    t0 = utcnow().replace(minute=0, second=0, microsecond=0) - timedelta(hours=1)
+    _add_raw(db, station, device, t0, pv=1.0, sequence=1)
+    _add_raw(db, station, device, t0 + timedelta(minutes=5), pv=2.0, sequence=2)
+    db.commit()
+
+    rows = dashboard.get_timeseries_raw(db, station, t0, t0 + timedelta(minutes=10))
+
+    assert len(rows) == 2  # neagregat -- ambele randuri brute raman distincte
+    assert isinstance(rows[0]["t"], str)  # isoformat, cum astepta deja exportul CSV
 
 
 # --- get_estimated_savings ---------------------------------------------
@@ -153,6 +316,171 @@ def test_estimated_savings_unavailable_without_any_tariff(db):
 
     assert result["available"] is False
     assert "reason" in result
+
+
+# --- get_estimated_savings: detaliere financiara (issue #49) -----------
+
+
+def test_estimated_savings_financial_breakdown_zero_production(db):
+    """Zero productie PV: valoarea bruta PV si economia de autoconsum trebuie
+    sa fie 0 -- fara PV nu exista nimic de valorificat, indiferent de pret."""
+    station = _station(db, "zeropv")
+    t0 = utcnow().replace(minute=0, second=0, microsecond=0) - timedelta(days=10)
+    _add_tariff_version(db, station, "import", valid_from=t0 - timedelta(days=1), fixed_price="1.0")
+    _add_tariff_version(db, station, "export", valid_from=t0 - timedelta(days=1), fixed_price="0.4")
+
+    _add_hour(db, station, t0, load=10, pv=0, grid_import=10, grid_export=0)
+    db.commit()
+
+    result = dashboard.get_estimated_savings(db, station, t0, t0 + timedelta(hours=1))
+
+    assert result["available"] is True
+    assert result["gross_pv_value_lei"] == 0.0
+    assert result["self_consumption_savings_lei"] == 0.0
+    assert result["export_revenue_lei"] == 0.0
+
+
+def test_estimated_savings_financial_breakdown_zero_consumption(db):
+    """Zero consum, tot PV-ul exportat: economia de autoconsum e 0 (nimic
+    consumat pe loc), iar valoarea bruta PV = venitul de export (tot PV-ul
+    ajunge in retea, la pretul de export, nu de import -- numere distincte)."""
+    station = _station(db, "zeroload")
+    t0 = utcnow().replace(minute=0, second=0, microsecond=0) - timedelta(days=10)
+    _add_tariff_version(db, station, "import", valid_from=t0 - timedelta(days=1), fixed_price="1.0")
+    _add_tariff_version(db, station, "export", valid_from=t0 - timedelta(days=1), fixed_price="0.4")
+
+    _add_hour(db, station, t0, load=0, pv=6, grid_import=0, grid_export=6)
+    db.commit()
+
+    result = dashboard.get_estimated_savings(db, station, t0, t0 + timedelta(hours=1))
+
+    assert result["available"] is True
+    assert result["self_consumption_savings_lei"] == 0.0
+    # Valoare bruta PV = 6 kWh * 1.0 lei/kWh (pret de CUMPARARE, cost evitat potential) = 6 lei.
+    assert abs(result["gross_pv_value_lei"] - 6.0) < 0.01
+    # Venit export = 6 kWh * 0.4 lei/kWh (pret de VANZARE) = 2.4 lei -- deliberat diferit
+    # de valoarea bruta PV, tocmai ca sa nu fie confundate (definitia din issue #49).
+    assert abs(result["export_revenue_lei"] - 2.4) < 0.01
+
+
+def test_estimated_savings_financial_breakdown_self_consumption_and_export_split(db):
+    """Caz mixt: o parte din PV e autoconsumata, restul exportata -- cele doua
+    numere trebuie sa se separe corect, iar valoarea bruta PV sa fie suma lor
+    "echivalenta in lei de cumparare" doar cand pretul de cumparare == vanzare."""
+    station = _station(db, "mixedpv")
+    t0 = utcnow().replace(minute=0, second=0, microsecond=0) - timedelta(days=10)
+    _add_tariff_version(db, station, "import", valid_from=t0 - timedelta(days=1), fixed_price="1.0")
+    _add_tariff_version(db, station, "export", valid_from=t0 - timedelta(days=1), fixed_price="0.4")
+
+    # 8 kWh PV, 5 kWh consum -> 5 kWh autoconsumate, 3 kWh exportate (fara baterie).
+    _add_hour(db, station, t0, load=5, pv=8, grid_import=0, grid_export=3)
+    db.commit()
+
+    result = dashboard.get_estimated_savings(db, station, t0, t0 + timedelta(hours=1))
+
+    assert result["available"] is True
+    assert abs(result["gross_pv_value_lei"] - 8.0) < 0.01  # 8 kWh * 1.0 lei/kWh
+    assert abs(result["self_consumption_savings_lei"] - 5.0) < 0.01  # 5 kWh * 1.0 lei/kWh
+    assert abs(result["export_revenue_lei"] - 1.2) < 0.01  # 3 kWh * 0.4 lei/kWh
+
+
+def test_estimated_savings_financial_breakdown_negative_price_interval(db):
+    """Interval de pret negativ (posibil pe OPCOM): valoarea bruta PV devine
+    NEGATIVA -- corect matematic (a produce energie cand pretul e negativ nu
+    are valoare de cumparare evitata, ci una negativa), nu trunchiat la 0."""
+    station = _station(db, "negprice")
+    day = date(2020, 6, 1)
+    t0 = datetime(day.year, day.month, day.day, 10, tzinfo=UTC)
+    make_market_day(db, day, [-50.0])  # -50 lei/MWh = -0.05 lei/kWh, un singur interval pe toata ziua.
+    _add_indexed_tariff_version(db, station, "import", valid_from=t0 - timedelta(days=1), margin=0.0)
+    _add_tariff_version(db, station, "export", valid_from=t0 - timedelta(days=1), fixed_price="0.0")
+
+    _add_hour(db, station, t0, load=10, pv=4, grid_import=6, grid_export=0)
+    db.commit()
+
+    result = dashboard.get_estimated_savings(db, station, t0, t0 + timedelta(hours=1))
+
+    assert result["available"] is True
+    # 4 kWh PV * (-0.05 lei/kWh) = -0.2 lei.
+    assert abs(result["gross_pv_value_lei"] - (-0.2)) < 0.001
+
+
+def test_estimated_savings_tariff_provenance_fixed_contract(db):
+    station = _station(db, "provfixed")
+    t0 = utcnow().replace(minute=0, second=0, microsecond=0) - timedelta(days=10)
+    _add_tariff_version(db, station, "import", valid_from=t0 - timedelta(days=1), fixed_price="1.0")
+    _add_hour(db, station, t0, load=10, pv=0, grid_import=10, grid_export=0)
+    db.commit()
+
+    result = dashboard.get_estimated_savings(db, station, t0, t0 + timedelta(hours=1))
+
+    assert result["tariff_buy_provenance"] == {"fixed_contract": 1, "indexed_settled": 0, "indexed_synthetic": 0, "unknown": 0}
+    assert result["tariff_provenance_summary"] == "measured"
+
+
+def test_estimated_savings_tariff_provenance_indexed_settled_real_market_price(db):
+    station = _station(db, "provsettled")
+    day = date(2020, 6, 2)
+    t0 = datetime(day.year, day.month, day.day, 10, tzinfo=UTC)
+    make_market_day(db, day, [200.0], is_synthetic=False)
+    _add_indexed_tariff_version(db, station, "import", valid_from=t0 - timedelta(days=1), margin=0.1)
+    _add_hour(db, station, t0, load=10, pv=0, grid_import=10, grid_export=0)
+    db.commit()
+
+    result = dashboard.get_estimated_savings(db, station, t0, t0 + timedelta(hours=1))
+
+    assert result["tariff_buy_provenance"] == {"fixed_contract": 0, "indexed_settled": 1, "indexed_synthetic": 0, "unknown": 0}
+    assert result["tariff_provenance_summary"] == "measured"
+
+
+def test_estimated_savings_tariff_provenance_indexed_synthetic_is_not_measured(db):
+    """Pretul PZU vine dintr-un fixture SINTETIC (date de test/demo, nu OPCOM
+    real) -- trebuie marcat explicit 'estimated', nu prezentat ca masurat."""
+    station = _station(db, "provsynthetic")
+    day = date(2020, 6, 3)
+    t0 = datetime(day.year, day.month, day.day, 10, tzinfo=UTC)
+    make_market_day(db, day, [200.0], is_synthetic=True)
+    _add_indexed_tariff_version(db, station, "import", valid_from=t0 - timedelta(days=1), margin=0.1)
+    _add_hour(db, station, t0, load=10, pv=0, grid_import=10, grid_export=0)
+    db.commit()
+
+    result = dashboard.get_estimated_savings(db, station, t0, t0 + timedelta(hours=1))
+
+    assert result["tariff_buy_provenance"] == {"fixed_contract": 0, "indexed_settled": 0, "indexed_synthetic": 1, "unknown": 0}
+    assert result["tariff_provenance_summary"] == "estimated"
+
+
+def test_estimated_savings_hours_export_price_missing_is_reported(db):
+    """O ora cu export si tarif necunoscut este exclusa, nu evaluata la zero."""
+    station = _station(db, "noexporttariff")
+    t0 = utcnow().replace(minute=0, second=0, microsecond=0) - timedelta(days=10)
+    _add_tariff_version(db, station, "import", valid_from=t0 - timedelta(days=1), fixed_price="1.0")
+    # Prima ora ramane evaluabila, a doua are export cu pret necunoscut.
+    _add_hour(db, station, t0, load=5, pv=5, grid_import=0, grid_export=0)
+    _add_hour(db, station, t0 + timedelta(hours=1), load=5, pv=8, grid_import=0, grid_export=3)
+    db.commit()
+
+    result = dashboard.get_estimated_savings(db, station, t0, t0 + timedelta(hours=2))
+
+    assert result["available"] is True
+    assert result["hours_export_price_missing"] == 1
+    assert result["hours_priced"] == 1
+    assert result["export_revenue_lei"] == 0.0
+
+
+def test_estimated_savings_excludes_incomplete_energy_instead_of_zero_filling(db):
+    station = _station(db, "incomplete-energy")
+    t0 = utcnow().replace(minute=0, second=0, microsecond=0) - timedelta(days=10)
+    _add_tariff_version(db, station, "import", valid_from=t0 - timedelta(days=1), fixed_price="1.0")
+    _add_hour(db, station, t0, load=5, pv=2, grid_import=3, grid_export=0)
+    _add_hour(db, station, t0 + timedelta(hours=1), load=5, pv=None, grid_import=3, grid_export=0)
+    db.commit()
+
+    result = dashboard.get_estimated_savings(db, station, t0, t0 + timedelta(hours=2))
+
+    assert result["available"] is True
+    assert result["hours_priced"] == 1
+    assert result["hours_with_incomplete_energy_data"] == 1
 
 
 # --- get_forecast_vs_actual ---------------------------------------------

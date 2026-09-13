@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from fastapi.templating import Jinja2Templates
 
@@ -40,7 +42,24 @@ def fmt_lei(value) -> str:
     return f"{float(value):,.2f} lei".replace(",", " ")
 
 
+def fmt_local_dt(value, tz_name: str | None) -> str:
+    """Converteste un datetime (sau un string ISO 8601, cum sunt stocate
+    timestamp-urile in `OptimizationRun.input_snapshot`, un camp JSON) in ora
+    LOCALA a statiei (`tz_name`) -- planul e calculat pe grila UTC, dar un
+    operator citeste orele in fusul local al statiei, nu in UTC."""
+    if value is None:
+        return "-"
+    if isinstance(value, str):
+        try:
+            value = datetime.fromisoformat(value)
+        except ValueError:
+            return value
+    tz = ZoneInfo(tz_name) if tz_name else ZoneInfo("UTC")
+    return value.astimezone(tz).strftime("%d.%m %H:%M")
+
+
 templates.env.filters["kw"] = fmt_kw
 templates.env.filters["kwh"] = fmt_kwh
 templates.env.filters["pct"] = fmt_pct
 templates.env.filters["lei"] = fmt_lei
+templates.env.filters["local_dt"] = fmt_local_dt

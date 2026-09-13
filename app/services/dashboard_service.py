@@ -7,7 +7,7 @@ from decimal import Decimal
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import func, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.core.security import utcnow
 from app.models.device import Device
@@ -17,7 +17,7 @@ from app.models.optimization import Plan, PlanInterval
 from app.models.station import Station, StationConfigVersion
 from app.models.tariff import Tariff, TariffVersion
 from app.models.telemetry import TelemetryAggregate, TelemetryRaw
-from app.services import tariff_service
+from app.services import chart_aggregation, tariff_service
 
 STALE_AFTER = timedelta(minutes=10)
 
@@ -233,8 +233,12 @@ def _tariff_versions_for_range(db: Session, station_id: uuid.UUID, direction: st
 
 
 def _market_intervals_for_range(db: Session, source: str, start: datetime, end: datetime) -> list[MarketPriceInterval]:
+    """`import_run` e incarcat eager (`selectinload`) -- necesar pentru
+    `_price_provenance` (issue #49), care citeste `import_run.is_synthetic_fixture`
+    pentru fiecare interval folosit; fara asta ar fi un N+1 lazy-load per ora."""
     return db.scalars(
         select(MarketPriceInterval)
+        .options(selectinload(MarketPriceInterval.import_run))
         .where(
             MarketPriceInterval.source == source,
             MarketPriceInterval.is_current.is_(True),
@@ -266,7 +270,39 @@ def _effective_price_at(tariff_versions: list[TariffVersion], market_intervals: 
     return _effective_price(tariff, market)
 
 
-def get_timeseries(db: Session, station: Station, start: datetime, end: datetime) -> list[dict]:
+def _price_provenance_at(tariff_versions: list[TariffVersion], market_intervals: list[MarketPriceInterval], at: datetime) -> str:
+    """Clasifica provenienta pretului efectiv folosit intr-o ora (issue #49,
+    "measured/modelled/estimated ... vizibile") -- NU introduce o sursa noua
+    de date, doar citeste semnale deja existente in schema:
+
+    - `"fixed_contract"`: tarif cu `fixed_price_lei_per_kwh` setat -- pretul e
+      cunoscut EXACT din contract pentru orice ora, nu depinde de nicio
+      prognoza sau piata (echivalent "measured", in sensul ca nu e o estimare).
+    - `"indexed_settled"`: tarif indexat OPCOM, iar intervalul PZU folosit
+      provine dintr-un `ImportRun` REAL (`is_synthetic_fixture=False`) -- pret
+      decontat, masurat, nu modelat.
+    - `"indexed_synthetic"`: tarif indexat OPCOM, dar intervalul PZU folosit
+      provine dintr-un fixture sintetic (`is_synthetic_fixture=True`, date de
+      test/demo injectate direct in baza, niciodata descarcate de la OPCOM) --
+      marcat explicit ca NEFIIND un pret real decontat ("estimated").
+    - `"unknown"`: niciun tarif/interval gasit pentru acest moment (nu ar
+      trebui sa se intample pentru o ora deja inclusa ca "priced", dar
+      returnat explicit in loc sa presupuna ceva)."""
+    tariff = _lookup_at(tariff_versions, at, "valid_from", "valid_to")
+    if tariff is None:
+        return "unknown"
+    if tariff.fixed_price_lei_per_kwh is not None:
+        return "fixed_contract"
+    market = _lookup_at(market_intervals, at, "interval_start", "interval_end")
+    if market is None:
+        return "unknown"
+    return "indexed_synthetic" if market.import_run.is_synthetic_fixture else "indexed_settled"
+
+
+def _query_telemetry_rows(db: Session, station: Station, start: datetime, end: datetime) -> list[dict]:
+    """Randuri brute de telemetrie, cu `t` ca `datetime` (nu string inca) --
+    folosit atat de exportul CSV (rezolutie bruta, neschimbata) cat si de
+    agregarea pentru chart (issue #33), ca sa nu se duplice interogarea."""
     rows = db.scalars(
         select(TelemetryRaw)
         .where(TelemetryRaw.station_id == station.id, TelemetryRaw.measured_at >= start, TelemetryRaw.measured_at <= end)
@@ -274,7 +310,7 @@ def get_timeseries(db: Session, station: Station, start: datetime, end: datetime
     ).all()
     return [
         {
-            "t": r.measured_at.isoformat(),
+            "t": r.measured_at,
             "pv_kw": _w_to_kw(r.pv_power_w),
             "load_kw": _w_to_kw(r.load_power_w),
             "battery_kw": _w_to_kw(r.battery_power_w),
@@ -285,6 +321,135 @@ def get_timeseries(db: Session, station: Station, start: datetime, end: datetime
         }
         for r in rows
     ]
+
+
+def get_timeseries_raw(db: Session, station: Station, start: datetime, end: datetime) -> list[dict]:
+    """Telemetrie bruta (fara agregare), folosita de exportul CSV -- un
+    export explicit e presupus sa vrea datele exact cum au fost masurate,
+    nu o versiune redusa pentru afisare grafica."""
+    rows = _query_telemetry_rows(db, station, start, end)
+    for r in rows:
+        r["t"] = r["t"].isoformat()
+    return rows
+
+
+def _query_aggregate_chart_rows(
+    db: Session,
+    station: Station,
+    start: datetime,
+    end: datetime,
+    period_type: str,
+) -> list[dict]:
+    """Citeste rollup-urile persistate, astfel incat ferestrele de 7-365 zile
+    sa nu materializeze in memoria workerului fiecare esantion brut."""
+    aggregates = db.scalars(
+        select(TelemetryAggregate)
+        .where(
+            TelemetryAggregate.station_id == station.id,
+            TelemetryAggregate.period_type == period_type,
+            TelemetryAggregate.period_start >= start,
+            TelemetryAggregate.period_start < end,
+        )
+        .order_by(TelemetryAggregate.period_start)
+    ).all()
+
+    def average_power(energy: Decimal | None, hours: float) -> float | None:
+        return float(energy) / hours if energy is not None and hours > 0 else None
+
+    result: list[dict] = []
+    for row in aggregates:
+        hours = (row.period_end - row.period_start).total_seconds() / 3600
+        battery_kw = None
+        if row.battery_charge_energy_kwh is not None and row.battery_discharge_energy_kwh is not None:
+            battery_kw = (float(row.battery_charge_energy_kwh) - float(row.battery_discharge_energy_kwh)) / hours
+        grid_kw = None
+        if row.grid_import_energy_kwh is not None and row.grid_export_energy_kwh is not None:
+            grid_kw = (float(row.grid_import_energy_kwh) - float(row.grid_export_energy_kwh)) / hours
+        result.append(
+            {
+                "t": row.period_start,
+                "pv_kw": average_power(row.pv_energy_kwh, hours),
+                "load_kw": average_power(row.load_energy_kwh, hours),
+                "battery_kw": battery_kw,
+                "grid_kw": grid_kw,
+                "soc_pct": float(row.avg_battery_soc_percent) if row.avg_battery_soc_percent is not None else None,
+                "is_simulated": row.data_quality == "simulated",
+                "is_late": False,
+            }
+        )
+    return result
+
+
+_TIMESERIES_METRICS: dict[str, str] = {
+    "pv_kw": "mean",
+    "load_kw": "mean",
+    "battery_kw": "mean",
+    "grid_kw": "mean",
+    # SOC e un procent -- NICIODATA insumat, doar mediat pe bucket. Vezi
+    # `chart_aggregation.aggregate_series`, care ar refuza oricum "sum" aici.
+    "soc_pct": "mean",
+}
+
+
+def get_timeseries_chart(db: Session, station: Station, start: datetime, end: datetime, range_key: str) -> dict:
+    """Seria pentru graficele de putere/SOC ale dashboard-ului (issue #33):
+    rezolutie aleasa server-side dupa `range_key` (contract in
+    `chart_aggregation.choose_resolution`), agregare metric-aware (medie
+    pentru putere/SOC, niciodata suma pe SOC), plus metadate explicite
+    (rezolutie, metoda de agregare per metrica, fus orar, acoperire) --
+    clientul nu mai trebuie sa ghiceasca nimic din forma raspunsului."""
+    resolution = chart_aggregation.choose_resolution(range_key)
+    bucket_seconds = chart_aggregation.RESOLUTION_SECONDS[resolution]
+
+    # 24h ramane pe raw pentru valori recente. Ferestrele lungi folosesc
+    # rollup-urile create de aggregation_service: maximum ~672 randuri la 7d,
+    # 720 la 30d si 365 la 1y, independent de frecventa telemetriei brute.
+    # Randurile `day` sunt deja delimitate la miezul noptii locale a statiei
+    # (inclusiv zile DST de 23/25h), deci nu le rebucketizam pe epoch UTC.
+    source_period = {"7d": "interval_15m", "30d": "hour", "1y": "day"}.get(range_key)
+    rows = (
+        _query_aggregate_chart_rows(db, station, start, end, source_period)
+        if source_period is not None
+        else _query_telemetry_rows(db, station, start, end)
+    )
+
+    if range_key in ("30d", "1y"):
+        # Sursa persistata are deja exact rezolutia ceruta (hour/day).
+        aggregated = [{key: row[key] for key in ("t", *_TIMESERIES_METRICS)} for row in rows]
+    else:
+        aggregated = chart_aggregation.aggregate_series(
+            rows, timestamp_key="t", bucket_seconds=bucket_seconds, metrics=_TIMESERIES_METRICS
+        )
+    coverage = chart_aggregation.compute_coverage(
+        rows, timestamp_key="t", start=start, end=end, bucket_seconds=bucket_seconds
+    )
+
+    # Steaguri de calitate: "orice punct brut din bucket e simulat/intarziat"
+    # -- pastrate separat de metricile numerice (nu au sens mediate).
+    quality_by_bucket: dict[datetime, dict[str, bool]] = {}
+    for row in rows:
+        bucket_ts = (
+            row["t"]
+            if range_key in ("30d", "1y")
+            else chart_aggregation.bucket_start(row["t"], bucket_seconds)
+        )
+        q = quality_by_bucket.setdefault(bucket_ts, {"is_simulated": False, "is_late": False})
+        q["is_simulated"] = q["is_simulated"] or bool(row["is_simulated"])
+        q["is_late"] = q["is_late"] or bool(row["is_late"])
+
+    points = []
+    for point in aggregated:
+        bucket_ts = point["t"]
+        q = quality_by_bucket.get(bucket_ts, {"is_simulated": False, "is_late": False})
+        points.append({**point, "t": bucket_ts.isoformat(), **q})
+
+    return {
+        "resolution": resolution,
+        "aggregation": dict(_TIMESERIES_METRICS),
+        "timezone": station.timezone,
+        "coverage": round(coverage, 4),
+        "points": points,
+    }
 
 
 def get_prices(db: Session, station: Station, day: date) -> list[dict]:
@@ -486,7 +651,18 @@ def get_estimated_savings(db: Session, station: Station, start: datetime, end: d
     (nu tariful curent aplicat retroactiv intregului istoric -- bug corectat
     fata de versiunea anterioara). Orele fara pret rezolvabil sunt EXCLUSE
     din toate cele trei sume (real/reper1/reper2), nu tratate ca zero, iar
-    acoperirea ramasa e raportata explicit (`hours_priced`/`hours_expected`)."""
+    acoperirea ramasa e raportata explicit (`hours_priced`/`hours_expected`).
+
+    Issue #49 adauga o DETALIERE financiara suplimentara, in carduri separate,
+    ca sa nu fie confundata cu "economie totala": `gross_pv_value_lei`
+    (valoare bruta = productie PV x pret cumparare, cost potential evitat, NU
+    economie realizata), `self_consumption_savings_lei` (economie REALA prin
+    autoconsum direct) si `export_revenue_lei` (venit real din export -- deja
+    parte din `actual_net_cost_lei`, expus separat). Fiecare are `_description`
+    cu formula exacta. `tariff_buy_provenance`/`tariff_provenance_summary`
+    expun daca pretul de import folosit e masurat (`fixed_contract`/
+    `indexed_settled`) sau doar un fixture sintetic de test (`indexed_synthetic`,
+    `tariff_provenance_summary="estimated"`)."""
     tariff_versions_buy = _tariff_versions_for_range(db, station.id, "import", start, end)
     if not tariff_versions_buy:
         return {"available": False, "reason": "Niciun tarif de import valabil in intervalul cerut."}
@@ -507,44 +683,84 @@ def get_estimated_savings(db: Session, station: Station, start: datetime, end: d
     hours_expected = max(int((end - start).total_seconds() / 3600), 0)
     hours_priced = 0
     hours_with_load_but_no_price = 0
+    hours_with_incomplete_energy_data = 0
+    hours_export_price_missing = 0
     total_load_kwh = 0.0
+    total_pv_kwh = 0.0
     actual_net_cost = 0.0
     whole_system_baseline_cost = 0.0
     ems_incremental_baseline_cost = 0.0
+    gross_pv_value = 0.0
+    self_consumption_savings = 0.0
+    export_revenue = 0.0
+    tariff_buy_provenance = {"fixed_contract": 0, "indexed_settled": 0, "indexed_synthetic": 0, "unknown": 0}
 
     for r in rows:
-        if r.load_energy_kwh is None:
+        # NULL inseamna necunoscut in TelemetryAggregate. Un calcul financiar
+        # necesita toate fluxurile; inlocuirea oricaruia cu zero ar fabrica o
+        # economie sau un venit care nu a fost masurat.
+        if any(
+            value is None
+            for value in (
+                r.load_energy_kwh,
+                r.pv_energy_kwh,
+                r.grid_import_energy_kwh,
+                r.grid_export_energy_kwh,
+            )
+        ):
+            hours_with_incomplete_energy_data += 1
             continue
         price_buy = _effective_price_at(tariff_versions_buy, market_intervals, r.period_start)
         if price_buy is None:
             hours_with_load_but_no_price += 1
             continue
-        # Nicio ipoteza de venit necunoscut daca nu exista tarif de export valabil
-        # in acea ora -- la fel ca `optimization_service._resolve_price`.
-        price_sell = _effective_price_at(tariff_versions_sell, market_intervals, r.period_start) or 0.0
 
         load = float(r.load_energy_kwh)
-        pv = float(r.pv_energy_kwh) if r.pv_energy_kwh is not None else 0.0
-        grid_import = float(r.grid_import_energy_kwh) if r.grid_import_energy_kwh is not None else 0.0
-        grid_export = float(r.grid_export_energy_kwh) if r.grid_export_energy_kwh is not None else 0.0
+        pv = float(r.pv_energy_kwh)
+        grid_import = float(r.grid_import_energy_kwh)
+        grid_export = float(r.grid_export_energy_kwh)
+        self_export = max(pv - load, 0.0)
+
+        # Pretul de export este obligatoriu numai daca scenariul real sau
+        # baseline-ul au export. Daca lipseste, excludem ora din toate sumele
+        # comparabile; necunoscutul nu devine venit zero.
+        price_sell_resolved = _effective_price_at(tariff_versions_sell, market_intervals, r.period_start)
+        if price_sell_resolved is None and (grid_export > 0.0 or self_export > 0.0):
+            hours_export_price_missing += 1
+            continue
+        price_sell = price_sell_resolved if price_sell_resolved is not None else 0.0
 
         hours_priced += 1
         total_load_kwh += load
+        total_pv_kwh += pv
         actual_net_cost += grid_import * price_buy - grid_export * price_sell
         whole_system_baseline_cost += load * price_buy
 
         self_import = max(load - pv, 0.0)
-        self_export = max(pv - load, 0.0)
         ems_incremental_baseline_cost += self_import * price_buy - self_export * price_sell
+
+        # Detaliere issue #49: NU sunt trei numere independente insumabile la
+        # `whole_system_benefit_lei` (acela foloseste fluxurile REALE de retea,
+        # care depind si de baterie) -- fiecare e etichetat explicit cu
+        # formula/reperul lui propriu, ca sa nu fie confundat cu "economie totala".
+        gross_pv_value += pv * price_buy
+        self_consumption_savings += min(pv, load) * price_buy
+        export_revenue += grid_export * price_sell
+
+        tariff_buy_provenance[_price_provenance_at(tariff_versions_buy, market_intervals, r.period_start)] += 1
 
     if hours_priced == 0:
         return {"available": False, "reason": "Nicio ora cu date de consum si pret rezolvabil in intervalul cerut."}
+
+    has_synthetic_buy_price = tariff_buy_provenance["indexed_synthetic"] > 0
+    tariff_provenance_summary = "estimated" if has_synthetic_buy_price else "measured"
 
     return {
         "available": True,
         "hours_priced": hours_priced,
         "hours_expected": hours_expected,
         "hours_with_load_but_no_price": hours_with_load_but_no_price,
+        "hours_with_incomplete_energy_data": hours_with_incomplete_energy_data,
         "coverage_ratio": round(hours_priced / hours_expected, 4) if hours_expected else None,
         "total_load_kwh": round(total_load_kwh, 3),
         "actual_net_cost_lei": round(actual_net_cost, 2),
@@ -562,4 +778,41 @@ def get_estimated_savings(db: Session, station: Station, start: datetime, end: d
         ),
         "ems_incremental_baseline_cost_lei": round(ems_incremental_baseline_cost, 2),
         "ems_incremental_benefit_lei": round(ems_incremental_baseline_cost - actual_net_cost, 2),
+        # --- Detaliere financiara (issue #49) ------------------------------
+        # Cele trei numere de mai jos sunt afisate ca CARDURI SEPARATE, fiecare
+        # cu formula lui, exact ca sa NU fie prezentate implicit ca "economie
+        # totala" (definitia explicita din issue #49: pret contractual x
+        # productie PV e valoare bruta/cost evitat POTENTIAL, nu automat
+        # economie realizata -- autoconsumul, exportul si baseline-ul conteaza).
+        "total_pv_kwh": round(total_pv_kwh, 3),
+        "gross_pv_value_description": (
+            "Valoare bruta a energiei PV produse = productie PV (kWh) x pretul de "
+            "cumparare efectiv (lei/kWh) valabil in fiecare ora -- costul de cumparare "
+            "POTENTIAL evitat daca toata productia ar fi fost cumparata din retea. "
+            "NU e economie realizata: nu tine cont daca PV-ul a fost efectiv "
+            "autoconsumat, exportat sau curbat (curtailed)."
+        ),
+        "gross_pv_value_lei": round(gross_pv_value, 2),
+        "self_consumption_savings_description": (
+            "Economie din autoconsum = min(PV, consum) (kWh) x pretul de cumparare "
+            "efectiv (lei/kWh), pe fiecare ora -- costul de import EVITAT prin "
+            "consumul direct al energiei PV produse in acea ora. Aproximare orara "
+            "(nu tine cont de decalaje in cadrul orei intre productie si consum)."
+        ),
+        "self_consumption_savings_lei": round(self_consumption_savings, 2),
+        "export_revenue_description": (
+            "Venit din export = energie exportata in retea (kWh) x pretul de export "
+            "efectiv (lei/kWh) valabil in acea ora -- venit REAL, deja inclus in "
+            "`actual_net_cost_lei` (il reduce), afisat aici separat pentru claritate."
+        ),
+        "export_revenue_lei": round(export_revenue, 2),
+        "hours_export_price_missing": hours_export_price_missing,
+        "tariff_buy_provenance": tariff_buy_provenance,
+        "tariff_buy_provenance_description": (
+            "Cate din orele cu pret rezolvabil au folosit un pret de import "
+            "'fixed_contract' (cunoscut exact din contract), 'indexed_settled' "
+            "(pret PZU OPCOM real, decontat) sau 'indexed_synthetic' (date de "
+            "test/demo, NU un pret OPCOM real decontat)."
+        ),
+        "tariff_provenance_summary": tariff_provenance_summary,
     }
