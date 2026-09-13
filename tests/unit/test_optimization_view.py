@@ -86,6 +86,23 @@ def test_build_rows_cost_is_none_when_no_price_available():
     assert rows[0].interval_cost_lei is None
 
 
+def test_build_rows_does_not_treat_missing_required_price_as_zero():
+    start = datetime(2026, 1, 1, tzinfo=UTC)
+    imported = build_rows(
+        [_pi(start, battery_kw=0.0, grid_kw=1.0, price_import=None, price_export=0.4)]
+    )
+    exported = build_rows(
+        [_pi(start, battery_kw=0.0, grid_kw=-1.0, price_import=1.0, price_export=None)]
+    )
+    idle = build_rows(
+        [_pi(start, battery_kw=0.0, grid_kw=0.0, price_import=None, price_export=None)]
+    )
+
+    assert imported[0].interval_cost_lei is None
+    assert exported[0].interval_cost_lei is None
+    assert idle[0].interval_cost_lei == 0.0
+
+
 def test_build_rows_reserve_band_reason_when_soc_at_floor():
     start = datetime(2026, 1, 1, tzinfo=UTC)
     rows = build_rows(
@@ -160,3 +177,16 @@ def test_segment_total_cost_sums_only_when_any_row_has_a_price():
     assert len(segments) == 1
     # (2*1.0 + 2*2.0) * 0.25 = 1.5
     assert segments[0].total_cost_lei == 1.5
+
+
+def test_segment_total_cost_is_unknown_when_one_interval_is_unknown():
+    start = datetime(2026, 1, 1, tzinfo=UTC)
+    rows = build_rows(
+        [
+            _pi(start, battery_kw=0.0, grid_kw=2.0, price_import=1.0),
+            _pi(start + timedelta(minutes=15), battery_kw=0.0, grid_kw=2.0, price_import=None),
+        ],
+        interval_hours=0.25,
+    )
+
+    assert group_segments(rows)[0].total_cost_lei is None
