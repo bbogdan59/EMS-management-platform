@@ -4,6 +4,8 @@ Necesita un server live (fixture `live_server`) si un browser Chromium
 (pre-instalat in mediul de dezvoltare)."""
 from __future__ import annotations
 
+import re
+
 import pytest
 from playwright.sync_api import expect
 
@@ -134,3 +136,45 @@ def test_dashboard_sse_connection_reaches_live_status(live_server, page):
     expect(page.locator("#sse-status")).to_have_text("live", timeout=10000)
     # Snapshot-ul initial trebuie sa fi populat cel putin un KPI (nu ramane "-").
     expect(page.locator("#kpi-quality")).not_to_have_text("-")
+
+
+def test_config_form_error_focuses_first_invalid_field(live_server, page):
+    """Issue #48: verifica pe un browser real ca `form-errors.js` muta focusul
+    pe primul camp invalid dupa un submit respins -- comportament JS pur
+    (`document.activeElement`), imposibil de verificat doar din HTML static."""
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import Session
+
+    from tests.factories import make_membership, make_org, make_station, make_user
+
+    engine = create_engine("postgresql+psycopg://ems:ems@localhost:5432/ems_e2e")
+    with Session(engine) as db:
+        user = make_user(db, email="focus-e2e@test.local", password="FocusE2ePassword123")
+        org = make_org(db, "Focus E2E Org")
+        make_membership(db, user, org, role="organization_admin")
+        station = make_station(db, org, user, name="Focus E2E Station")
+        db.commit()
+        station_id = station.id
+    engine.dispose()
+
+    base = live_server
+    page.goto(f"{base}/login")
+    page.fill("#email", "focus-e2e@test.local")
+    page.fill("#password", "FocusE2ePassword123")
+    page.click("button[type=submit]")
+    expect(page).to_have_url(f"{base}/")
+
+    page.goto(f"{base}/stations/{station_id}/config")
+    # Campul "notes" nu are un `maxlength` HTML (doar limita Pydantic de 2000
+    # caractere pe server) -- spre deosebire de campurile numerice, unde
+    # `min`/`max` HTML5 ar bloca submit-ul in browser inainte sa ajunga la
+    # server (ex: `pv_installed_power_kw` cu min="0.001"). Aici obtinem o
+    # eroare de validare *reala*, intoarsa de server, fara ca browserul sa
+    # intercepteze submit-ul mai devreme.
+    page.fill('textarea[name="notes"]', "x" * 2001)
+    page.click("button:has-text('Salveaza')")
+
+    expect(page.locator("[data-error-summary]")).to_be_visible()
+    focused_name = page.evaluate("document.activeElement.getAttribute('name')")
+    assert focused_name == "notes"
+    expect(page.locator('textarea[name="notes"]')).to_have_class(re.compile(r"\binput-invalid\b"))

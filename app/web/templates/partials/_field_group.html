@@ -1,0 +1,11 @@
+{#
+  Grupeaza vizual/semantic campuri corelate (issue #48) -- ex. latitudine/
+  longitudine, putere incarcare/descarcare, SOC minim/maxim. `{% call %}`
+  ca sa poata contine orice markup de camp (inclusiv macro-ul de mai jos).
+#}
+{% macro group(legend) %}
+<fieldset class="field-group">
+  <legend class="field-group-legend">{{ legend }}</legend>
+  {{ caller() }}
+</fieldset>
+{% endmacro %}
