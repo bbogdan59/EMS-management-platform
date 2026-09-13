@@ -168,7 +168,10 @@ def create_station(
         # `station_service.create_station`), deci pasul "Echipamente" e o
         # rafinare optionala, nu o repetare a formularului anterior.
         return RedirectResponse(f"/stations/{station.id}/config?wizard=1", status_code=303)
-    return RedirectResponse(f"/organizations/{organization.id}", status_code=303)
+    # Flux "advanced" (fara wizard=1): statia noua duce direct la pasul
+    # firesc urmator, asociaza device-ul prin serial/Device Code sigilat
+    # (issue #44), inainte de configurare. Vezi docs/LIMITATIONS.md.
+    return RedirectResponse(f"/stations/{station.id}/devices?onboarding=1", status_code=303)
 
 
 @router.post("/organizations/{organization_id}/invitations", dependencies=[Depends(verify_csrf)])

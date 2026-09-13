@@ -5,6 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.v1.device_deps import get_authenticated_device
+from app.config import get_settings
 from app.core.audit import record_audit
 from app.core.security import utcnow
 from app.database import get_db
@@ -27,7 +28,20 @@ router = APIRouter()
 def claim_device(payload: ClaimRequest, db: Session = Depends(get_db)):
     """Asociaza un dispozitiv nou folosind un cod de asociere cu expirare,
     generat in prealabil de un operator/admin in UI. Secretul returnat este
-    afisat o singura data -- dispozitivul trebuie sa il stocheze local."""
+    afisat o singura data -- dispozitivul trebuie sa il stocheze local.
+
+    DEPRECATED (issue #44): cunoasterea codului e singura dovada ceruta, nu si
+    posesia dispozitivului -- inlocuit de enrollment automat + Device Code
+    sigilat (`app/services/device_service.enroll_device`/
+    `activate_device_for_station`). Pastrat doar pentru dezvoltare/simulatoare;
+    dezactivat explicit si respins aici cand
+    `settings.legacy_claim_code_enabled` e fals, si interzis complet la
+    pornire in productie (`app/config.py`)."""
+    if not get_settings().legacy_claim_code_enabled:
+        raise HTTPException(
+            status.HTTP_410_GONE,
+            detail="Fluxul legacy de asociere prin cod a fost dezactivat. Foloseste enrollment automat + Device Code.",
+        )
     try:
         device, secret = device_service.claim_device(db, payload.claim_code, payload.device_name, payload.hardware_info)
     except device_service.DeviceServiceError as exc:

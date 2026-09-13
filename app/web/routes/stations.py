@@ -19,6 +19,7 @@ from app.core.audit import record_audit
 from app.core.csrf import verify_csrf
 from app.core.rate_limit import RateLimitExceeded, check_fixed_window
 from app.core.rbac import can_manage_station_config, can_modify_operational_settings
+from app.core.security import utcnow
 from app.database import get_db
 from app.models.device import ClaimCode, Device
 from app.models.enums import EquipmentType
@@ -697,6 +698,9 @@ def devices_page(
         "claim_codes": claim_codes,
         "can_edit": can_manage_station_config(role),
         "new_claim_code": None,
+        "legacy_claim_code_enabled": get_settings().legacy_claim_code_enabled,
+        "onboarding": request.query_params.get("onboarding") == "1",
+        "now": utcnow(),
         **build_nav_context(db, user, station.id),
     }
     if request.query_params.get("wizard") == "1":
@@ -709,13 +713,17 @@ def activate_device_code(
     request: Request,
     activation_code: str = Form(...),
     wizard: str | None = Form(None),
+    onboarding: str | None = Form(None),
     db: Session = Depends(get_db),
     station_role: tuple = Depends(StationAccess(min_role="organization_admin")),
     user: User = Depends(get_current_user),
 ):
     station, _role = station_role
     is_wizard = wizard == "1"
-    wizard_qs = "&wizard=1" if is_wizard else ""
+    # Pastreaza pasul din wizard-ul de setare (issue #44) prin redirect, ca
+    # utilizatorul sa ajunga inapoi in fluxul "statie -> asociere device ->
+    # configurare" in loc sa cada pe pagina simpla de dispozitive.
+    wizard_qs = "&wizard=1" if is_wizard else ("&onboarding=1" if onboarding == "1" else "")
     try:
         check_fixed_window(
             f"device_activation:{user.id}:{station.id}",
@@ -739,7 +747,7 @@ def activate_device_code(
     db.commit()
     if is_wizard:
         return _next_step_redirect(station.id, "devices")
-    return RedirectResponse(f"/stations/{station.id}/devices?linked=1", status_code=303)
+    return RedirectResponse(f"/stations/{station.id}/devices?linked=1{wizard_qs}", status_code=303)
 
 
 @router.post("/stations/{station_id}/claim-codes", dependencies=[Depends(verify_csrf)])
@@ -751,6 +759,11 @@ def create_claim_code(
     user: User = Depends(get_current_user),
 ):
     station, _role = station_role
+    if not get_settings().legacy_claim_code_enabled:
+        # Fluxul legacy e dezactivat explicit (issue #44) -- refuzam cererea in
+        # loc sa generam tacit un cod care ar redeveni un bypass fata de
+        # Device Code-ul sigilat (dovada de posesie reala).
+        return RedirectResponse(f"/stations/{station.id}/devices?error=legacy_disabled", status_code=303)
     claim, raw_code = device_service.create_claim_code(db, station, user)
     record_audit(
         db, action="claim_code_created", resource_type="claim_code", resource_id=str(claim.id),
@@ -771,6 +784,9 @@ def create_claim_code(
             "claim_codes": claim_codes,
             "can_edit": True,
             "new_claim_code": raw_code,
+            "legacy_claim_code_enabled": True,
+            "onboarding": request.query_params.get("onboarding") == "1",
+            "now": utcnow(),
             **extra_context,
             **build_nav_context(db, user, station.id),
         },

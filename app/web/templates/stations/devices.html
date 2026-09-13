@@ -9,27 +9,44 @@
     {"label": station.name, "url": "/?station_id=" ~ station.id},
     {"label": "Dispozitive", "url": None},
   ]) }}
+  {% if wizard_step %}
   {% include "partials/_wizard_progress.html" %}
+  {% elif onboarding %}
+  <nav class="flex flex-wrap items-center gap-2 text-xs text-gray-500 dark:text-gray-400" aria-label="Pasii de configurare">
+    <span class="badge-ok">1. Statie creata</span>
+    <span>&rarr;</span>
+    <span class="badge font-medium text-brand-700 dark:text-brand-300">2. Asociaza device-ul</span>
+    <span>&rarr;</span>
+    <span class="badge-muted">3. Configurare</span>
+  </nav>
+  {% endif %}
   <h1 class="text-xl font-semibold">Dispozitive - {{ station.name }}</h1>
 
   {% if request.query_params.get("linked") %}
-  <div class="badge-ok rounded p-3">Device-ul a fost asociat. Poate dura pana la urmatorul polling pentru a aparea online.</div>
+  <div class="badge-ok rounded p-3">
+    Device-ul a fost asociat. Poate dura pana la urmatorul polling pentru a aparea online.
+    {% if onboarding %}
+    <a class="btn-primary ml-3" href="/stations/{{ station.id }}/config">Continua la pasul 3: Configurare</a>
+    {% endif %}
+  </div>
   {% elif request.query_params.get("error") == "invalid_device_code" %}
   <div class="badge-error rounded p-3">Cod invalid, expirat sau deja folosit.</div>
   {% elif request.query_params.get("error") == "too_many_attempts" %}
   <div class="badge-error rounded p-3">Prea multe incercari. Reincearca mai tarziu.</div>
+  {% elif request.query_params.get("error") == "legacy_disabled" %}
+  <div class="badge-error rounded p-3">Fluxul legacy cu cod temporar a fost dezactivat pe acest mediu. Foloseste Device Code-ul de pe eticheta sigilata.</div>
   {% endif %}
 
   {% if can_edit %}
   <div class="card border-brand-300">
-    <h2 class="mb-2 font-medium">Adauga device-ul EMS</h2>
-    <p class="mb-3 text-sm text-gray-500 dark:text-gray-400">Conecteaza device-ul la alimentare si internet, apoi introdu Device Code de pe eticheta sigilata. Nu trebuie sa modifici nimic pe Raspberry Pi.</p>
+    <h2 class="mb-2 font-medium">{% if onboarding %}Pasul 2 din 3: Asociaza device-ul EMS{% else %}Adauga device-ul EMS{% endif %}</h2>
+    <p class="mb-3 text-sm text-gray-500 dark:text-gray-400">Conecteaza device-ul la alimentare si internet, apoi introdu (sau scaneaza) Device Code de pe eticheta sigilata ori serialul dispozitivului. Nu trebuie sa modifici nimic pe Raspberry Pi -- niciun cod de editat manual in filesystem/CLI.</p>
     <form method="post" action="/stations/{{ station.id }}/devices/activate" class="flex flex-wrap items-end gap-3">
       <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}" />
-      {% if wizard_step %}<input type="hidden" name="wizard" value="1" />{% endif %}
+      {% if wizard_step %}<input type="hidden" name="wizard" value="1" />{% elif onboarding %}<input type="hidden" name="onboarding" value="1" />{% endif %}
       <div>
         <label class="label">Device Code</label>
-        <input class="input font-mono uppercase" name="activation_code" minlength="20" maxlength="64" autocomplete="one-time-code" required />
+        <input class="input font-mono uppercase" name="activation_code" minlength="20" maxlength="64" autocomplete="one-time-code" inputmode="text" required />
       </div>
       <button type="submit" class="btn-primary">Asociaza device</button>
     </form>
@@ -53,9 +70,15 @@
         <tr class="border-t border-gray-100 dark:border-gray-800">
           <td class="py-1"><a href="/stations/{{ station.id }}/devices/{{ d.id }}/configuration">{{ d.name }} — configuratie</a>{% if d.serial_number %}<div class="font-mono text-xs text-gray-500">{{ d.serial_number }}</div>{% endif %}</td>
           <td>
-            {% if d.status == "active" %}<span class="badge-ok">activ</span>
-            {% elif d.status == "revoked" %}<span class="badge-error">revocat</span>
-            {% else %}<span class="badge-muted">{{ d.status }}</span>{% endif %}
+            {% if d.status == "active" and d.last_heartbeat_at and (now - d.last_heartbeat_at).total_seconds() < 900 %}
+              <span class="badge-ok">online</span>
+            {% elif d.status == "active" %}
+              <span class="badge-muted">asociat (offline)</span>
+            {% elif d.status == "revoked" %}
+              <span class="badge-error">revocat</span>
+            {% else %}
+              <span class="badge-muted">{{ d.status }}</span>
+            {% endif %}
           </td>
           <td>{{ d.last_heartbeat_at.strftime("%d.%m.%Y %H:%M") if d.last_heartbeat_at else "niciodata" }}</td>
           <td>{{ d.firmware_version or "-" }}</td>
@@ -75,14 +98,14 @@
     </table>
   </div>
 
-  {% if can_edit %}
-  <div class="card">
-    <h2 class="mb-2 font-medium">Flux legacy pentru simulator/dezvoltare</h2>
-    <p class="mb-3 text-sm text-gray-500 dark:text-gray-400">Codul temporar este pastrat momentan pentru simulatoare si device-uri vechi. Unitățile noi folosesc Device Code de pe eticheta sigilata.</p>
+  {% if can_edit and legacy_claim_code_enabled %}
+  <div class="card border-yellow-300 dark:border-yellow-800">
+    <h2 class="mb-2 font-medium">Flux legacy pentru simulator/dezvoltare (dezactivat in productie)</h2>
+    <p class="mb-3 text-sm text-gray-500 dark:text-gray-400">Codul temporar (15 minute, doar cunoastere = posesie) este pastrat momentan doar pentru simulatoare si dezvoltare -- vezi docs/LIMITATIONS.md. Unitatile noi folosesc Device Code sigilat de pe eticheta.</p>
     <form method="post" action="/stations/{{ station.id }}/claim-codes">
       <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}" />
       {% if wizard_step %}<input type="hidden" name="wizard" value="1" />{% endif %}
-      <button type="submit" class="btn-primary">Genereaza cod nou</button>
+      <button type="submit" class="btn-secondary">Genereaza cod nou (legacy)</button>
     </form>
   </div>
   {% endif %}

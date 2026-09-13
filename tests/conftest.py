@@ -12,6 +12,9 @@ os.environ.setdefault("SECRET_KEY", "test-secret-key-not-for-production")
 os.environ.setdefault("ENVIRONMENT", "test")
 os.environ.setdefault("BOOTSTRAP_ADMIN_TOKEN", "test-bootstrap-token")
 os.environ.setdefault("OPCOM_USE_SYNTHETIC_FIXTURE_ON_FAILURE", "true")
+# Suitele istorice de protocol exercita inca endpoint-ul de claim legacy.
+# Productia si configuratia implicita raman cu acest flux dezactivat.
+os.environ.setdefault("LEGACY_CLAIM_CODE_ENABLED", "true")
 import pytest
 from alembic.config import Config
 from sqlalchemy import create_engine

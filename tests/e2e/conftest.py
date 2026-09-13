@@ -29,6 +29,7 @@ def live_server():
     env["BOOTSTRAP_ADMIN_TOKEN"] = "e2e-bootstrap-token"
     env["ENVIRONMENT"] = "test"
     env["SESSION_COOKIE_SECURE"] = "false"
+    env["LEGACY_CLAIM_CODE_ENABLED"] = "true"
 
     subprocess.run(
         ["psql", "-h", "localhost", "-U", "ems", "-c", f"DROP DATABASE IF EXISTS {db_name};"],
