@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from zoneinfo import ZoneInfo
 
 from app.core.security import utcnow
 from app.models.forecast import ConsumptionForecast, PvForecast
@@ -60,6 +61,28 @@ def _add_raw(db, station, device, measured_at, *, pv=None, load=None, battery=No
             grid_power_w=Decimal(str(grid * 1000)) if grid is not None else None,
             battery_soc_percent=Decimal(str(soc)) if soc is not None else None,
             is_simulated=is_simulated, is_late=is_late,
+        )
+    )
+    db.flush()
+
+
+def _add_chart_aggregate(db, station, period_type, start, end, *, pv_kwh, soc=50):
+    db.add(
+        TelemetryAggregate(
+            station_id=station.id,
+            period_type=period_type,
+            period_start=start,
+            period_end=end,
+            pv_energy_kwh=Decimal(str(pv_kwh)),
+            load_energy_kwh=Decimal("0"),
+            battery_charge_energy_kwh=Decimal("0"),
+            battery_discharge_energy_kwh=Decimal("0"),
+            grid_import_energy_kwh=Decimal("0"),
+            grid_export_energy_kwh=Decimal("0"),
+            avg_battery_soc_percent=Decimal(str(soc)),
+            sample_count=1,
+            data_quality="measured",
+            coverage={"pv": 1.0, "load": 1.0, "battery": 1.0, "grid": 1.0, "soc": 1.0},
         )
     )
     db.flush()
@@ -126,6 +149,22 @@ def test_timeseries_chart_uses_coarser_resolution_for_longer_ranges(db):
     assert dashboard.get_timeseries_chart(db, station, t0, t0 + timedelta(hours=1), "7d")["resolution"] == "30m"
     assert dashboard.get_timeseries_chart(db, station, t0, t0 + timedelta(hours=1), "30d")["resolution"] == "1h"
     assert dashboard.get_timeseries_chart(db, station, t0, t0 + timedelta(hours=1), "1y")["resolution"] == "1d"
+
+
+def test_one_year_chart_uses_local_calendar_day_rollup_including_dst_duration(db):
+    station = _station(db, "ts-local-day")
+    tz = ZoneInfo(station.timezone)
+    start = datetime(2026, 3, 29, 0, tzinfo=tz).astimezone(UTC)
+    end = datetime(2026, 3, 30, 0, tzinfo=tz).astimezone(UTC)
+    assert end - start == timedelta(hours=23)
+    _add_chart_aggregate(db, station, "day", start, end, pv_kwh=23)
+    db.commit()
+
+    result = dashboard.get_timeseries_chart(db, station, start, end, "1y")
+
+    assert len(result["points"]) == 1
+    assert result["points"][0]["t"] == start.isoformat()
+    assert result["points"][0]["pv_kw"] == 1.0
 
 
 def test_timeseries_chart_missing_data_is_not_a_zero_filled_series(db):
