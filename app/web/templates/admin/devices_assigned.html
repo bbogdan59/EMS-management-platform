@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% block title %}Device-uri asociate - {{ app_name }}{% endblock %}
+{% block content %}
+<div class="space-y-6">
+  <h1 class="text-xl font-semibold">Device-uri asociate</h1>
+  {% include "admin/_tabs.html" %}
+
+  {% if request.query_params.get("reset") %}
+  <div class="badge-ok rounded p-3">Device resetat din fabrica -- s-a intors la starea "neasociat" si poate fi revendicat din nou.</div>
+  {% elif request.query_params.get("error") == "confirm_mismatch" %}
+  <div class="badge-error rounded p-3">Identificatorul introdus la confirmare nu corespunde device-ului. Nicio modificare nu a fost facuta.</div>
+  {% elif request.query_params.get("error") %}
+  <div class="badge-error rounded p-3">Actiunea a esuat. Vezi jurnalul de audit pentru detalii.</div>
+  {% endif %}
+
+  <div class="card">
+    <p class="mb-4 text-sm text-gray-500">
+      Transfer si factory reset (issue #44): actiuni platform_admin, deliberat cross-tenant-capabile
+      (hardware revandut/reinstalat la alt client). Ambele cer confirmarea explicita a serialului
+      (sau <code>installation_uuid</code> daca device-ul nu are inca serial public) afisat mai jos --
+      un fat-finger pe alt device nu produce o mutare/resetare accidentala tacita. Ambele revoca
+      imediat credentiala curenta: device-ul ramane offline pana recupereaza noua credentiala prin
+      acelasi <code>POST /api/v1/devices/enroll</code> idempotent folosit la alocarea initiala.
+    </p>
+    <table class="w-full text-sm">
+      <thead class="text-left text-gray-500">
+        <tr>
+          <th class="py-1">Device</th>
+          <th>Serial / Installation UUID</th>
+          <th>Statie curenta</th>
+          <th>Ultimul heartbeat</th>
+          <th>Transfera catre</th>
+          <th>Factory reset</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for d in devices %}
+        <tr class="border-t border-gray-100 dark:border-gray-800">
+          <td class="py-1">{{ d.name }}</td>
+          <td class="font-mono text-xs">{{ d.serial_number or d.installation_uuid or "-" }}</td>
+          <td>{{ stations_by_id[d.station_id].name if d.station_id in stations_by_id else "-" }}</td>
+          <td>
+            {% if d.last_heartbeat_at %}
+              {{ d.last_heartbeat_at.strftime("%d.%m.%Y %H:%M") }}
+              {% if (now - d.last_heartbeat_at).total_seconds() < 900 %}<span class="badge-ok ml-1">online</span>{% endif %}
+            {% else %}niciodata{% endif %}
+          </td>
+          <td>
+            <form method="post" action="/admin/devices/{{ d.id }}/transfer" class="flex flex-wrap items-center gap-2">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}" />
+              <select class="input" name="target_station_id" required>
+                <option value="">Statie noua...</option>
+                {% for s in stations %}
+                  {% if s.id != d.station_id %}<option value="{{ s.id }}">{{ s.name }}</option>{% endif %}
+                {% endfor %}
+              </select>
+              <input class="input font-mono text-xs" name="confirm_identifier" placeholder="confirma serialul" required style="width: 12rem" />
+              <button type="submit" class="btn-primary" onclick="return confirm('Transferi acest device catre statia selectata? Credentiala curenta va fi revocata imediat.');">Transfera</button>
+            </form>
+          </td>
+          <td>
+            <form method="post" action="/admin/devices/{{ d.id }}/factory-reset" class="flex flex-wrap items-center gap-2">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}" />
+              <input class="input font-mono text-xs" name="confirm_identifier" placeholder="confirma serialul" required style="width: 12rem" />
+              <button type="submit" class="btn-danger" onclick="return confirm('Resetezi acest device din fabrica? Se detaseaza de statie si credentiala curenta e revocata imediat.');">Factory reset</button>
+            </form>
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="6" class="py-4 text-center text-gray-500">Niciun device activ, asociat unei statii.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

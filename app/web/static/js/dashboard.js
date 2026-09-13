@@ -380,12 +380,40 @@ function emsInitDashboard(stationId) {
         $("kpi-savings-coverage").textContent = coveragePct !== null
           ? `Acoperire date: ${coveragePct}% din interval (${savings.hours_priced}/${savings.hours_expected} ore).`
           : "";
+
+        // Detaliere financiara (issue #49) -- fiecare card isi arata formula in
+        // tooltip (title), ca sa nu fie confundate una cu alta sau cu "economia totala".
+        $("kpi-gross-pv-value").textContent = fmt(savings.gross_pv_value_lei) + " lei (30 zile)";
+        $("kpi-gross-pv-value-label").title = savings.gross_pv_value_description || "";
+        $("kpi-self-consumption").textContent = fmt(savings.self_consumption_savings_lei) + " lei (30 zile)";
+        $("kpi-self-consumption-label").title = savings.self_consumption_savings_description || "";
+        let exportText = fmt(savings.export_revenue_lei) + " lei (30 zile)";
+        if (savings.hours_export_price_missing > 0) {
+          exportText += ` (${savings.hours_export_price_missing} ore cu export excluse: tarif necunoscut)`;
+        }
+        $("kpi-export-revenue").textContent = exportText;
+        $("kpi-export-revenue-label").title = savings.export_revenue_description || "";
+
+        const provenanceEl = $("kpi-tariff-provenance");
+        if (provenanceEl) {
+          const isMeasured = savings.tariff_provenance_summary === "measured";
+          provenanceEl.textContent = isMeasured ? "tarif import: masurat" : "tarif import: estimat (date de test)";
+          provenanceEl.className = isMeasured ? "badge-ok" : "badge-warn";
+        }
       } else {
         $("kpi-savings").textContent = "indisponibil";
         $("kpi-savings-note").textContent = savings.reason || "";
         $("kpi-ems-benefit").textContent = "indisponibil";
         $("kpi-ems-benefit-note").textContent = "";
         $("kpi-savings-coverage").textContent = "";
+        $("kpi-gross-pv-value").textContent = "indisponibil";
+        $("kpi-self-consumption").textContent = "indisponibil";
+        $("kpi-export-revenue").textContent = "indisponibil";
+        const provenanceEl = $("kpi-tariff-provenance");
+        if (provenanceEl) {
+          provenanceEl.textContent = "-";
+          provenanceEl.className = "badge-muted";
+        }
       }
     } catch (e) { console.error(e); }
   }

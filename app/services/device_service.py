@@ -584,6 +584,95 @@ def allocate_device(db: Session, device: Device, station: Station, admin_user: U
     return raw_secret
 
 
+def transfer_device(db: Session, device: Device, target_station: Station, actor: User) -> tuple[uuid.UUID, str]:
+    """Transfera un device deja ACTIV catre o alta statie (issue #44).
+
+    Platform_admin only (verificat la nivel de ruta, ca `allocate_device`) --
+    e o operatie administrativa deliberat cross-tenant-capabila (hardware
+    revandut/reinstalat la alt client), nu una expusa unui organization_admin
+    peste propriile statii. Credentiala CURENTA e revocata imediat -- device-ul
+    nu mai poate autentifica nicio cerere (heartbeat/telemetrie/comenzi) pana
+    nu recupereaza noua credentiala prin exact acelasi canal idempotent deja
+    folosit la alocarea initiala (`POST /api/v1/devices/enroll`, raspuns
+    `assigned` cu `credential_secret`) -- niciun cod nou de editat manual pe
+    device. Devices asigura ca dispozitivul nu primeste config/secrete ale
+    NOII statii inainte ca acest transfer sa fie explicit autorizat aici.
+
+    Returneaza (statia_veche_id, secret_nou_in_clar) -- apelantul afiseaza
+    secretul o singura data, ca la alocare, pentru recuperare manuala daca
+    device-ul nu reia singur polling-ul de enrollment."""
+    # Serializam transfer/reset pe randul device-ului. Fara lock, doua POST-uri
+    # concurente puteau emite doua credentiale active sau muta hardware-ul in
+    # doua statii succesiv pe baza aceleiasi stari citite anterior.
+    device = db.scalar(
+        select(Device)
+        .where(Device.id == device.id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if device is None or device.status != DeviceStatus.active.value or device.station_id is None:
+        raise DeviceServiceError("Doar un device activ, deja asociat unei statii, poate fi transferat.")
+    if device.station_id == target_station.id:
+        raise DeviceServiceError("Device-ul este deja asociat acestei statii.")
+
+    old_station_id = device.station_id
+    db.execute(
+        update(DeviceCredential)
+        .where(DeviceCredential.device_id == device.id, DeviceCredential.is_active.is_(True))
+        .values(is_active=False, revoked_at=utcnow())
+    )
+    raw_secret = generate_opaque_token(32)
+    credential = DeviceCredential(device_id=device.id, secret_hash=hash_password(raw_secret))
+    db.add(credential)
+
+    device.station_id = target_station.id
+    device.pending_credential_secret = raw_secret
+    device.allocated_at = utcnow()
+    device.allocated_by_user_id = actor.id
+    db.add(device)
+    db.flush()
+    return old_station_id, raw_secret
+
+
+def factory_reset_device(db: Session, device: Device) -> None:
+    """Reseteaza un device ACTIV la starea `pending_claim`, fara statie
+    (issue #44): "factory reset / reprovisioning" administrativ. Revoca
+    imediat orice credentiala curenta (device-ul nu mai poate autentifica
+    nicio cerere) si sterge orice urma a alocarii vechi, ca sa poata fi
+    revendicat din nou -- fie de un admin prin `/admin/devices/pending`
+    (daca reincepe enrollment automat), fie prin autoservire daca
+    prezinta un Device Code nou, sigilat, la un enroll ulterior.
+
+    Identitatea proprie a dispozitivului (`installation_uuid`/
+    `provisioning_secret_hash`/`serial_number`) NU e atinsa aici -- un
+    factory reset FIZIC real, pe hardware, ar regenera-o de partea
+    device-ului insusi la urmatorul enroll; acest capat administrativ doar
+    detaseaza si revoca partea controlata de server."""
+    device = db.scalar(
+        select(Device)
+        .where(Device.id == device.id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if device is None or device.status != DeviceStatus.active.value or device.station_id is None:
+        raise DeviceServiceError("Doar un device activ, deja asociat unei statii, poate fi resetat din fabrica.")
+
+    db.execute(
+        update(DeviceCredential)
+        .where(DeviceCredential.device_id == device.id, DeviceCredential.is_active.is_(True))
+        .values(is_active=False, revoked_at=utcnow())
+    )
+    device.station_id = None
+    device.status = DeviceStatus.pending_claim.value
+    device.pending_credential_secret = None
+    device.allocated_at = None
+    device.allocated_by_user_id = None
+    device.activation_claimed_at = None
+    device.enrollment_expires_at = expires_in(hours=get_settings().device_enrollment_ttl_hours)
+    db.add(device)
+    db.flush()
+
+
 def mark_bootstrap_credential_delivered(db: Session, device: Device) -> None:
     """Sterge secretul de credentiala pastrat temporar in clar, odata ce
     dispozitivul a demonstrat ca l-a primit (prima cerere autentificata

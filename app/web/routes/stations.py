@@ -19,6 +19,7 @@ from app.core.audit import record_audit
 from app.core.csrf import verify_csrf
 from app.core.rate_limit import RateLimitExceeded, check_fixed_window
 from app.core.rbac import can_manage_station_config, can_modify_operational_settings
+from app.core.security import utcnow
 from app.database import get_db
 from app.models.device import ClaimCode, Device
 from app.models.enums import EquipmentType
@@ -64,6 +65,10 @@ def _config_error_redirect(station_id: uuid.UUID, errors: list[str]) -> Redirect
 
 def _preferences_error_redirect(station_id: uuid.UUID, errors: list[str]) -> RedirectResponse:
     return _error_redirect(f"/stations/{station_id}/preferences", errors)
+
+
+def _tariff_error_redirect(station_id: uuid.UUID, errors: list[str]) -> RedirectResponse:
+    return _error_redirect(f"/stations/{station_id}/tariffs", errors)
 
 
 def _dec(value: str | None, default: Decimal | None = None) -> Decimal | None:
@@ -582,6 +587,7 @@ def tariffs_page(
         "previews": previews,
         "preview_sample_kwh": _INVOICE_PREVIEW_SAMPLE_KWH,
         "can_edit": can_manage_station_config(role),
+        "errors": request.query_params.getlist("error"),
         **build_nav_context(db, user, station.id),
     }
     return templates.TemplateResponse(request, "stations/tariffs.html", context)
@@ -610,24 +616,28 @@ def tariffs_submit(
     user: User = Depends(get_current_user),
 ):
     station, _role = station_role
-    tariff = tariff_service.get_or_create_tariff(db, station, direction, kind, name)
-    tariff_service.add_tariff_version(
-        db,
-        tariff,
-        valid_from=datetime.now(UTC),
-        fixed_price_lei_per_kwh=_dec(fixed_price_lei_per_kwh),
-        opcom_margin_lei_per_kwh=_dec(opcom_margin_lei_per_kwh),
-        fixed_monthly_fee_lei=_dec(fixed_monthly_fee_lei, Decimal("0")),
-        variable_component_lei_per_kwh=_dec(variable_component_lei_per_kwh, Decimal("0")),
-        distribution_lei_per_kwh=_dec(distribution_lei_per_kwh, Decimal("0")),
-        transport_lei_per_kwh=_dec(transport_lei_per_kwh, Decimal("0")),
-        other_regulated_lei_per_kwh=_dec(other_regulated_lei_per_kwh, Decimal("0")),
-        vat_rate_percent=_dec(vat_rate_percent),
-        settlement_method=settlement_method,
-        settlement_interval_days=settlement_interval_days,
-        economic_calculation_disabled=bool(economic_calculation_disabled),
-        limitation_note=limitation_note,
-    )
+    try:
+        tariff = tariff_service.get_or_create_tariff(db, station, direction, kind, name)
+        tariff_service.add_tariff_version(
+            db,
+            tariff,
+            valid_from=datetime.now(UTC),
+            fixed_price_lei_per_kwh=_dec(fixed_price_lei_per_kwh),
+            opcom_margin_lei_per_kwh=_dec(opcom_margin_lei_per_kwh),
+            fixed_monthly_fee_lei=_dec(fixed_monthly_fee_lei, Decimal("0")),
+            variable_component_lei_per_kwh=_dec(variable_component_lei_per_kwh, Decimal("0")),
+            distribution_lei_per_kwh=_dec(distribution_lei_per_kwh, Decimal("0")),
+            transport_lei_per_kwh=_dec(transport_lei_per_kwh, Decimal("0")),
+            other_regulated_lei_per_kwh=_dec(other_regulated_lei_per_kwh, Decimal("0")),
+            vat_rate_percent=_dec(vat_rate_percent),
+            settlement_method=settlement_method,
+            settlement_interval_days=settlement_interval_days,
+            economic_calculation_disabled=bool(economic_calculation_disabled),
+            limitation_note=limitation_note,
+        )
+    except ValueError as exc:
+        db.rollback()
+        return _tariff_error_redirect(station.id, [str(exc)])
     record_audit(
         db, action="tariff_version_created", resource_type="tariff", resource_id=str(tariff.id),
         actor_user_id=user.id, actor_label=user.email, station_id=station.id,
@@ -657,6 +667,9 @@ def devices_page(
         "claim_codes": claim_codes,
         "can_edit": can_manage_station_config(role),
         "new_claim_code": None,
+        "legacy_claim_code_enabled": get_settings().legacy_claim_code_enabled,
+        "onboarding": request.query_params.get("onboarding") == "1",
+        "now": utcnow(),
         **build_nav_context(db, user, station.id),
     }
     return templates.TemplateResponse(request, "stations/devices.html", context)
@@ -666,11 +679,16 @@ def devices_page(
 def activate_device_code(
     request: Request,
     activation_code: str = Form(...),
+    onboarding: str | None = Form(None),
     db: Session = Depends(get_db),
     station_role: tuple = Depends(StationAccess(min_role="organization_admin")),
     user: User = Depends(get_current_user),
 ):
     station, _role = station_role
+    # Pastreaza pasul din wizard-ul de setare (issue #44) prin redirect, ca
+    # utilizatorul sa ajunga inapoi in fluxul "statie -> asociere device ->
+    # configurare" in loc sa cada pe pagina simpla de dispozitive.
+    suffix = "&onboarding=1" if onboarding == "1" else ""
     try:
         check_fixed_window(
             f"device_activation:{user.id}:{station.id}",
@@ -678,13 +696,13 @@ def activate_device_code(
             3600,
         )
     except RateLimitExceeded:
-        return RedirectResponse(f"/stations/{station.id}/devices?error=too_many_attempts", status_code=303)
+        return RedirectResponse(f"/stations/{station.id}/devices?error=too_many_attempts{suffix}", status_code=303)
 
     try:
         device = device_service.activate_device_for_station(db, activation_code, station, user)
     except device_service.DeviceServiceError:
         db.rollback()
-        return RedirectResponse(f"/stations/{station.id}/devices?error=invalid_device_code", status_code=303)
+        return RedirectResponse(f"/stations/{station.id}/devices?error=invalid_device_code{suffix}", status_code=303)
 
     record_audit(
         db, action="device_activated_by_customer", resource_type="device", resource_id=str(device.id),
@@ -692,7 +710,7 @@ def activate_device_code(
         metadata={"serial_number": device.serial_number},
     )
     db.commit()
-    return RedirectResponse(f"/stations/{station.id}/devices?linked=1", status_code=303)
+    return RedirectResponse(f"/stations/{station.id}/devices?linked=1{suffix}", status_code=303)
 
 
 @router.post("/stations/{station_id}/claim-codes", dependencies=[Depends(verify_csrf)])
@@ -703,6 +721,11 @@ def create_claim_code(
     user: User = Depends(get_current_user),
 ):
     station, _role = station_role
+    if not get_settings().legacy_claim_code_enabled:
+        # Fluxul legacy e dezactivat explicit (issue #44) -- refuzam cererea in
+        # loc sa generam tacit un cod care ar redeveni un bypass fata de
+        # Device Code-ul sigilat (dovada de posesie reala).
+        return RedirectResponse(f"/stations/{station.id}/devices?error=legacy_disabled", status_code=303)
     claim, raw_code = device_service.create_claim_code(db, station, user)
     record_audit(
         db, action="claim_code_created", resource_type="claim_code", resource_id=str(claim.id),
@@ -722,6 +745,9 @@ def create_claim_code(
             "claim_codes": claim_codes,
             "can_edit": True,
             "new_claim_code": raw_code,
+            "legacy_claim_code_enabled": True,
+            "onboarding": request.query_params.get("onboarding") == "1",
+            "now": utcnow(),
             **build_nav_context(db, user, station.id),
         },
     )
