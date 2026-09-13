@@ -1,15 +1,16 @@
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from zoneinfo import ZoneInfo
 
 from app.core.security import utcnow
 from app.models.forecast import ConsumptionForecast, PvForecast
 from app.models.optimization import OptimizationRun, Plan, PlanInterval
 from app.models.tariff import Tariff, TariffVersion
-from app.models.telemetry import TelemetryAggregate
+from app.models.telemetry import TelemetryAggregate, TelemetryRaw
 from app.services import dashboard_service as dashboard
-from tests.factories import make_org, make_station, make_user
+from tests.factories import make_device, make_org, make_station, make_user
 
 
 def _add_tariff_version(db, station, direction, *, valid_from, valid_to=None, fixed_price):
@@ -47,6 +48,153 @@ def _station(db, suffix=""):
     user = make_user(db, email=f"dash{suffix}@test.local")
     org = make_org(db, f"Dash Org {suffix}")
     return make_station(db, org, user, name=f"Dash Station {suffix}")
+
+
+def _add_raw(db, station, device, measured_at, *, pv=None, load=None, battery=None, grid=None, soc=None, sequence=0, is_simulated=False, is_late=False):
+    db.add(
+        TelemetryRaw(
+            device_id=device.id, station_id=station.id, boot_id="boot-1", sequence=sequence,
+            measured_at=measured_at, received_at=measured_at,
+            pv_power_w=Decimal(str(pv * 1000)) if pv is not None else None,
+            load_power_w=Decimal(str(load * 1000)) if load is not None else None,
+            battery_power_w=Decimal(str(battery * 1000)) if battery is not None else None,
+            grid_power_w=Decimal(str(grid * 1000)) if grid is not None else None,
+            battery_soc_percent=Decimal(str(soc)) if soc is not None else None,
+            is_simulated=is_simulated, is_late=is_late,
+        )
+    )
+    db.flush()
+
+
+def _add_chart_aggregate(db, station, period_type, start, end, *, pv_kwh, soc=50):
+    db.add(
+        TelemetryAggregate(
+            station_id=station.id,
+            period_type=period_type,
+            period_start=start,
+            period_end=end,
+            pv_energy_kwh=Decimal(str(pv_kwh)),
+            load_energy_kwh=Decimal("0"),
+            battery_charge_energy_kwh=Decimal("0"),
+            battery_discharge_energy_kwh=Decimal("0"),
+            grid_import_energy_kwh=Decimal("0"),
+            grid_export_energy_kwh=Decimal("0"),
+            avg_battery_soc_percent=Decimal(str(soc)),
+            sample_count=1,
+            data_quality="measured",
+            coverage={"pv": 1.0, "load": 1.0, "battery": 1.0, "grid": 1.0, "soc": 1.0},
+        )
+    )
+    db.flush()
+
+
+# --- get_timeseries_chart (issue #33: rezolutie server-side + agregare metric-aware) --
+
+
+def test_timeseries_chart_declares_resolution_aggregation_timezone_and_coverage(db):
+    station = _station(db, "ts1")
+    device = make_device(db, station)
+    t0 = utcnow().replace(minute=0, second=0, microsecond=0) - timedelta(hours=1)
+    _add_raw(db, station, device, t0, pv=1.0, load=2.0, battery=0.5, grid=1.5, soc=50.0, sequence=1)
+    db.commit()
+
+    result = dashboard.get_timeseries_chart(db, station, t0 - timedelta(minutes=5), t0 + timedelta(minutes=5), "24h")
+
+    assert result["resolution"] == "15m"
+    assert result["aggregation"]["pv_kw"] == "mean"
+    assert result["aggregation"]["soc_pct"] == "mean"
+    assert result["timezone"] == station.timezone
+    assert 0.0 <= result["coverage"] <= 1.0
+    assert len(result["points"]) == 1
+
+
+def test_timeseries_chart_averages_power_within_a_bucket_not_sums(db):
+    """Doua esantioane brute in acelasi bucket de 15 min -- puterea trebuie
+    mediata, nu insumata (ar dubla artificial valoarea afisata)."""
+    station = _station(db, "ts2")
+    device = make_device(db, station)
+    t0 = utcnow().replace(minute=0, second=0, microsecond=0) - timedelta(hours=1)
+    _add_raw(db, station, device, t0, pv=2.0, sequence=1)
+    _add_raw(db, station, device, t0 + timedelta(minutes=5), pv=4.0, sequence=2)
+    db.commit()
+
+    result = dashboard.get_timeseries_chart(db, station, t0, t0 + timedelta(minutes=10), "24h")
+
+    assert len(result["points"]) == 1
+    assert abs(result["points"][0]["pv_kw"] - 3.0) < 0.001  # medie (2+4)/2, nu suma (6)
+
+
+def test_timeseries_chart_soc_is_averaged_never_summed_across_bucket(db):
+    station = _station(db, "ts3")
+    device = make_device(db, station)
+    t0 = utcnow().replace(minute=0, second=0, microsecond=0) - timedelta(hours=1)
+    _add_raw(db, station, device, t0, soc=40.0, sequence=1)
+    _add_raw(db, station, device, t0 + timedelta(minutes=5), soc=60.0, sequence=2)
+    db.commit()
+
+    result = dashboard.get_timeseries_chart(db, station, t0, t0 + timedelta(minutes=10), "24h")
+
+    # Medie (40+60)/2 = 50 -- daca ar fi insumat gresit ar iesi 100 (peste 100%, imposibil fizic).
+    assert abs(result["points"][0]["soc_pct"] - 50.0) < 0.001
+
+
+def test_timeseries_chart_uses_coarser_resolution_for_longer_ranges(db):
+    station = _station(db, "ts4")
+    device = make_device(db, station)
+    t0 = utcnow().replace(minute=0, second=0, microsecond=0) - timedelta(days=1)
+    _add_raw(db, station, device, t0, pv=1.0, sequence=1)
+    db.commit()
+
+    assert dashboard.get_timeseries_chart(db, station, t0, t0 + timedelta(hours=1), "24h")["resolution"] == "15m"
+    assert dashboard.get_timeseries_chart(db, station, t0, t0 + timedelta(hours=1), "7d")["resolution"] == "30m"
+    assert dashboard.get_timeseries_chart(db, station, t0, t0 + timedelta(hours=1), "30d")["resolution"] == "1h"
+    assert dashboard.get_timeseries_chart(db, station, t0, t0 + timedelta(hours=1), "1y")["resolution"] == "1d"
+
+
+def test_one_year_chart_uses_local_calendar_day_rollup_including_dst_duration(db):
+    station = _station(db, "ts-local-day")
+    tz = ZoneInfo(station.timezone)
+    start = datetime(2026, 3, 29, 0, tzinfo=tz).astimezone(UTC)
+    end = datetime(2026, 3, 30, 0, tzinfo=tz).astimezone(UTC)
+    assert end - start == timedelta(hours=23)
+    _add_chart_aggregate(db, station, "day", start, end, pv_kwh=23)
+    db.commit()
+
+    result = dashboard.get_timeseries_chart(db, station, start, end, "1y")
+
+    assert len(result["points"]) == 1
+    assert result["points"][0]["t"] == start.isoformat()
+    assert result["points"][0]["pv_kw"] == 1.0
+
+
+def test_timeseries_chart_missing_data_is_not_a_zero_filled_series(db):
+    """Fara nicio telemetrie in interval -- raspunsul trebuie sa aiba `points`
+    goale (ca UI-ul sa arate un empty-state gri), NU o serie umpluta cu 0."""
+    station = _station(db, "ts5")
+    make_device(db, station)
+    db.commit()
+    t0 = utcnow() - timedelta(hours=2)
+
+    result = dashboard.get_timeseries_chart(db, station, t0, t0 + timedelta(hours=1), "24h")
+
+    assert result["points"] == []
+    assert result["coverage"] == 0.0
+
+
+def test_timeseries_raw_export_still_returns_flat_list_unaggregated(db):
+    """Exportul CSV foloseste `get_timeseries_raw`, care trebuie sa ramana
+    neschimbat (fara agregare) -- contractul vechi al exportului."""
+    station = _station(db, "ts6")
+    device = make_device(db, station)
+    t0 = utcnow().replace(minute=0, second=0, microsecond=0) - timedelta(hours=1)
+    _add_raw(db, station, device, t0, pv=1.0, sequence=1)
+    _add_raw(db, station, device, t0 + timedelta(minutes=5), pv=2.0, sequence=2)
+    db.commit()
+
+    rows = dashboard.get_timeseries_raw(db, station, t0, t0 + timedelta(minutes=10))
+
+    assert len(rows) == 2  # neagregat -- ambele randuri brute raman distincte
+    assert isinstance(rows[0]["t"], str)  # isoformat, cum astepta deja exportul CSV
 
 
 # --- get_estimated_savings ---------------------------------------------
