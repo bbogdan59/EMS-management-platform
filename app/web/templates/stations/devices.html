@@ -10,6 +10,7 @@
     {"label": "Dispozitive", "url": None},
   ]) }}
   <h1 class="text-xl font-semibold">Dispozitive - {{ station.name }}</h1>
+  <p class="text-sm"><a class="hover:underline" href="/stations/{{ station.id }}/integrations/deye">Nu ai un dispozitiv EMS local? Conecteaza contul Deye Cloud (doar citire) &rarr;</a></p>
 
   {% if request.query_params.get("linked") %}
   <div class="badge-ok rounded p-3">Device-ul a fost asociat. Poate dura pana la urmatorul polling pentru a aparea online.</div>

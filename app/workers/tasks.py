@@ -152,6 +152,13 @@ def alerts_task() -> dict:
     with session_scope() as db:
         devices = db.scalars(select(Device)).all()
         for device in devices:
+            # Device-ul sintetic Deye Cloud (issue #43) nu foloseste
+            # NICIODATA protocolul web-device de heartbeat -- alerta
+            # "offline" ar fi permanenta si falsa. Prospetimea lui reala e
+            # `DeyeCloudConnection.last_sync_at/last_sync_status`, verificata
+            # separat de `deye_cloud_poll_task`, nu prin heartbeat.
+            if device.capabilities.get("deye_cloud"):
+                continue
             is_offline = device.status == "active" and (
                 device.last_heartbeat_at is None or (now - device.last_heartbeat_at) > timedelta(minutes=15)
             )
@@ -181,6 +188,44 @@ def alerts_task() -> dict:
                 open_alert.resolved_at = now
                 db.add(open_alert)
     return {"alerts_created": created}
+
+
+@celery_app.task(name="app.workers.tasks.deye_cloud_poll_task")
+def deye_cloud_poll_task() -> dict:
+    """Polling read-only al conexiunilor Deye Cloud active (issue #43),
+    STRICT pe fundal -- nicio cerere web nu asteapta acest apel. Fiecare
+    conexiune e procesata intr-o incercare izolata (o eroare la o conexiune
+    nu opreste polling-ul celorlalte); backoff-ul si regula de prioritate fata
+    de un dispozitiv EMS local activ sunt in `deye_cloud_service.poll_connection`."""
+    from app.models.deye_integration import DeyeCloudConnection
+    from app.models.enums import DeyeCloudConnectionStatus
+    from app.services import deye_cloud_service
+
+    with _task_lock("deye_cloud_poll") as acquired:
+        if not acquired:
+            return {"skipped": "already_running"}
+        results = {"succeeded": 0, "skipped": 0, "failed": 0}
+        with session_scope() as db:
+            connection_ids = [
+                row[0]
+                for row in db.execute(
+                    select(DeyeCloudConnection.id).where(
+                        DeyeCloudConnection.status == DeyeCloudConnectionStatus.connected.value
+                    )
+                ).all()
+            ]
+        for connection_id in connection_ids:
+            try:
+                with session_scope() as db:
+                    connection = db.get(DeyeCloudConnection, connection_id)
+                    if connection is None:
+                        continue
+                    outcome = deye_cloud_service.poll_connection(db, connection)
+                    results[outcome["status"]] = results.get(outcome["status"], 0) + 1
+            except Exception as exc:
+                results["failed"] += 1
+                logger.error("deye_cloud_poll.unexpected_error", connection_id=str(connection_id), error=str(exc))
+        return results
 
 
 _SAFE_JOB_ERROR = "Operația a eșuat. Consultați logurile folosind ID-ul jobului."

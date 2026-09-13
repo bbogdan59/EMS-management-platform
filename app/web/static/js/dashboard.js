@@ -33,6 +33,18 @@ function emsInitDashboard(stationId) {
     qualityBadge.className = "badge-" + ({ measured: "ok", estimated: "warn", simulated: "warn", stale: "error", missing: "muted" }[s.data_quality] || "muted");
     qualityBadge.textContent = { measured: "masurat", estimated: "estimat", simulated: "simulat", stale: "invechit", missing: "lipsa" }[s.data_quality] || s.data_quality;
 
+    const sourceBadge = $("kpi-source");
+    if (sourceBadge) {
+      if (s.telemetry_source === "deye_cloud") {
+        sourceBadge.className = "badge-muted";
+        sourceBadge.textContent = "sursa: Deye Cloud (doar citire)";
+        sourceBadge.title = "Telemetrie importata din contul Deye Cloud, fara dispozitiv EMS local activ. Latenta/rezolutia pot fi diferite fata de un dispozitiv local.";
+        sourceBadge.hidden = false;
+      } else {
+        sourceBadge.hidden = true;
+      }
+    }
+
     updateFlowDiagram(s);
   }
 
