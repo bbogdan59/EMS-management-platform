@@ -1734,6 +1734,125 @@ lista de rulari).
 - **Modificarea modelului matematic** -- nu a fost cautat si nu a fost gasit
   niciun bug de solver in cadrul acestui PR; `optimization_service._solve`
   e neschimbat linie cu linie.
+
+## Addendum: Wizard ghidat de configurare organizatie/statie (issue #41)
+
+**Domeniul strict al acestei lucrari:** `app/web/wizard.py` (nou),
+`app/web/routes/organizations.py` (o ruta noua + un parametru `wizard`
+aditiv pe `create_station`), `app/web/routes/stations.py` (parametru
+`wizard` aditiv pe rutele deja existente de config/preferinte/tarife/
+activare device + doua rute noi de rezumat/activare), `app/web/routes/
+dashboard.py` (un banner discret, nu un redirect fortat), `app/services/
+station_service.py` (o singura functie noua, `setup_progress`), coloana
+noua `Station.setup_completed_at` (migratia `3ba1401941db`). Catalogul de
+echipamente si contractele de tarif raman tichete separate (#42, #46);
+integrarea Deye Cloud si firmware-ul NU au fost atinse, conform cerintei
+explicite a issue-ului.
+
+**Decizie de design: wizard-ul e chrome peste rutele existente, nu un flux
+nou.** Fiecare din cei 6 pasi ceruti de issue este pagina deja existenta si
+deja testata (creare statie, `stations/config.html`, `stations/devices.html`,
+`stations/tariffs.html`, `stations/preferences.html`), plus o pagina noua de
+rezumat -- niciodata o reimplementare a formularului sau a validarii.
+`?wizard=1` (query pe GET, camp ascuns pe POST; valoarea trebuie sa fie exact
+`1`, nu doar un sir nenul) doar: (a) afiseaza
+`partials/_wizard_progress.html` (progres cu 6 pasi, Back, Sari-peste-pas)
+deasupra formularului deja existent, reutilizand breadcrumb-ul si
+`_form_errors.html`/`form-errors.js` de la issue #48 pentru rezumatul de
+erori si focus-ul pe primul camp invalid -- nu am reimplementat focus
+management propriu; (b) schimba destinatia redirect-ului dupa succes catre
+pasul urmator din `STEP_ORDER`, in loc de reincarcarea paginii curente.
+RBAC (`StationAccess`/`OrganizationAccess`), CSRF (`verify_csrf` neschimbat
+pe toate rutele) si auditul (`record_audit` neschimbat) raman exact cele deja
+existente pe fiecare ruta -- nu a fost adaugata nicio poarta noua de
+autorizare, doar chrome UI.
+
+**"Draft persistent si reluabil" fara un tabel de drafturi separat.**
+`station_service.create_station` creeaza deja, intr-o singura tranzactie,
+statia + o versiune v1 de configuratie tehnica + o versiune v1 de preferinte
+(cu valori implicite rezonabile) -- deci pasii "Echipamente" si "Preferinte"
+NU sunt niciodata cu adevarat incompleti dupa crearea statiei, doar
+rafinabili. Singurele stari genuin incomplete, derivate direct din date reale
+(nu dintr-un payload de formular nesalvat), sunt "niciun device activ
+asociat" si "niciun tarif activ configurat" (`station_service.setup_progress`;
+tarifele dezactivate sunt ignorate explicit).
+Reluarea inseamna doar recalcularea pasului urmator din aceasta stare reala
+(`next_wizard_step`) -- refresh, inchiderea tab-ului sau revenirea a doua zi
+nu pierd nimic, pentru ca nu exista niciun payload intermediar nesalvat de
+pastrat.
+
+**Reluarea e un banner, NICIODATA un redirect fortat.** Am luat in considerare
+si respins deliberat interceptarea rutei `/` (dashboard) pentru a redirecta
+automat catre wizard cat timp configurarea nu e "finalizata" -- ar fi rupt
+`tests/e2e/test_ui_flows.py::test_dashboard_sse_connection_reaches_live_status`
+(un `organization_admin` care viziteaza direct dashboard-ul unei statii proaspat
+create, fara device/tarif, si se asteapta sa vada dashboard-ul, nu sa fie
+deturnat) si ar fi contrazis principiul "vizitarea dashboard-ului nu trebuie
+niciodata blocata". In schimb, `dashboard.py::home` adauga doar
+`wizard_resume_url` in context (un link "Continua configurarea") cand
+utilizatorul curent poate gestiona efectiv configurarea statiei
+(`can_manage_station_config`) SI nu e `platform_admin` (care viziteaza des
+statii ale altor organizatii doar pentru supraveghere, nu pentru configurare)
+SI configurarea nu e inca finalizata explicit. Testat explicit ca acest banner
+NU forteaza navigarea (`test_dashboard_never_force_redirects_incomplete_station`)
+si NU apare pentru roluri fara drept de gestionare (`test_viewer_does_not_
+see_resume_banner`).
+
+**Activare explicita, idempotenta.** Pasul final (`POST /stations/{id}/setup/
+activate`) seteaza `Station.setup_completed_at` DOAR daca era `NULL` -- un al
+doilea submit (dublu-click, back+resubmit) nu suprascrie momentul primei
+activari si redirecteaza oricum identic catre `/?station_id={id}` (criteriul
+de acceptare "dupa finalizare, utilizatorul ajunge direct in dashboard-ul
+statiei"). Nu a fost adaugat un sistem nou de idempotency-token pentru
+dublu-submit dincolo de acesta -- pasii cu date reale (config/preferinte)
+sunt deja protejati impotriva dublei trimiteri de concurenta optimista pe
+versiuni (`expected_version`, livrata prin issue #8), verificata deja de
+`test_station_config_forms.py`; wizard-ul doar schimba redirect-ul dupa acel
+mecanism existent, nu il duplica.
+
+**Ce ramane explicit in afara scopului acestei implementari (nu ascuns):**
+- **Fara stocare de draft independenta de rândurile de domeniu.** Daca un
+  viitor pas al wizard-ului ar introduce campuri care NU corespund direct
+  unui rand deja persistat (de exemplu o selectie facuta pe pasul 3 care
+  influenteaza doar randarea pasului 5, fara sa fie ea insasi o entitate de
+  domeniu), ar necesita un mecanism de draft separat -- nu a fost construit
+  aici, pentru ca nu a fost nevoie: fiecare pas actual scrie direct intr-un
+  rand de domeniu deja existent.
+- **Fara teste automate de concurenta reala pe rutele de wizard** (doua
+  sesiuni/thread-uri simultane pe acelasi pas) -- protectia de concurenta
+  optimista in sine e deja testata cu conexiuni Postgres reale separate in
+  `test_station_config_forms.py` (issue #8); nu am duplicat acel test doar
+  ca sa treaca prin URL-ul `?wizard=1`, care nu schimba logica de concurenta.
+- **Fara audit vizual/screenshot al accesibilitatii** -- am reutilizat
+  mecanismul deja verificat (issue #48: `data-error-summary`/`aria-invalid`/
+  focus pe primul camp invalid, testat cu Playwright acolo), am adaugat
+  `aria-current="step"` si `<nav aria-label>` pe indicatorul de progres si am
+  verificat prin teste HTTP ca acele atribute apar in HTML, dar nu exista un
+  test Playwright nou dedicat exclusiv navigarii cu tastatura a noului
+  indicator de pasi (elementele sunt `<a>`/`<button>` native, deci focusabile
+  si activabile cu tastatura implicit, dar comportamentul real intr-un
+  browser nu a fost verificat separat de acest PR).
+- **Fluxul avansat multi-site ramane neschimbat, nu "ascuns".** Formularul
+  rapid de adaugare a unei statii suplimentare in `/organizations/{id}` (util
+  cand o organizatie are deja o statie si vrea sa adauge alta fara sa
+  parcurga din nou tot wizard-ul) ramane disponibil, doar redenumit explicit
+  "flux avansat" -- wizard-ul ghidat (`/organizations/{id}/setup/station`) e
+  oferit ca actiune implicita doar cand organizatia NU are inca nicio statie
+  (happy path 1 organizatie / 1 statie).
+- **"Cont si organizatie" (pasul 1 din specificatie) nu are o pagina proprie
+  in acest wizard.** Platforma nu are inca un flux de auto-inregistrare
+  publica (conturile se creeaza prin bootstrap admin sau invitatie -- fluxuri
+  deja existente, neatinse aici); crearea implicita a unei organizatii pentru
+  un utilizator rezidential ramane in afara scopului acestei PR, care preia
+  fluxul incepand de la o organizatie deja existenta (cu cel putin un
+  `organization_admin`).
+- **Nicio editare a numelui/fusului orar/coordonatelor unei statii deja
+  create din wizard.** Odata creata, pasul "Statie" din indicatorul de
+  progres apare doar ca bifat (necliclabil) -- nu exista o ruta de editare a
+  acestor campuri de baza (nici in afara wizard-ului); ramane un formular de
+  creare, nu si de editare ulterioara.
+
+
 ## 21. Design system minim: breadcrumb, grupuri de campuri, focus pe eroare (issue #48)
 
 Issue #48 cerea un "design system" pentru UI -- domeniu larg, care poate
@@ -1953,6 +2072,90 @@ SAVEPOINT: taskul Celery ingereaza telemetrie, ignora conexiuni deconectate,
 o eroare la o conexiune nu blocheaza pe celelalte, gating fata de dispozitiv
 local activ). Niciun apel de retea real catre Deye Cloud in teste.
 
+## Addendum: Dashboard client "one station first", felie limitata (issue #45)
+
+**Domeniul acestui PR e strict felia de rutare + explicatii, NU refacerea
+completa a informatiei arhitecturale a dashboard-ului** ceruta de issue --
+acel domeniu complet (comparatie fata de ieri pentru fiecare KPI, skeleton
+per widget, limbaj complet non-tehnic peste tot, un audit de accesibilitate)
+e un proiect de mai multe zile; issue-ul insusi cere sa nu se rescrie
+backend-ul energetic, iar `dashboard_service`/`dashboard.js` au fost deja
+extinse semnificativ de #13/#18/#33/#49/#50 -- acest PR se adauga la ele, nu
+le inlocuieste.
+
+**Ce s-a implementat:**
+
+1. **Redirect automat "o singura statie" (`app/web/routes/dashboard.py`,
+   `home()`).** Cand un utilizator autentificat NON-admin de platforma are
+   acces la exact O statie si nu a cerut explicit alta (`station_id` lipseste
+   din query), `GET /` face 302 direct catre URL-ul relativ `/?station_id=<statia lui>` (fara a reflecta headerul `Host`, comportament acoperit de un test de regresie cu un header `Host` controlat) --
+   clientul NU mai vede o pagina intermediara cu un selector cu o singura
+   optiune. Cu 0 statii, ramane empty state-ul explicativ existent
+   (`dashboard/no_station.html`, neschimbat). Cu 2+ statii, comportamentul
+   ramane identic celui dinainte (pagina de alegere / selector din navbar).
+2. **Administratorii de platforma sunt exclusi explicit din acest
+   auto-redirect.** `build_nav_context` le arata TOATE statiile din sistem
+   (nu doar ale lor) -- daca sistemul are, la un moment dat, o singura statie
+   inregistrata, asta nu inseamna ca admin-ul e "clientul cu o singura
+   statie" din issue; ar fi fost teleportat implicit intr-o statie oarecare,
+   posibil a altcuiva. Verificat explicit
+   (`test_platform_admin_not_auto_redirected_with_single_system_station`).
+3. **Selectorul multi-statie din navbar (`partials/_nav.html`) apare DOAR
+   cand exista mai mult de o statie.** Cu exact o statie, navbar-ul arata
+   numele ei ca text simplu (nimic de "selectat"); cu zero, nu arata nimic
+   in acel loc. Inainte de acest PR, dropdown-ul cu o singura optiune plus
+   placeholder-ul "Selecteaza statia..." aparea intotdeauna, indiferent de
+   numarul de statii.
+4. **"Cum se calculeaza?" (`<details>`/`<summary>`, fara JavaScript nou)**
+   adaugat pe cele mai opace 4 KPI-uri de pe dashboard, NU pe toate ~15
+   widget-urile: cost efectiv import, venit efectiv export (text static,
+   formula din `tariff_service.compute_effective_price_lei_per_kwh`, plus
+   link catre `/stations/{id}/tariffs`) si cele doua KPI-uri de beneficiu
+   (Beneficiu sistem PV/baterie, Beneficiu incremental EMS -- text static ce
+   descrie metodologia celor doua repere din `dashboard_service.get_estimated_savings`,
+   DISTINCT de nota dinamica `kpi-savings-note`/`kpi-ems-benefit-note` deja
+   populata de `dashboard.js` din raspunsul API existent (#13), care ramane
+   neschimbata). Nicio cifra de economie/recomandare noua nu a fost
+   inventata -- acest PR doar explica in cuvinte formulele deja calculate
+   de codul existent.
+
+**De ce nu un redirect si pentru RBAC/rolul de membership.** Testele acopera
+explicit viewer/organization_admin ajungand direct pe dashboard cu o singura
+statie (comportamentul de rutare nu depinde de rol) si un utilizator FARA
+niciun membership, care nu vede/atinge nicio statie a altei organizatii
+(`test_no_membership_user_not_redirected_into_unrelated_station`) -- izolarea
+RBAC insasi (`build_nav_context`, `StationAccess`) nu a fost modificata,
+doar exercitata de testele noi.
+
+**Empty state / freshness / calitate date -- deja acoperite, nu duplicate
+aici.** `#kpi-quality` (masurat/estimat/simulat/invechit/lipsa),
+`#sse-status` (conectare/live/stale/offline) si KPI-urile afisand "-" in loc
+de un zero fals cand lipsesc date sunt deja livrate de #13/#18/#50 si au
+ramas neschimbate -- verificat ca suita completa (413 teste, minus 1
+deselectat, nelegat) trece neschimbata dupa acest PR.
+
+**Ramas explicit in afara scopului (nu ascuns):**
+- Comparatie "mai mult/mai putin decat ieri/perioada comparabila" pentru
+  FIECARE KPI de pe pagina -- ar necesita o sursa de agregate istorice
+  comparabile per-metrica si o decizie explicita despre cand "insuficiente
+  date" trebuie sa opreasca orice verdict; niciun calcul de acest fel nu a
+  fost adaugat in acest PR.
+- Skeleton loader per widget si o revizuire completa a "layout shift"-ului
+  la incarcare -- graficele principale (`echarts`) si empty state-urile lor
+  (#33/#50) raman neschimbate; nu s-a adaugat un schelet vizual per card KPI.
+- O reorganizare completa a ierarhiei vizuale (grafice secundare "compacte,
+  progresive, ordonate dupa utilitatea clientului" intr-o zona avansata
+  distincta) -- ordinea si gruparea actuala a cardurilor din
+  `dashboard/station.html` nu a fost restructurata, doar cele 4 KPI-uri de
+  mai sus au primit disclosure-uri noi.
+- "Cum se calculeaza?" pe restul KPI-urilor (PV, consum, retea, SOC, putere
+  baterie, EV, automatizare, EFC) -- acestea sunt fie masuratori brute directe
+  (nu au o "formula" de explicat), fie deja documentate de sectiuni anterioare
+  din acest fisier; nu s-a adaugat disclosure pe ele in acest PR.
+- Un audit complet de accesibilitate (focus vizibil, ordine de tab, roluri
+  ARIA pe grafice) -- neatins in acest PR, in afara de faptul ca
+  `<details>`/`<summary>` sunt native, deci focusabile si utilizabile de
+  tastatura fara JavaScript suplimentar.
 ## 21. Meteo/PV versionat -- rasarit/apus reale si backtesting MAE/bias (issue #53)
 
 Issue #53 cere o re-arhitecturare ampla (evaluare formala de provider,

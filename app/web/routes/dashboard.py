@@ -6,22 +6,48 @@ import uuid
 from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, Query, Request
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.deps import StationAccess, get_current_user
 from app.core.audit import record_audit
-from app.core.rbac import can_export_data
+from app.core.rbac import can_export_data, can_manage_station_config
 from app.core.security import utcnow
 from app.database import get_db
+from app.models.organization import Membership
 from app.models.station import StationConfigVersion
 from app.models.user import User
-from app.services import dashboard_service
+from app.services import dashboard_service, station_service
 from app.web.context import build_nav_context
 from app.web.templating import templates
+from app.web.wizard import next_wizard_step, resume_url
 
 router = APIRouter()
+
+
+def _wizard_resume_url(db: Session, user: User, station) -> str | None:
+    """URL de reluare a wizard-ului de configurare (issue #41) pentru un
+    banner discret pe dashboard, NU un redirect fortat -- vizitarea normala a
+    dashboard-ului nu trebuie niciodata blocata sau deturnata, doar insotita
+    de o sugestie clara pentru cine chiar poate finaliza configurarea.
+    platform_admin e exclus deliberat: viziteaza frecvent statii ale altor
+    organizatii doar pentru supraveghere, nu pentru a le configura."""
+    if user.is_platform_admin:
+        return None
+    membership = db.scalar(
+        select(Membership).where(
+            Membership.user_id == user.id,
+            Membership.organization_id == station.organization_id,
+            Membership.is_active.is_(True),
+        )
+    )
+    if membership is None or not can_manage_station_config(membership.role):
+        return None
+    progress = station_service.setup_progress(db, station)
+    if next_wizard_step(progress) is None:
+        return None
+    return resume_url(db, station)
 
 
 @router.get("/")
@@ -32,6 +58,21 @@ def home(
     station_id: uuid.UUID | None = Query(default=None),
 ):
     nav = build_nav_context(db, user, station_id)
+
+    if station_id is None and not user.is_platform_admin and len(nav["nav_stations"]) == 1:
+        # "Dashboard client one station first" (issue #45): clientul care are
+        # acces la o singura statie nu trebuie sa mai treaca printr-un selector
+        # cu o singura optiune -- ajunge direct la dashboard-ul acelei statii.
+        # Excludem administratorii platformei: ei vad TOATE statiile din sistem
+        # (nu doar ale lor), asa ca "o singura statie in tot sistemul" nu
+        # inseamna "clientul are o singura statie" -- si un admin trebuie sa
+        # ajunga in continuare la selector/panoul de administrare, nu redirectat
+        # implicit catre o statie oarecare.
+        only_station_id = nav["nav_stations"][0]["id"]
+        # Location relativ: nu reflectam schema/host-ul controlabil din
+        # request intr-un redirect (Host-header/open-redirect).
+        return RedirectResponse(f"/?station_id={only_station_id}", status_code=302)
+
     if station_id is None or not nav["nav_stations"]:
         return templates.TemplateResponse(request, "dashboard/no_station.html", {**nav})
 
@@ -42,7 +83,12 @@ def home(
 
     station = db.get(Station, station_id)
     summary = dashboard_service.get_summary(db, station)
-    context = {"station": station, "summary": summary, **nav}
+    context = {
+        "station": station,
+        "summary": summary,
+        "wizard_resume_url": _wizard_resume_url(db, user, station),
+        **nav,
+    }
     return templates.TemplateResponse(request, "dashboard/station.html", context)
 
 

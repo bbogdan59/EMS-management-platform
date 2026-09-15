@@ -9,7 +9,9 @@
     {"label": station.name, "url": "/?station_id=" ~ station.id},
     {"label": "Dispozitive", "url": None},
   ]) }}
-  {% if onboarding %}
+  {% if wizard_step %}
+  {% include "partials/_wizard_progress.html" %}
+  {% elif onboarding %}
   <nav class="flex flex-wrap items-center gap-2 text-xs text-gray-500 dark:text-gray-400" aria-label="Pasii de configurare">
     <span class="badge-ok">1. Statie creata</span>
     <span>&rarr;</span>
@@ -42,7 +44,7 @@
     <p class="mb-3 text-sm text-gray-500 dark:text-gray-400">Conecteaza device-ul la alimentare si internet, apoi introdu (sau scaneaza) Device Code de pe eticheta sigilata ori serialul dispozitivului. Nu trebuie sa modifici nimic pe Raspberry Pi -- niciun cod de editat manual in filesystem/CLI.</p>
     <form method="post" action="/stations/{{ station.id }}/devices/activate" class="flex flex-wrap items-end gap-3">
       <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}" />
-      {% if onboarding %}<input type="hidden" name="onboarding" value="1" />{% endif %}
+      {% if wizard_step %}<input type="hidden" name="wizard" value="1" />{% elif onboarding %}<input type="hidden" name="onboarding" value="1" />{% endif %}
       <div>
         <label class="label">Device Code</label>
         <input class="input font-mono uppercase" name="activation_code" minlength="20" maxlength="64" autocomplete="one-time-code" inputmode="text" required />
@@ -103,6 +105,7 @@
     <p class="mb-3 text-sm text-gray-500 dark:text-gray-400">Codul temporar (15 minute, doar cunoastere = posesie) este pastrat momentan doar pentru simulatoare si dezvoltare -- vezi docs/LIMITATIONS.md. Unitatile noi folosesc Device Code sigilat de pe eticheta.</p>
     <form method="post" action="/stations/{{ station.id }}/claim-codes">
       <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}" />
+      {% if wizard_step %}<input type="hidden" name="wizard" value="1" />{% endif %}
       <button type="submit" class="btn-secondary">Genereaza cod nou (legacy)</button>
     </form>
   </div>

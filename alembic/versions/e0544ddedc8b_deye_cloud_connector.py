@@ -1,7 +1,7 @@
 """deye cloud connector
 
 Revision ID: e0544ddedc8b
-Revises: edc1804cd699
+Revises: 3ba1401941db
 Create Date: 2026-09-13T00:00:00.000000
 
 Issue #43: conector Deye Cloud read-only pentru clienti fara hardware EMS
@@ -17,7 +17,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "e0544ddedc8b"
-down_revision = "edc1804cd699"
+down_revision = "3ba1401941db"
 branch_labels = None
 depends_on = None
 

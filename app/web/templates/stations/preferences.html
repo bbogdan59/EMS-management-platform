@@ -12,6 +12,7 @@
     {"label": station.name, "url": "/?station_id=" ~ station.id},
     {"label": "Preferinte", "url": None},
   ]) }}
+  {% include "partials/_wizard_progress.html" %}
   <h1 class="text-xl font-semibold">Preferinte - {{ station.name }}</h1>
   {% if preference %}
   <p class="text-sm text-gray-500 dark:text-gray-400">Versiune curenta: v{{ preference.version }}</p>
@@ -36,6 +37,7 @@
     <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}" />
     <input type="hidden" name="expected_version" value="{{ expected_version }}" />
     <input type="hidden" name="soc_targets_json" id="soc_targets_json" />
+    {% if wizard_step %}<input type="hidden" name="wizard" value="1" />{% endif %}
 
     <fieldset class="rounded-lg border border-gray-200 p-3 dark:border-gray-800">
       <legend class="px-1 text-sm font-medium">Constrangeri obligatorii</legend>
