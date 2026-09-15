@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 
+from sqlalchemy import select
+
 from app.models.enums import ImportRunStatus
+from app.models.market import MarketPriceInterval
 from app.services import opcom_service
 from app.services.opcom_service import (
     OpcomFetchError,
@@ -36,6 +39,33 @@ def test_import_falls_back_to_synthetic_when_source_unreachable(db, monkeypatch)
     assert run.status == ImportRunStatus.succeeded.value
     assert run.is_synthetic_fixture is True
     assert run.interval_count in (92, 96, 100)
+
+
+def test_synthetic_fallback_does_not_replace_existing_real_current_import(db, monkeypatch):
+    def _always_unreachable(url):
+        raise OpcomFetchError("simulat indisponibil pentru test")
+
+    monkeypatch.setattr(opcom_service, "_fetch_raw", _always_unreachable)
+
+    d = date.today()
+    real_run = make_market_day(db, d, [321.0], is_synthetic=False)
+    fallback_run = import_opcom_day(db, d)
+
+    assert fallback_run.status == ImportRunStatus.failed.value
+    assert fallback_run.is_synthetic_fixture is True
+    assert fallback_run.interval_count is None
+    assert "NU a fost importat" in (fallback_run.error_message or "")
+
+    current_intervals = db.scalars(
+        select(MarketPriceInterval).where(
+            MarketPriceInterval.delivery_date == d,
+            MarketPriceInterval.is_current.is_(True),
+        )
+    ).all()
+    assert {interval.revision for interval in current_intervals} == {real_run.revision}
+    assert {interval.price_lei_per_mwh for interval in current_intervals} == {
+        real_run.intervals[0].price_lei_per_mwh
+    }
 
 
 def test_import_idempotent_revisions(db):
