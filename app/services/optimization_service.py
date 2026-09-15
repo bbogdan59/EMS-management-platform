@@ -152,16 +152,21 @@ def _build_load_series(db: Session, station_id: uuid.UUID, horizon: list[datetim
     return {t: by_start.get(t) for t in horizon}
 
 
-def _fill_gaps(series: dict[datetime, float | None], fallback: float) -> dict[datetime, float]:
+def _fill_forecast_gaps(
+    series: dict[datetime, float | None], fallback: float
+) -> tuple[dict[datetime, float], dict[datetime, str]]:
     out = {}
+    quality = {}
     last = None
     for t, v in series.items():
         if v is not None:
             last = v
             out[t] = v
+            quality[t] = "real"
         else:
             out[t] = last if last is not None else fallback
-    return out
+            quality[t] = "estimated"
+    return out, quality
 
 
 def _fill_price_gaps(prices: dict[datetime, float | None]) -> tuple[dict[datetime, float], dict[datetime, str]]:
@@ -344,8 +349,10 @@ def _run_locked(db: Session, station_id: uuid.UUID, triggered_by: str, triggered
     if not any(v is not None for v in pv_series_raw.values()) and not any(v is not None for v in load_series_raw.values()):
         return _fallback(db, run, station, horizon, interval_minutes, "Prognoze PV si de consum indisponibile pentru orizontul cerut.")
 
-    pv_series = _fill_gaps(pv_series_raw, fallback=0.0)
-    load_series = _fill_gaps(load_series_raw, fallback=max([v for v in load_series_raw.values() if v], default=0.5))
+    pv_series, pv_forecast_quality = _fill_forecast_gaps(pv_series_raw, fallback=0.0)
+    load_series, load_forecast_quality = _fill_forecast_gaps(
+        load_series_raw, fallback=max([v for v in load_series_raw.values() if v], default=0.5)
+    )
 
     price_buy_raw, price_sell_raw = {}, {}
     for t in horizon:
@@ -451,8 +458,10 @@ def _run_locked(db: Session, station_id: uuid.UUID, triggered_by: str, triggered
         },
         "pv_forecast_raw_kw": {t.isoformat(): v for t, v in pv_series_raw.items()},
         "pv_forecast_kw": {t.isoformat(): v for t, v in pv_series.items()},
+        "pv_forecast_quality": {t.isoformat(): q for t, q in pv_forecast_quality.items()},
         "load_forecast_raw_kw": {t.isoformat(): v for t, v in load_series_raw.items()},
         "load_forecast_kw": {t.isoformat(): v for t, v in load_series.items()},
+        "load_forecast_quality": {t.isoformat(): q for t, q in load_forecast_quality.items()},
         "price_buy_lei_kwh": {t.isoformat(): v for t, v in price_buy.items()},
         "price_buy_quality": {t.isoformat(): q for t, q in price_buy_quality.items()},
         "price_sell_lei_kwh": {t.isoformat(): v for t, v in price_sell.items()},
@@ -462,10 +471,21 @@ def _run_locked(db: Session, station_id: uuid.UUID, triggered_by: str, triggered
     }
 
     shadow_downgrade_reason = None
+    forecast_estimated_count = sum(1 for q in pv_forecast_quality.values() if q == "estimated") + sum(
+        1 for q in load_forecast_quality.values() if q == "estimated"
+    )
     if station.execution_mode == ExecutionMode.live.value and price_estimated_count > 0:
         shadow_downgrade_reason = (
             f"{price_estimated_count} din {len(horizon)} intervale de pret import sunt estimate "
             "(fara sursa reala/nesintetica) -- planul ramane shadow pana la date reale."
+        )
+    if station.execution_mode == ExecutionMode.live.value and forecast_estimated_count > 0:
+        forecast_reason = (
+            f"{forecast_estimated_count} valori de prognoza PV/consum sunt estimate "
+            "(completate din fallback sau ultimul interval cunoscut) -- planul ramane shadow pana la prognoze complete."
+        )
+        shadow_downgrade_reason = (
+            f"{shadow_downgrade_reason} {forecast_reason}" if shadow_downgrade_reason else forecast_reason
         )
 
     run.explanation_summary = (

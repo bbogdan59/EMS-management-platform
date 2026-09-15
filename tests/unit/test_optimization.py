@@ -13,7 +13,11 @@ from app.models.optimization import Plan, PlanInterval
 from app.models.preference import PreferenceVersion
 from app.models.tariff import Tariff, TariffVersion
 from app.models.telemetry import TelemetryAggregate, TelemetryRaw
-from app.services.optimization_service import OptimizationLockedError, run_optimization_for_station
+from app.services.optimization_service import (
+    OptimizationLockedError,
+    _fill_forecast_gaps,
+    run_optimization_for_station,
+)
 from tests.factories import make_device, make_market_day, make_org, make_station, make_user
 
 
@@ -264,6 +268,52 @@ def test_stale_soc_blocks_live_plan_but_not_shadow(db):
     assert "soc" in run_live.fallback_reason.lower() or "SOC" in run_live.fallback_reason
 
 
+def test_forecast_gap_fill_marks_estimated_values():
+    start = datetime(2026, 1, 1, tzinfo=UTC)
+    series = {
+        start: None,
+        start + timedelta(minutes=15): 1.5,
+        start + timedelta(minutes=30): None,
+    }
+
+    values, quality = _fill_forecast_gaps(series, fallback=0.5)
+
+    assert values == {
+        start: 0.5,
+        start + timedelta(minutes=15): 1.5,
+        start + timedelta(minutes=30): 1.5,
+    }
+    assert quality == {
+        start: "estimated",
+        start + timedelta(minutes=15): "real",
+        start + timedelta(minutes=30): "estimated",
+    }
+
+
+def test_incomplete_forecasts_downgrade_live_plan_to_shadow(db):
+    from freezegun import freeze_time
+
+    with freeze_time("2026-03-10 08:00:00"):
+        user = make_user(db, email="opt-forecast-quality@test.local")
+        org = make_org(db, "Opt Forecast Quality Org")
+        station = make_station(db, org, user, name="Opt Forecast Quality Station")
+        station.execution_mode = ExecutionMode.live.value
+        db.add(station)
+        _add_tariffs(db, station)
+        _add_forecasts(db, station, hours=1)
+        _add_soc(db, station, age_minutes=1)
+        db.commit()
+
+        run = run_optimization_for_station(db, station.id, triggered_by="user")
+
+        assert run.is_fallback is False
+        assert "estimated" in run.input_snapshot["pv_forecast_quality"].values()
+        assert "estimated" in run.input_snapshot["load_forecast_quality"].values()
+        plan = db.scalar(select(Plan).where(Plan.optimization_run_id == run.id))
+        assert plan.execution_mode == ExecutionMode.shadow.value
+        assert "prognoza" in run.explanation_summary.lower()
+
+
 def test_missing_soc_blocks_live_plan(db):
     user = make_user(db, email="opt-soc-missing@test.local")
     org = make_org(db, "Opt SOC Missing Org")
@@ -408,6 +458,8 @@ def test_input_snapshot_is_sufficient_for_replay(db):
     assert snap["preference"]["id"] == str(run.preference_version_id)
     assert set(snap["pv_forecast_raw_kw"]) == set(snap["pv_forecast_kw"])
     assert set(snap["load_forecast_raw_kw"]) == set(snap["load_forecast_kw"])
+    assert set(snap["pv_forecast_raw_kw"]) == set(snap["pv_forecast_quality"])
+    assert set(snap["load_forecast_raw_kw"]) == set(snap["load_forecast_quality"])
     assert set(snap["price_buy_lei_kwh"].keys()) == set(snap["price_buy_quality"].keys())
     # Fiecare cheie de orizont e reproductibila ca timestamp UTC explicit.
     for key in list(snap["pv_forecast_kw"])[:3]:
