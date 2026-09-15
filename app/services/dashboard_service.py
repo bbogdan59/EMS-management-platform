@@ -20,6 +20,7 @@ from app.models.telemetry import TelemetryAggregate, TelemetryRaw
 from app.services import chart_aggregation, tariff_service
 
 STALE_AFTER = timedelta(minutes=10)
+ENERGY_KPI_COVERAGE_PARTIAL_BELOW = 0.9
 
 
 def _station_tz(station: Station) -> ZoneInfo:
@@ -542,6 +543,72 @@ def get_energy_totals(db: Session, station: Station, granularity: str, periods: 
         }
         for r in rows
     ]
+
+
+def _period_start_utc(station: Station, period: str, now: datetime) -> datetime:
+    tz = _station_tz(station)
+    local_now = now.astimezone(tz)
+    if period == "today":
+        start_local = datetime(local_now.year, local_now.month, local_now.day, tzinfo=tz)
+    elif period == "month":
+        start_local = datetime(local_now.year, local_now.month, 1, tzinfo=tz)
+    else:
+        raise ValueError(f"Unsupported dashboard KPI period: {period}")
+    return start_local.astimezone(UTC)
+
+
+def _energy_kpi_value(row: TelemetryAggregate | None, field: str, coverage_key: str) -> dict:
+    if row is None:
+        return {"value": None, "coverage": 0.0, "quality": "missing"}
+    value = getattr(row, field)
+    coverage = float((row.coverage or {}).get(coverage_key, 0) or 0)
+    if value is None:
+        return {"value": None, "coverage": coverage, "quality": "missing"}
+    quality = "partial" if coverage < ENERGY_KPI_COVERAGE_PARTIAL_BELOW else row.data_quality
+    return {"value": float(value), "coverage": round(coverage, 4), "quality": quality}
+
+
+def get_energy_period_kpis(db: Session, station: Station) -> dict:
+    """KPI-uri client pentru ziua/luna curenta (issue #45).
+
+    Agregatele sunt cautate dupa inceputul perioadei in calendarul statiei.
+    Valoarea ramane `null` cand randul sau metrica lipseste: lipsa de date nu
+    devine niciodata zero, iar acoperirea ramane atasata fiecarei metrici.
+    """
+    now = utcnow()
+    periods = {
+        "today": ("day", _period_start_utc(station, "today", now)),
+        "month": ("month", _period_start_utc(station, "month", now)),
+    }
+    rows = {
+        name: db.scalar(
+            select(TelemetryAggregate).where(
+                TelemetryAggregate.station_id == station.id,
+                TelemetryAggregate.period_type == period_type,
+                TelemetryAggregate.period_start == period_start,
+            )
+        )
+        for name, (period_type, period_start) in periods.items()
+    }
+    metric_fields = {
+        "pv": ("pv_energy_kwh", "pv"),
+        "load": ("load_energy_kwh", "load"),
+        "grid_import": ("grid_import_energy_kwh", "grid"),
+        "grid_export": ("grid_export_energy_kwh", "grid"),
+        "battery_charge": ("battery_charge_energy_kwh", "battery"),
+        "battery_discharge": ("battery_discharge_energy_kwh", "battery"),
+    }
+    return {
+        name: {
+            "period_start": period_start.isoformat(),
+            "period_type": period_type,
+            "metrics": {
+                metric: _energy_kpi_value(rows[name], field, coverage_key)
+                for metric, (field, coverage_key) in metric_fields.items()
+            },
+        }
+        for name, (period_type, period_start) in periods.items()
+    }
 
 
 def get_heatmap(db: Session, station: Station, weeks: int = 8) -> list[dict]:
