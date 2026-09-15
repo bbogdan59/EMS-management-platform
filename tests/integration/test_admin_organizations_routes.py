@@ -41,6 +41,8 @@ def test_admin_organizations_detail_requires_platform_admin(client, db):
     resp = client.get(f"/admin/organizations/{org.id}")
     assert resp.status_code == 200
     assert "Org Routes Co" in resp.text
+    assert f'href="/organizations/{org.id}/setup/station"' in resp.text
+    assert "Adauga statie" in resp.text
 
 
 def test_suspend_reactivate_archive_restore_flow(client, db):

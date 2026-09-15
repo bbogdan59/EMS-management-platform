@@ -16,7 +16,14 @@
 
   <div class="grid gap-6 lg:grid-cols-2">
     <div class="card">
-      <h2 class="mb-3 font-medium">Statii</h2>
+      <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <h2 class="font-medium">Statii</h2>
+        {% if can_manage %}
+        <a href="/organizations/{{ organization.id }}/setup/station" class="btn-primary !px-3 !py-1 text-sm">
+          {{ "Adauga statie" if stations else "Configureaza prima statie" }}
+        </a>
+        {% endif %}
+      </div>
       <ul class="divide-y divide-gray-100 dark:divide-gray-800">
         {% for s in stations %}
         <li class="flex items-center justify-between py-2">
@@ -27,10 +34,6 @@
         <li class="py-2 text-sm text-gray-500">Nicio statie inca.</li>
         {% endfor %}
       </ul>
-
-      {% if can_manage and not stations %}
-      <a href="/organizations/{{ organization.id }}/setup/station" class="btn-primary mt-4 inline-block">Configureaza prima statie (asistent ghidat)</a>
-      {% endif %}
 
       {% if can_manage %}
       <details class="mt-4">
