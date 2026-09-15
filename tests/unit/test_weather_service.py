@@ -54,6 +54,22 @@ class _FakeClient:
         return _Response(self.payload, self.error)
 
 
+class _SequencedClient:
+    def __init__(self, calls: list[dict], responses: list[_Response]) -> None:
+        self.calls = calls
+        self.responses = responses
+
+    def __enter__(self) -> _SequencedClient:
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        return None
+
+    def get(self, url: str, params: dict) -> _Response:
+        self.calls.append({"url": url, "params": params})
+        return self.responses.pop(0)
+
+
 class _FakeDb:
     def __init__(self) -> None:
         self.rows = []
@@ -121,6 +137,8 @@ def test_fetch_forecast_raw_delegates_to_named_provider(monkeypatch):
     assert out == {"ok": True}
     assert provider.requests[0].latitude == 45.0
     assert provider.requests[0].longitude == 25.0
+    assert provider.requests[0].max_retries == weather_service.settings.weather_max_retries
+    assert provider.requests[0].retry_backoff_seconds == weather_service.settings.weather_retry_backoff_seconds
 
 
 def test_unknown_weather_provider_fails_without_silent_fallback():
@@ -154,6 +172,34 @@ def test_open_meteo_provider_wraps_http_errors(monkeypatch):
     assert calls
 
 
+def test_open_meteo_provider_retries_before_failing_and_caches_success(monkeypatch):
+    redis = _MemoryRedis()
+    calls: list[dict] = []
+    sleeps: list[float] = []
+    payload = {"hourly": {"time": ["2026-01-01T00:00"]}, "generationtime_ms": 1.1}
+    responses = [_Response({}, httpx.ConnectError("temporary offline")), _Response(payload)]
+
+    monkeypatch.setattr(weather_service, "get_redis", lambda: redis)
+    monkeypatch.setattr(weather_service.time, "sleep", lambda seconds: sleeps.append(seconds))
+    monkeypatch.setattr(weather_service.httpx, "Client", lambda timeout: _SequencedClient(calls, responses))
+
+    provider = OpenMeteoWeatherProvider()
+    request = WeatherProviderRequest(
+        latitude=44.0,
+        longitude=26.0,
+        base_url="https://weather.example.test/forecast",
+        timeout_seconds=7,
+        cache_ttl_minutes=15,
+        max_retries=2,
+        retry_backoff_seconds=0.1,
+    )
+
+    assert provider.fetch_raw(request) == payload
+    assert provider.fetch_raw(request) == payload
+    assert len(calls) == 2
+    assert sleeps == [0.1]
+
+
 def test_store_weather_forecast_preserves_precipitation_and_unknowns():
     db = _FakeDb()
     raw = {
@@ -168,6 +214,9 @@ def test_store_weather_forecast_preserves_precipitation_and_unknowns():
             "precipitation": [0.4, None],
             "wind_speed_10m": [3.0, 3.5],
         },
+        "as_of": "2026-01-01T00:00:00Z",
+        "model": "open-meteo-gfs-romania",
+        "provider": "open-meteo",
     }
 
     rows = weather_service.store_weather_forecast(db, _Station(), raw)
@@ -176,3 +225,46 @@ def test_store_weather_forecast_preserves_precipitation_and_unknowns():
     assert rows == db.rows
     assert rows[0].precipitation_mm == 0.4
     assert rows[1].precipitation_mm is None
+    assert rows[0].source == "open-meteo"
+    assert rows[0].source_version.startswith("open-meteo-gfs-romania;asof=20260101T000000Z"[:40])
+    assert rows[0].confidence == "nominal"
+    assert rows[0].is_synthetic is False
+
+
+def test_store_weather_forecast_marks_incomplete_payload_low_confidence_without_zero_fill():
+    db = _FakeDb()
+    raw = {
+        "provider": "weather-test",
+        "quality": "high",
+        "is_synthetic": True,
+        "hourly": {
+            "time": ["2026-01-01T00:00", "2026-01-01T01:00"],
+            "shortwave_radiation": [None, None],
+            "cloud_cover": [80, 70],
+            # temperature_2m missing: payload is incomplete and must degrade
+        },
+    }
+
+    rows = weather_service.store_weather_forecast(db, _Station(), raw)
+
+    assert rows[0].ghi_w_m2 is None
+    assert rows[1].temperature_c is None
+    assert rows[0].confidence == "low"
+    assert rows[0].is_synthetic is True
+
+
+def test_weather_confidence_degrades_when_required_series_are_missing():
+    db = _FakeDb()
+    raw = {
+        "hourly": {
+            "time": ["2026-01-01T00:00"],
+            "shortwave_radiation": [100],
+            "cloud_cover": [20],
+            # temperature_2m missing -> low confidence, but no invented value
+        },
+    }
+
+    rows = weather_service.store_weather_forecast(db, _Station(), raw)
+
+    assert rows[0].temperature_c is None
+    assert rows[0].confidence == "low"

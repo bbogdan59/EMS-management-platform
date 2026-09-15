@@ -6,6 +6,7 @@ inventeaza date -- prognozele lipsesc explicit din UI/optimizator)."""
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Protocol
@@ -29,6 +30,9 @@ class WeatherUnavailableError(Exception):
 
 
 HOURLY_VARS = "shortwave_radiation,direct_normal_irradiance,diffuse_radiation,cloud_cover,temperature_2m,precipitation,wind_speed_10m"
+REQUIRED_HOURLY_SERIES = ("time", "shortwave_radiation", "cloud_cover", "temperature_2m")
+OPTIONAL_HOURLY_SERIES = ("direct_normal_irradiance", "diffuse_radiation", "precipitation", "wind_speed_10m")
+ALLOWED_CONFIDENCE = {"nominal", "low", "high"}
 
 
 @dataclass(frozen=True)
@@ -38,6 +42,8 @@ class WeatherProviderRequest:
     base_url: str
     timeout_seconds: float
     cache_ttl_minutes: int
+    max_retries: int = 3
+    retry_backoff_seconds: float = 0.2
 
 
 class WeatherProvider(Protocol):
@@ -64,14 +70,23 @@ class OpenMeteoWeatherProvider:
             "timezone": "UTC",
             "forecast_days": 3,
         }
-        try:
-            with httpx.Client(timeout=request.timeout_seconds) as client:
-                resp = client.get(request.base_url, params=params)
-                resp.raise_for_status()
-                data = resp.json()
-        except httpx.HTTPError as exc:
-            logger.warning("weather.fetch_failed", provider=self.name, error=str(exc))
-            raise WeatherUnavailableError(f"Sursa meteo ({self.name}) indisponibila: {exc}") from exc
+        max_retries = max(1, request.max_retries)
+        last_error: httpx.HTTPError | None = None
+        for attempt in range(1, max_retries + 1):
+            try:
+                with httpx.Client(timeout=request.timeout_seconds) as client:
+                    resp = client.get(request.base_url, params=params)
+                    resp.raise_for_status()
+                    data = resp.json()
+                    break
+            except httpx.HTTPError as exc:
+                last_error = exc
+                logger.warning("weather.fetch_failed", provider=self.name, attempt=attempt, max_retries=max_retries, error=str(exc))
+                if attempt < max_retries:
+                    time.sleep(request.retry_backoff_seconds * (2 ** (attempt - 1)))
+        else:
+            assert last_error is not None
+            raise WeatherUnavailableError(f"Sursa meteo ({self.name}) indisponibila: {last_error}") from last_error
 
         cache.setex(key, request.cache_ttl_minutes * 60, json.dumps(data))
         return data
@@ -102,12 +117,54 @@ def fetch_forecast_raw(latitude: float, longitude: float, provider_name: str | N
         base_url=settings.weather_base_url,
         timeout_seconds=settings.weather_request_timeout_seconds,
         cache_ttl_minutes=settings.weather_cache_ttl_minutes,
+        max_retries=settings.weather_max_retries,
+        retry_backoff_seconds=settings.weather_retry_backoff_seconds,
     )
     return provider.fetch_raw(request)
 
 
+def _format_as_of(value, issued_at: datetime) -> str:
+    if isinstance(value, str) and value:
+        return value.replace("-", "").replace(":", "")[:16]
+    return issued_at.strftime("%Y%m%dT%H%MZ")
+
+
+def _source_version(raw: dict, issued_at: datetime) -> str:
+    model = str(raw.get("model") or raw.get("model_id") or raw.get("source_model") or "forecast_api")
+    generation = raw.get("generationtime_ms")
+    as_of = _format_as_of(raw.get("as_of") or raw.get("issued_at") or raw.get("generation_time"), issued_at)
+    parts = [model[:24], f"asof={as_of}"]
+    if generation is not None:
+        parts.append(f"gen_ms={generation}")
+    return ";".join(parts)[:64]
+
+
+def _infer_confidence(raw: dict) -> str:
+    declared = raw.get("quality") or raw.get("confidence")
+
+    hourly = raw.get("hourly", {})
+    times = hourly.get("time") or []
+    if not times:
+        return "low"
+    expected_len = len(times)
+    for key in REQUIRED_HOURLY_SERIES:
+        values = hourly.get(key)
+        if not isinstance(values, list) or len(values) != expected_len:
+            return "low"
+        if key != "time" and all(v is None for v in values):
+            return "low"
+    for key in OPTIONAL_HOURLY_SERIES:
+        values = hourly.get(key)
+        if values is not None and len(values) != expected_len:
+            return "low"
+    return declared if declared in ALLOWED_CONFIDENCE else "nominal"
+
+
 def store_weather_forecast(db: Session, station: Station, raw: dict) -> list[WeatherForecast]:
     issued_at = utcnow()
+    confidence = _infer_confidence(raw)
+    source_version = _source_version(raw, issued_at)
+    is_synthetic = bool(raw.get("is_synthetic"))
     hourly = raw.get("hourly", {})
     times = hourly.get("time", [])
     ghi = hourly.get("shortwave_radiation", [])
@@ -126,8 +183,8 @@ def store_weather_forecast(db: Session, station: Station, raw: dict) -> list[Wea
             issued_at=issued_at,
             interval_start=interval_start,
             interval_end=interval_start + timedelta(hours=1),
-            source=settings.weather_provider,
-            source_version=raw.get("generationtime_ms") and f"gen_ms={raw['generationtime_ms']}",
+            source=str(raw.get("provider") or settings.weather_provider),
+            source_version=source_version,
             ghi_w_m2=_safe_get(ghi, i),
             dni_w_m2=_safe_get(dni, i),
             dhi_w_m2=_safe_get(dhi, i),
@@ -135,6 +192,8 @@ def store_weather_forecast(db: Session, station: Station, raw: dict) -> list[Wea
             temperature_c=_safe_get(temp, i),
             precipitation_mm=_safe_get(precipitation, i),
             wind_speed_ms=_safe_get(wind, i),
+            confidence=confidence,
+            is_synthetic=is_synthetic,
         )
         db.add(wf)
         created.append(wf)
