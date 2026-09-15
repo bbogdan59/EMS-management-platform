@@ -37,11 +37,85 @@ def test_device_claim_and_telemetry_dedup(client, db):
     }
     resp1 = client.post("/api/v1/telemetry/batch", json={"items": [item]}, headers=auth_header)
     assert resp1.status_code == 200
-    assert resp1.json() == {"accepted": 1, "duplicates": 0, "rejected": 0, "errors": []}
+    assert resp1.json() == {
+        "accepted": 1,
+        "duplicates": 0,
+        "rejected": 0,
+        "errors": [],
+        "results": [{
+            "boot_id": "boot-1",
+            "sequence": 1,
+            "status": "accepted",
+            "retryable": False,
+            "reason_code": None,
+        }],
+    }
 
     resp2 = client.post("/api/v1/telemetry/batch", json={"items": [item]}, headers=auth_header)
     assert resp2.json()["accepted"] == 0
     assert resp2.json()["duplicates"] == 1
+    assert resp2.json()["results"][0]["status"] == "duplicate"
+
+
+def test_telemetry_batch_returns_ordered_per_item_ack_with_retryability(client, db):
+    user = make_user(db, email="dev-ack@test.local", password="Password1234")
+    org = make_org(db, "Device ACK Org")
+    station = make_station(db, org, user, name="Device ACK Station")
+    db.commit()
+    raw_code = _claim_code(db, station, user)
+    claimed = client.post(
+        "/api/v1/devices/claim",
+        json={"claim_code": raw_code, "device_name": "ACK Device", "hardware_info": {}},
+    ).json()
+    headers = {"Authorization": f"Bearer {claimed['device_id']}.{claimed['credential_secret']}"}
+    now = utcnow().replace(microsecond=0)
+
+    existing = {"boot_id": "ack-boot", "sequence": 1, "measured_at": now.isoformat()}
+    assert client.post("/api/v1/telemetry/batch", json={"items": [existing]}, headers=headers).status_code == 200
+
+    response = client.post(
+        "/api/v1/telemetry/batch",
+        json={"items": [
+            existing,
+            {"boot_id": "ack-boot", "sequence": 2, "measured_at": now.isoformat()},
+            {"boot_id": "ack-boot", "sequence": 3, "measured_at": (now - timedelta(days=401)).isoformat()},
+            {"boot_id": "ack-boot", "sequence": 4, "measured_at": (now + timedelta(minutes=6)).isoformat()},
+        ]},
+        headers=headers,
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert (body["accepted"], body["duplicates"], body["rejected"]) == (1, 1, 2)
+    assert [item["status"] for item in body["results"]] == [
+        "duplicate", "accepted", "rejected", "rejected"
+    ]
+    assert body["results"][2]["reason_code"] == "timestamp_too_old"
+    assert body["results"][2]["retryable"] is False
+    assert body["results"][3]["reason_code"] == "future_timestamp"
+    assert body["results"][3]["retryable"] is True
+    assert len(body["errors"]) == 2  # camp legacy pastrat pentru clientii v1
+
+
+def test_duplicate_keys_inside_one_batch_get_one_accepted_and_one_duplicate(client, db):
+    user = make_user(db, email="dev-in-batch-dup@test.local", password="Password1234")
+    org = make_org(db, "Device In-batch Duplicate Org")
+    station = make_station(db, org, user, name="Device In-batch Duplicate Station")
+    db.commit()
+    raw_code = _claim_code(db, station, user)
+    claimed = client.post(
+        "/api/v1/devices/claim",
+        json={"claim_code": raw_code, "device_name": "Duplicate Device", "hardware_info": {}},
+    ).json()
+    headers = {"Authorization": f"Bearer {claimed['device_id']}.{claimed['credential_secret']}"}
+    item = {"boot_id": "same-batch", "sequence": 9, "measured_at": utcnow().isoformat()}
+
+    response = client.post(
+        "/api/v1/telemetry/batch", json={"items": [item, item]}, headers=headers
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert (body["accepted"], body["duplicates"], body["rejected"]) == (1, 1, 0)
+    assert [result["status"] for result in body["results"]] == ["accepted", "duplicate"]
 
 
 def test_claim_code_cannot_be_reused(client, db):

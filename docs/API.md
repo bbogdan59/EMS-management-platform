@@ -256,8 +256,32 @@ POST /api/v1/telemetry/batch
 Raspuns:
 
 ```json
-{ "accepted": 1, "duplicates": 0, "rejected": 0, "errors": [] }
+{
+  "accepted": 1,
+  "duplicates": 0,
+  "rejected": 0,
+  "errors": [],
+  "results": [
+    {
+      "boot_id": "boot-2026-09-10T08:00:00Z",
+      "sequence": 42,
+      "status": "accepted",
+      "retryable": false,
+      "reason_code": null
+    }
+  ]
+}
 ```
+
+`results` este in aceeasi ordine ca `items` si permite ACK selectiv. Starile
+sunt `accepted`, `duplicate` (ambele pot fi eliminate sigur din outbox) si
+`rejected`. Pentru un item respins, `retryable=true` inseamna ca acelasi item
+poate deveni acceptabil ulterior (de exemplu ceasul device-ului este temporar
+in viitor); `retryable=false` il trimite in dead-letter pentru inspectie, nu il
+sterge silentios. Campurile agregate si `errors` raman pentru clientii v1.
+Validarea structurala Pydantic a anvelopei ramane atomica: un payload invalid
+care nu poate fi identificat sigur prin `boot_id`/`sequence` primeste HTTP 422
+pentru intregul request.
 
 ## 5. Configuratie curenta
 
