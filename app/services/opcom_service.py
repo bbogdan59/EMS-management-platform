@@ -15,10 +15,10 @@ inaccesibila sau schema nu se potriveste dupa toate reincercarile, se
 foloseste (optional doar in dezvoltare/test, implicit dezactivat) un
 fallback cu date sintetice, marcate clar ca atare in ImportRun si in UI.
 
-Rezolutia intervalelor NU e fixa la 15 minute: parametrul `resolution=15`
-din URL e doar o preferinta ceruta, dar OPCOM publica anii istorici la
+Rezolutia intervalelor NU e fixa la 15 minute: parametrul `resolution` din
+URL este ales dupa vechimea zilei cerute, iar OPCOM publica anii istorici la
 rezolutie ORARA (PT60M, 24 intervale/zi) si alterneaza intre PT30M/PT15M
-pentru anul curent, indiferent de parametrul cerut in URL -- `parse_csv`
+pentru anul curent. In toate cazurile, `parse_csv`
 citeste rezolutia REALA din coloana "Rezolutie" a CSV-ului (cand exista) si
 valideaza numarul de intervale fata de aceasta, nu fata de o valoare fixa.
 """
@@ -63,8 +63,19 @@ class OpcomParseError(OpcomError):
     pass
 
 
-def build_source_url(delivery_date: date) -> str:
-    return f"{settings.opcom_base_url}/{delivery_date:%d}/{delivery_date:%m}/{delivery_date:%Y}/ro?resolution=15"
+HISTORICAL_HOURLY_AFTER_DAYS = 365
+
+
+def _preferred_resolution_minutes(delivery_date: date, today_local: date | None = None) -> int:
+    today = today_local or datetime.now(BUCHAREST).date()
+    if delivery_date < today - timedelta(days=HISTORICAL_HOURLY_AFTER_DAYS):
+        return 60
+    return 15
+
+
+def build_source_url(delivery_date: date, today_local: date | None = None) -> str:
+    resolution = _preferred_resolution_minutes(delivery_date, today_local=today_local)
+    return f"{settings.opcom_base_url}/{delivery_date:%d}/{delivery_date:%m}/{delivery_date:%Y}/ro?resolution={resolution}"
 
 
 def _decode(raw: bytes, schema: OpcomCsvSchema) -> str:
@@ -81,6 +92,7 @@ DEFAULT_RESOLUTION_MINUTES = 15
 # anul curent alterneaza intre PT30M si PT15M. Orice alta valoare e respinsa
 # explicit, in loc sa fie interpretata tacit gresit.
 _ISO8601_DURATION_MINUTES = {"PT15M": 15, "PT30M": 30, "PT60M": 60, "PT1H": 60}
+SUPPORTED_RESOLUTION_MINUTES = tuple(sorted(set(_ISO8601_DURATION_MINUTES.values())))
 
 
 def _resolution_minutes(raw: str) -> int:
@@ -92,6 +104,18 @@ def _resolution_minutes(raw: str) -> int:
             f"(acceptate: {', '.join(sorted(_ISO8601_DURATION_MINUTES))})."
         )
     return minutes
+
+
+def _infer_resolution_minutes(delivery_date: date, interval_count: int) -> int:
+    start_local = datetime.combine(delivery_date, datetime.min.time(), tzinfo=BUCHAREST)
+    next_local = datetime.combine(delivery_date + timedelta(days=1), datetime.min.time(), tzinfo=BUCHAREST)
+    day_seconds = (next_local.astimezone(UTC) - start_local.astimezone(UTC)).total_seconds()
+    matches = [
+        minutes
+        for minutes in SUPPORTED_RESOLUTION_MINUTES
+        if interval_count == int(day_seconds / (minutes * 60))
+    ]
+    return matches[0] if len(matches) == 1 else DEFAULT_RESOLUTION_MINUTES
 
 
 def _parse_price(value: str) -> Decimal:
@@ -230,9 +254,10 @@ def parse_csv(raw_text: str, delivery_date: date, schema: OpcomCsvSchema = DEFAU
             f"CSV OPCOM contine rezolutii diferite pentru aceeasi zi de livrare: "
             f"{sorted(resolutions_seen)} minute -- asteptata o singura rezolutie uniforma."
         )
-    # Coloana de rezolutie e absenta in CSV-urile simple (teste/fixture-uri sintetice):
-    # pastreaza comportamentul de dinainte, implicit 15 minute.
-    resolution_minutes = resolutions_seen.pop() if resolutions_seen else DEFAULT_RESOLUTION_MINUTES
+    # Coloana de rezolutie e absenta in CSV-urile simple (teste/fixture-uri
+    # sintetice). Cand numarul de randuri indica neambiguu 60/30/15 minute,
+    # folosim acea rezolutie; altfel pastram fallback-ul istoric de 15 minute.
+    resolution_minutes = resolutions_seen.pop() if resolutions_seen else _infer_resolution_minutes(delivery_date, len(parsed))
 
     count = len(parsed)
     start_local = datetime.combine(delivery_date, datetime.min.time(), tzinfo=BUCHAREST)

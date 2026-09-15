@@ -77,6 +77,19 @@ def test_wizard_station_entry_page_renders_for_org_admin(client, db):
     assert "Rezumat" in resp.text  # toti pasii wizard-ului apar in progres
 
 
+def test_organization_detail_links_to_add_station_even_when_stations_exist(client, db):
+    org, admin = _setup(db)
+    make_station(db, org, admin, name="Existing Station")
+    db.commit()
+    login(client, admin.email, "Password1234")
+
+    resp = client.get(f"/organizations/{org.id}")
+
+    assert resp.status_code == 200
+    assert f'href="/organizations/{org.id}/setup/station"' in resp.text
+    assert "Adauga statie" in resp.text
+
+
 def test_wizard_station_entry_page_forbidden_for_other_org(client, db):
     org1, _admin1 = _setup(db, suffix="1")
     _org2, admin2 = _setup(db, role="viewer", suffix="2")

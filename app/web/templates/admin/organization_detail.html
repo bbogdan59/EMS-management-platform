@@ -171,7 +171,12 @@
 
   <!-- Statii -->
   <div class="card">
-    <h2 class="mb-2 font-medium">Statii ({{ station_rows | length }})</h2>
+    <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
+      <h2 class="font-medium">Statii ({{ station_rows | length }})</h2>
+      {% if organization.status == "active" %}
+      <a href="/organizations/{{ organization.id }}/setup/station" class="btn-primary !px-3 !py-1 text-sm">Adauga statie</a>
+      {% endif %}
+    </div>
     <table class="w-full text-sm">
       <thead class="text-left text-gray-500">
         <tr><th class="py-1">Nume</th><th>Mod</th><th>Stare</th><th>Device-uri</th><th>Alerte active</th><th>Ultima telemetrie</th><th></th></tr>

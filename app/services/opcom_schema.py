@@ -21,8 +21,8 @@ DURATA REALA a fiecarui interval din fisier -- anii istorici sunt publicati
 la rezolutie orara (PT60M/PT1H, 24 intervale/zi), iar anul curent alterneaza
 intre PT30M (48 intervale/zi) si PT15M (96 intervale/zi). Cand coloana
 lipseste (CSV-uri simple, folosite si de teste/fixture-uri sintetice),
-`opcom_service.parse_csv` presupune implicit 15 minute (comportament
-neschimbat fata de inainte).
+`opcom_service.parse_csv` infereaza rezolutia din numarul de intervale daca
+este neambiguu, altfel pastreaza fallback-ul istoric de 15 minute.
 """
 from __future__ import annotations
 

@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from app.services.opcom_fixtures import generate_synthetic_csv, intervals_for_date
-from app.services.opcom_service import OpcomParseError, parse_csv
+from app.services.opcom_service import OpcomParseError, build_source_url, parse_csv
 
 FIXTURES_DIR = Path(__file__).resolve().parents[1] / "fixtures"
 
@@ -171,6 +171,30 @@ def test_pt1h_alias_treated_as_60_minutes():
     csv_text = _rows_with_resolution(24, "PT1H")
 
     parsed = parse_csv(csv_text, d)
+
+    assert len(parsed) == 24
+    assert parsed[0]["interval_end"] - parsed[0]["interval_start"] == timedelta(hours=1)
+
+
+def test_historical_source_url_requests_hourly_resolution():
+    url = build_source_url(date(2024, 9, 14), today_local=date(2026, 9, 15))
+
+    assert url.endswith("/14/09/2024/ro?resolution=60")
+
+
+def test_recent_source_url_requests_15_minute_resolution():
+    url = build_source_url(date(2026, 9, 14), today_local=date(2026, 9, 15))
+
+    assert url.endswith("/14/09/2026/ro?resolution=15")
+
+
+def test_hourly_resolution_inferred_when_column_absent():
+    d = date(2024, 9, 9)
+    rows = ["Interval;Pret;Moneda"]
+    for i in range(1, 25):
+        rows.append(f"{i};250,00;RON")
+
+    parsed = parse_csv("\n".join(rows), d)
 
     assert len(parsed) == 24
     assert parsed[0]["interval_end"] - parsed[0]["interval_start"] == timedelta(hours=1)
