@@ -250,6 +250,11 @@ POST /api/v1/telemetry/batch
   idempotenta (raspunsul indica `duplicates`, nu creeaza randuri noi).
 - `sequence` trebuie sa fie monoton crescator in cadrul unui `boot_id`; la
   fiecare repornire fizica a dispozitivului, foloseste un `boot_id` nou.
+- Metricile de putere sunt in W. `battery_power_w > 0` inseamna incarcare,
+  `battery_power_w < 0` descarcare; `grid_power_w > 0` inseamna import,
+  `grid_power_w < 0` export. `pv_power_w`, `load_power_w` si `ev_power_w`
+  trebuie sa fie `>= 0`. `battery_soc_percent` trebuie sa fie intre `0` si
+  `100`; `0` este valoare masurata valida, nu lipsa.
 - Maxim `DEVICE_TELEMETRY_BATCH_MAX_ITEMS` (implicit 500) elemente per cerere.
 - Payload maxim `DEVICE_MAX_PAYLOAD_BYTES` (implicit 256 KiB).
 
@@ -278,10 +283,14 @@ sunt `accepted`, `duplicate` (ambele pot fi eliminate sigur din outbox) si
 `rejected`. Pentru un item respins, `retryable=true` inseamna ca acelasi item
 poate deveni acceptabil ulterior (de exemplu ceasul device-ului este temporar
 in viitor); `retryable=false` il trimite in dead-letter pentru inspectie, nu il
-sterge silentios. Campurile agregate si `errors` raman pentru clientii v1.
-Validarea structurala Pydantic a anvelopei ramane atomica: un payload invalid
-care nu poate fi identificat sigur prin `boot_id`/`sequence` primeste HTTP 422
-pentru intregul request.
+sterge silentios. Motive permanente curente: `timestamp_too_old`,
+`pv_power_negative`, `load_power_negative`, `ev_power_negative`,
+`battery_soc_out_of_range`. Motiv retryable curent: `future_timestamp`.
+Campurile agregate si `errors` raman pentru clientii v1. Validarea structurala
+Pydantic a anvelopei ramane atomica: un payload invalid care nu poate fi
+identificat sigur prin `boot_id`/`sequence`, are tipuri gresite, timestamp fara
+fus orar sau numere non-finite (`NaN`, `Infinity`) primeste HTTP 422 pentru
+intregul request.
 
 ## 5. Configuratie curenta
 

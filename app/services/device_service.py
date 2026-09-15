@@ -32,6 +32,12 @@ from app.schemas.device_api import TelemetryItem, TelemetryItemAck
 MAX_FUTURE_SKEW = timedelta(minutes=5)
 MAX_TELEMETRY_AGE = timedelta(days=400)
 LATE_TELEMETRY_THRESHOLD = timedelta(minutes=5)
+TELEMETRY_SEMANTIC_REASONS = {
+    "pv_power_negative": "pv_power_w nu poate fi negativ.",
+    "load_power_negative": "load_power_w nu poate fi negativ.",
+    "ev_power_negative": "ev_power_w nu poate fi negativ.",
+    "battery_soc_out_of_range": "battery_soc_percent trebuie sa fie intre 0 si 100.",
+}
 
 
 class DeviceServiceError(Exception):
@@ -134,6 +140,18 @@ def record_heartbeat(db: Session, device: Device, boot_id: str, firmware_version
     return device
 
 
+def telemetry_semantic_rejection(item: TelemetryItem) -> str | None:
+    if item.pv_power_w is not None and item.pv_power_w < 0:
+        return "pv_power_negative"
+    if item.load_power_w is not None and item.load_power_w < 0:
+        return "load_power_negative"
+    if item.ev_power_w is not None and item.ev_power_w < 0:
+        return "ev_power_negative"
+    if item.battery_soc_percent is not None and not (0 <= item.battery_soc_percent <= 100):
+        return "battery_soc_out_of_range"
+    return None
+
+
 def ingest_telemetry_batch(
     db: Session, device: Device, items: list[TelemetryItem]
 ) -> tuple[int, int, int, list[str], list[TelemetryItemAck]]:
@@ -161,6 +179,18 @@ def ingest_telemetry_batch(
                 status="rejected",
                 retryable=False,
                 reason_code="timestamp_too_old",
+            )
+            continue
+
+        semantic_reason = telemetry_semantic_rejection(item)
+        if semantic_reason is not None:
+            errors.append(f"item {idx}: {TELEMETRY_SEMANTIC_REASONS[semantic_reason]}")
+            results_by_index[idx] = TelemetryItemAck(
+                boot_id=item.boot_id,
+                sequence=item.sequence,
+                status="rejected",
+                retryable=False,
+                reason_code=semantic_reason,
             )
             continue
 

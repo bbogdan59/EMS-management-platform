@@ -80,20 +80,23 @@ def test_telemetry_batch_returns_ordered_per_item_ack_with_retryability(client, 
             {"boot_id": "ack-boot", "sequence": 2, "measured_at": now.isoformat()},
             {"boot_id": "ack-boot", "sequence": 3, "measured_at": (now - timedelta(days=401)).isoformat()},
             {"boot_id": "ack-boot", "sequence": 4, "measured_at": (now + timedelta(minutes=6)).isoformat()},
+            {"boot_id": "ack-boot", "sequence": 5, "measured_at": now.isoformat(), "pv_power_w": -1},
         ]},
         headers=headers,
     )
     assert response.status_code == 200
     body = response.json()
-    assert (body["accepted"], body["duplicates"], body["rejected"]) == (1, 1, 2)
+    assert (body["accepted"], body["duplicates"], body["rejected"]) == (1, 1, 3)
     assert [item["status"] for item in body["results"]] == [
-        "duplicate", "accepted", "rejected", "rejected"
+        "duplicate", "accepted", "rejected", "rejected", "rejected"
     ]
     assert body["results"][2]["reason_code"] == "timestamp_too_old"
     assert body["results"][2]["retryable"] is False
     assert body["results"][3]["reason_code"] == "future_timestamp"
     assert body["results"][3]["retryable"] is True
-    assert len(body["errors"]) == 2  # camp legacy pastrat pentru clientii v1
+    assert body["results"][4]["reason_code"] == "pv_power_negative"
+    assert body["results"][4]["retryable"] is False
+    assert len(body["errors"]) == 3  # camp legacy pastrat pentru clientii v1
 
 
 def test_duplicate_keys_inside_one_batch_get_one_accepted_and_one_duplicate(client, db):
