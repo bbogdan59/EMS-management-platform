@@ -34,6 +34,22 @@ def test_viewer_can_see_status_page_but_not_connect_form(client, db, monkeypatch
     assert b"Doar un administrator de organizatie" in resp.content
 
 
+def test_single_station_dashboard_links_to_deye_cloud_configuration(client, db):
+    reset_key("login_attempts:testclient")
+    user = make_user(db, email="deyelink@test.local", password="Password1234")
+    org = make_org(db, "Deye Org Link")
+    station = make_station(db, org, user, name="Statie Deye Link")
+    make_membership(db, user, org, role="organization_admin")
+    db.commit()
+
+    login(client, "deyelink@test.local", "Password1234")
+    page = client.get("/", follow_redirects=True)
+
+    assert page.status_code == 200
+    assert f"/stations/{station.id}/integrations/deye" in page.text
+    assert "Deye Cloud" in page.text
+
+
 def test_viewer_cannot_post_connect(client, db):
     reset_key("login_attempts:testclient")
     user = make_user(db, email="deyeviewer2@test.local", password="Password1234")
