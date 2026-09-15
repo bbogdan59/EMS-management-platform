@@ -58,13 +58,13 @@ class TelemetryItem(BaseModel):
     schema_version: int = Field(default=1, ge=1)
     measured_at: datetime
 
-    pv_power_w: Decimal | None = Field(default=None, ge=0)
-    load_power_w: Decimal | None = Field(default=None, ge=0)
-    battery_power_w: Decimal | None = None
-    grid_power_w: Decimal | None = None
-    battery_soc_percent: Decimal | None = Field(default=None, ge=0, le=100)
+    pv_power_w: Decimal | None = Field(default=None, description="W, >=0. Respingere semantica per item daca este negativa.")
+    load_power_w: Decimal | None = Field(default=None, description="W, >=0. Respingere semantica per item daca este negativa.")
+    battery_power_w: Decimal | None = Field(default=None, description="W; >0 incarcare, <0 descarcare.")
+    grid_power_w: Decimal | None = Field(default=None, description="W; >0 import, <0 export.")
+    battery_soc_percent: Decimal | None = Field(default=None, description="%, interval valid 0..100; 0 este valoare masurata valida.")
     ev_connected: bool | None = None
-    ev_power_w: Decimal | None = Field(default=None, ge=0)
+    ev_power_w: Decimal | None = Field(default=None, description="W, >=0. Respingere semantica per item daca este negativa.")
 
     quality_flags: dict = Field(default_factory=dict)
     raw_payload: dict = Field(default_factory=dict)
