@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 import httpx
 import pytest
 
@@ -229,6 +231,24 @@ def test_store_weather_forecast_preserves_precipitation_and_unknowns():
     assert rows[0].source_version.startswith("open-meteo-gfs-romania;asof=20260101T000000Z"[:40])
     assert rows[0].confidence == "nominal"
     assert rows[0].is_synthetic is False
+
+
+def test_store_weather_forecast_converts_provider_offsets_to_utc_instants():
+    db = _FakeDb()
+    raw = {
+        "provider": "weather-test",
+        "hourly": {
+            "time": ["2026-06-01T03:00:00+03:00", "2026-06-01T01:00:00Z"],
+            "shortwave_radiation": [0, 10],
+            "cloud_cover": [80, 70],
+            "temperature_2m": [20, 19],
+        },
+    }
+
+    rows = weather_service.store_weather_forecast(db, _Station(), raw)
+
+    assert rows[0].interval_start == datetime(2026, 6, 1, 0, 0, tzinfo=UTC)
+    assert rows[1].interval_start == datetime(2026, 6, 1, 1, 0, tzinfo=UTC)
 
 
 def test_store_weather_forecast_marks_incomplete_payload_low_confidence_without_zero_fill():

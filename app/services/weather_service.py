@@ -171,6 +171,13 @@ def _safe_number(value) -> float | None:
     return number if math.isfinite(number) else None
 
 
+def _parse_provider_timestamp(value: str) -> datetime:
+    parsed = datetime.fromisoformat(value)
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
+
+
 def store_weather_forecast(db: Session, station: Station, raw: dict) -> list[WeatherForecast]:
     issued_at = utcnow()
     confidence = _infer_confidence(raw)
@@ -188,7 +195,7 @@ def store_weather_forecast(db: Session, station: Station, raw: dict) -> list[Wea
 
     created = []
     for i, t in enumerate(times):
-        interval_start = datetime.fromisoformat(t).replace(tzinfo=UTC)
+        interval_start = _parse_provider_timestamp(t)
         wf = WeatherForecast(
             station_id=station.id,
             issued_at=issued_at,
