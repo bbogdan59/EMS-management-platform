@@ -13,6 +13,8 @@ function emsInitMarket(availableYears) {
   let yearlyOverlayController = null;
   let forecastController = null;
   let monthlyController = null;
+  const marketDataCache = new Map();
+  const MARKET_DATA_CACHE_TTL_MS = 30000;
 
   function defaultYearlyOverlayYears(years) {
     const preferred = YEARLY_OVERLAY_DEFAULT_YEARS.filter((year) => years.includes(year));
@@ -37,6 +39,8 @@ function emsInitMarket(availableYears) {
   }
 
   async function fetchJson(url, { signal, timeoutMs = 15000 } = {}) {
+    const cached = marketDataCache.get(url);
+    if (cached && Date.now() - cached.ts < MARKET_DATA_CACHE_TTL_MS) return cached.data;
     const timeoutController = new AbortController();
     const timer = setTimeout(() => timeoutController.abort(), timeoutMs);
     const onExternalAbort = () => timeoutController.abort();
@@ -44,7 +48,9 @@ function emsInitMarket(availableYears) {
     try {
       const res = await fetch(url, { headers: { Accept: "application/json" }, signal: timeoutController.signal });
       if (!res.ok) throw new Error("HTTP " + res.status);
-      return res.json();
+      const data = await res.json();
+      marketDataCache.set(url, { data, ts: Date.now() });
+      return data;
     } finally {
       clearTimeout(timer);
       if (signal) signal.removeEventListener("abort", onExternalAbort);

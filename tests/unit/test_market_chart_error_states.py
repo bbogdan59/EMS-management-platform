@@ -30,3 +30,13 @@ def test_market_chart_fetches_have_timeout_and_stale_request_cancellation():
         assert f"let {controller} = null;" in script
         assert f"if ({controller}) {controller}.abort();" in script
         assert f"controller !== {controller}" in script
+
+
+def test_market_chart_fetches_cache_successful_payloads_briefly_by_url():
+    script = Path("app/web/static/js/market.js").read_text()
+
+    assert "const marketDataCache = new Map();" in script
+    assert "const MARKET_DATA_CACHE_TTL_MS = 30000;" in script
+    assert "const cached = marketDataCache.get(url);" in script
+    assert "Date.now() - cached.ts < MARKET_DATA_CACHE_TTL_MS" in script
+    assert "marketDataCache.set(url, { data, ts: Date.now() });" in script
