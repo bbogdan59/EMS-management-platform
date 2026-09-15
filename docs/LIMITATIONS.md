@@ -1848,6 +1848,90 @@ addendumul anterior, neatinse aici.
   profilare CPU/memorie) -- sanity check-ul de mai sus prinde o regresie de
   tip "conexiunile se serializeaza", nu inlocuieste un load-test dedicat.
 
+## Addendum: Dashboard client "one station first", felie limitata (issue #45)
+
+**Domeniul acestui PR e strict felia de rutare + explicatii, NU refacerea
+completa a informatiei arhitecturale a dashboard-ului** ceruta de issue --
+acel domeniu complet (comparatie fata de ieri pentru fiecare KPI, skeleton
+per widget, limbaj complet non-tehnic peste tot, un audit de accesibilitate)
+e un proiect de mai multe zile; issue-ul insusi cere sa nu se rescrie
+backend-ul energetic, iar `dashboard_service`/`dashboard.js` au fost deja
+extinse semnificativ de #13/#18/#33/#49/#50 -- acest PR se adauga la ele, nu
+le inlocuieste.
+
+**Ce s-a implementat:**
+
+1. **Redirect automat "o singura statie" (`app/web/routes/dashboard.py`,
+   `home()`).** Cand un utilizator autentificat NON-admin de platforma are
+   acces la exact O statie si nu a cerut explicit alta (`station_id` lipseste
+   din query), `GET /` face 302 direct catre URL-ul relativ `/?station_id=<statia lui>` (fara a reflecta headerul `Host`, comportament acoperit de un test de regresie cu un header `Host` controlat) --
+   clientul NU mai vede o pagina intermediara cu un selector cu o singura
+   optiune. Cu 0 statii, ramane empty state-ul explicativ existent
+   (`dashboard/no_station.html`, neschimbat). Cu 2+ statii, comportamentul
+   ramane identic celui dinainte (pagina de alegere / selector din navbar).
+2. **Administratorii de platforma sunt exclusi explicit din acest
+   auto-redirect.** `build_nav_context` le arata TOATE statiile din sistem
+   (nu doar ale lor) -- daca sistemul are, la un moment dat, o singura statie
+   inregistrata, asta nu inseamna ca admin-ul e "clientul cu o singura
+   statie" din issue; ar fi fost teleportat implicit intr-o statie oarecare,
+   posibil a altcuiva. Verificat explicit
+   (`test_platform_admin_not_auto_redirected_with_single_system_station`).
+3. **Selectorul multi-statie din navbar (`partials/_nav.html`) apare DOAR
+   cand exista mai mult de o statie.** Cu exact o statie, navbar-ul arata
+   numele ei ca text simplu (nimic de "selectat"); cu zero, nu arata nimic
+   in acel loc. Inainte de acest PR, dropdown-ul cu o singura optiune plus
+   placeholder-ul "Selecteaza statia..." aparea intotdeauna, indiferent de
+   numarul de statii.
+4. **"Cum se calculeaza?" (`<details>`/`<summary>`, fara JavaScript nou)**
+   adaugat pe cele mai opace 4 KPI-uri de pe dashboard, NU pe toate ~15
+   widget-urile: cost efectiv import, venit efectiv export (text static,
+   formula din `tariff_service.compute_effective_price_lei_per_kwh`, plus
+   link catre `/stations/{id}/tariffs`) si cele doua KPI-uri de beneficiu
+   (Beneficiu sistem PV/baterie, Beneficiu incremental EMS -- text static ce
+   descrie metodologia celor doua repere din `dashboard_service.get_estimated_savings`,
+   DISTINCT de nota dinamica `kpi-savings-note`/`kpi-ems-benefit-note` deja
+   populata de `dashboard.js` din raspunsul API existent (#13), care ramane
+   neschimbata). Nicio cifra de economie/recomandare noua nu a fost
+   inventata -- acest PR doar explica in cuvinte formulele deja calculate
+   de codul existent.
+
+**De ce nu un redirect si pentru RBAC/rolul de membership.** Testele acopera
+explicit viewer/organization_admin ajungand direct pe dashboard cu o singura
+statie (comportamentul de rutare nu depinde de rol) si un utilizator FARA
+niciun membership, care nu vede/atinge nicio statie a altei organizatii
+(`test_no_membership_user_not_redirected_into_unrelated_station`) -- izolarea
+RBAC insasi (`build_nav_context`, `StationAccess`) nu a fost modificata,
+doar exercitata de testele noi.
+
+**Empty state / freshness / calitate date -- deja acoperite, nu duplicate
+aici.** `#kpi-quality` (masurat/estimat/simulat/invechit/lipsa),
+`#sse-status` (conectare/live/stale/offline) si KPI-urile afisand "-" in loc
+de un zero fals cand lipsesc date sunt deja livrate de #13/#18/#50 si au
+ramas neschimbate -- verificat ca suita completa (413 teste, minus 1
+deselectat, nelegat) trece neschimbata dupa acest PR.
+
+**Ramas explicit in afara scopului (nu ascuns):**
+- Comparatie "mai mult/mai putin decat ieri/perioada comparabila" pentru
+  FIECARE KPI de pe pagina -- ar necesita o sursa de agregate istorice
+  comparabile per-metrica si o decizie explicita despre cand "insuficiente
+  date" trebuie sa opreasca orice verdict; niciun calcul de acest fel nu a
+  fost adaugat in acest PR.
+- Skeleton loader per widget si o revizuire completa a "layout shift"-ului
+  la incarcare -- graficele principale (`echarts`) si empty state-urile lor
+  (#33/#50) raman neschimbate; nu s-a adaugat un schelet vizual per card KPI.
+- O reorganizare completa a ierarhiei vizuale (grafice secundare "compacte,
+  progresive, ordonate dupa utilitatea clientului" intr-o zona avansata
+  distincta) -- ordinea si gruparea actuala a cardurilor din
+  `dashboard/station.html` nu a fost restructurata, doar cele 4 KPI-uri de
+  mai sus au primit disclosure-uri noi.
+- "Cum se calculeaza?" pe restul KPI-urilor (PV, consum, retea, SOC, putere
+  baterie, EV, automatizare, EFC) -- acestea sunt fie masuratori brute directe
+  (nu au o "formula" de explicat), fie deja documentate de sectiuni anterioare
+  din acest fisier; nu s-a adaugat disclosure pe ele in acest PR.
+- Un audit complet de accesibilitate (focus vizibil, ordine de tab, roluri
+  ARIA pe grafice) -- neatins in acest PR, in afara de faptul ca
+  `<details>`/`<summary>` sunt native, deci focusabile si utilizabile de
+  tastatura fara JavaScript suplimentar.
 ## 21. Meteo/PV versionat -- rasarit/apus reale si backtesting MAE/bias (issue #53)
 
 Issue #53 cere o re-arhitecturare ampla (evaluare formala de provider,
