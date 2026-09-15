@@ -89,7 +89,8 @@ def market_timeline(
     now = utcnow()
     start = now - timedelta(days=days)
     end = now + timedelta(days=2)  # include "maine" daca e deja publicat
-    return JSONResponse(market.get_timeline_split(db, start, end))
+    points = market.get_timeline_split(db, start, end)
+    return JSONResponse(market.describe_timeline_split(start, end, points))
 
 
 @router.get("/market/export.csv")

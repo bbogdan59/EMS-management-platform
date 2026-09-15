@@ -11,6 +11,7 @@ recenta), documentata explicit ca atare in UI. Vezi docstring-ul functiei.
 """
 from __future__ import annotations
 
+import math
 from datetime import UTC, date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
@@ -165,6 +166,36 @@ def get_timeline_split(
     if window > timedelta(days=TIMELINE_HOURLY_THRESHOLD_DAYS):
         return _get_timeline_hourly(db, start, end, source, include_synthetic)
     return _get_timeline_raw(db, start, end, source, include_synthetic)
+
+
+def describe_timeline_split(start: datetime, end: datetime, points: list[dict]) -> dict:
+    """Metadate explicite pentru contractul chartului de timeline (issue #33).
+
+    `points` este rezultatul deja filtrat/agregat de `get_timeline_split`, deci
+    coverage-ul raportat masoara acoperirea efectiva a payload-ului pe
+    rezolutia trimisa clientului, fara o a doua interogare SQL.
+    """
+    window = end - start
+    if window > timedelta(days=TIMELINE_DAILY_THRESHOLD_DAYS):
+        resolution = "1d"
+        expected = max(1, (end.astimezone(BUCHAREST).date() - start.astimezone(BUCHAREST).date()).days)
+        aggregation = {"price_lei_mwh": "mean", "price_lei_kwh": "mean"}
+    elif window > timedelta(days=TIMELINE_HOURLY_THRESHOLD_DAYS):
+        resolution = "1h"
+        expected = max(1, math.ceil(window.total_seconds() / 3600))
+        aggregation = {"price_lei_mwh": "mean", "price_lei_kwh": "mean"}
+    else:
+        resolution = "raw"
+        expected = None
+        aggregation = {"price_lei_mwh": "none", "price_lei_kwh": "none"}
+
+    return {
+        "resolution": resolution,
+        "aggregation": aggregation,
+        "timezone": str(BUCHAREST),
+        "coverage": round(min(1.0, len(points) / expected), 4) if expected else None,
+        "points": points,
+    }
 
 
 def _get_timeline_raw(
