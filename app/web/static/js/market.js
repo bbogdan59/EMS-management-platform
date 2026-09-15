@@ -38,9 +38,20 @@ function emsInitMarket(availableYears) {
     return res.json();
   }
 
-  function showEmpty(el, isEmpty) {
-    const empty = el.closest(".card").querySelector(".empty-state");
-    if (empty) empty.hidden = !isEmpty;
+  function showChartState(el, state) {
+    const card = el.closest(".card");
+    const empty = card.querySelector(".empty-state");
+    const error = card.querySelector(".error-state");
+    if (empty) empty.hidden = state !== "empty";
+    if (error) error.hidden = state !== "error";
+    el.hidden = state === "empty" || state === "error";
+  }
+
+  function wireRetry(el, loadFn) {
+    const retry = el.closest(".card").querySelector(".retry-btn");
+    if (!retry || retry.dataset.wired) return;
+    retry.dataset.wired = "1";
+    retry.addEventListener("click", loadFn);
   }
 
   function renderYearToggles() {
@@ -85,13 +96,14 @@ function emsInitMarket(availableYears) {
   async function loadTimeline() {
     const el = $("chart-timeline");
     if (!el) return;
+    wireRetry(el, loadTimeline);
     try {
       // Fiecare fereastra e o cerere separata, declansata la cerere (buton) --
       // pagina nu incarca niciodata tot istoricul dintr-o singura cerere
       // initiala, indiferent cat de mare e intervalul selectat (issue #33).
       const payload = await fetchJson("/market/data/timeline?days=" + selectedTimelineDays);
       const data = payload.points || [];
-      showEmpty(el, data.length === 0);
+      showChartState(el, data.length === 0 ? "empty" : "ok");
       if (!data.length) return;
 
       const firstFutureIdx = data.findIndex((d) => d.is_future);
@@ -112,22 +124,26 @@ function emsInitMarket(availableYears) {
           { name: "Maine (punctat)", type: "line", showSymbol: false, lineStyle: { type: "dashed" }, data: forecast },
         ],
       });
-    } catch (e) { console.error(e); }
+    } catch (e) {
+      console.error(e);
+      showChartState(el, "error");
+    }
   }
 
   async function loadYearlyOverlay() {
     const el = $("chart-yearly-overlay");
     if (!el) return;
+    wireRetry(el, loadYearlyOverlay);
     try {
       const years = [...selectedYears].sort();
       if (!years.length) {
-        showEmpty(el, true);
+        showChartState(el, "empty");
         echarts.init(el, emsChartTheme()).clear();
         return;
       }
       const overlay = await fetchJson("/market/data/yearly-overlay?years=" + years.join(","));
       const keys = Object.keys(overlay);
-      showEmpty(el, keys.length === 0);
+      showChartState(el, keys.length === 0 ? "empty" : "ok");
       if (!keys.length) {
         echarts.init(el, emsChartTheme()).clear();
         return;
@@ -154,17 +170,20 @@ function emsInitMarket(availableYears) {
         yAxis: { type: "value", name: "lei/MWh" },
         series,
       });
-    } catch (e) { console.error(e); }
+    } catch (e) {
+      console.error(e);
+      showChartState(el, "error");
+    }
   }
 
   async function loadForecast() {
     const el = $("chart-forecast");
     if (!el) return;
+    wireRetry(el, loadForecast);
     try {
       const forecast = await fetchJson("/market/data/forecast");
-      const empty = el.closest(".card").querySelector(".empty-state");
-      if (!forecast.points || !forecast.points.length) { empty.hidden = false; return; }
-      empty.hidden = true;
+      if (!forecast.points || !forecast.points.length) { showChartState(el, "empty"); return; }
+      showChartState(el, "ok");
 
       $("forecast-note").textContent = forecast.note +
         (forecast.trend_ratio ? ` (raport tendinta recenta: ${forecast.trend_ratio}x fata de baza sezoniera)` : "");
@@ -186,17 +205,21 @@ function emsInitMarket(availableYears) {
           { name: "Predictie", type: "line", showSymbol: false, lineStyle: { type: "dashed" }, data: forecastPoints },
         ],
       });
-    } catch (e) { console.error(e); }
+    } catch (e) {
+      console.error(e);
+      showChartState(el, "error");
+    }
   }
 
   async function loadMonthly() {
     const el = $("chart-monthly");
     if (!el) return;
+    wireRetry(el, loadMonthly);
     try {
       const years = [...selectedYears].sort();
       const monthly = await fetchJson("/market/data/monthly?years=" + years.join(","));
       const keys = Object.keys(monthly);
-      showEmpty(el, keys.length === 0);
+      showChartState(el, keys.length === 0 ? "empty" : "ok");
       if (!keys.length) return;
 
       const monthNames = ["Ian", "Feb", "Mar", "Apr", "Mai", "Iun", "Iul", "Aug", "Sep", "Oct", "Noi", "Dec"];
@@ -218,7 +241,10 @@ function emsInitMarket(availableYears) {
         yAxis: { type: "value", name: "lei/MWh" },
         series,
       });
-    } catch (e) { console.error(e); }
+    } catch (e) {
+      console.error(e);
+      showChartState(el, "error");
+    }
   }
 
   renderYearToggles();

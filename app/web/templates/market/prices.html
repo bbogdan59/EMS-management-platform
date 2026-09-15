@@ -61,6 +61,10 @@
       Pentru intervale mari, graficul afiseaza medii orare sau zilnice in loc de rezolutia bruta de import.
     </p>
     <div class="empty-state text-sm text-gray-500" hidden>Fara date pentru acest interval.</div>
+    <div class="error-state text-sm text-red-600" hidden>
+      Graficul nu a putut fi incarcat.
+      <button type="button" class="btn-secondary retry-btn">Reincearca</button>
+    </div>
     <div id="chart-timeline" style="height:320px"></div>
   </div>
 
@@ -71,6 +75,10 @@
       <div id="year-toggles" class="flex flex-wrap gap-3 text-sm"></div>
     </div>
     <div class="empty-state text-sm text-gray-500" hidden>Fara date istorice inca.</div>
+    <div class="error-state text-sm text-red-600" hidden>
+      Graficul nu a putut fi incarcat.
+      <button type="button" class="btn-secondary retry-btn">Reincearca</button>
+    </div>
     <div id="chart-yearly-overlay" style="height:360px"></div>
   </div>
 
@@ -79,6 +87,10 @@
     <h2 class="mb-1 font-medium">Predictie pret mediu zilnic pana la 31 decembrie</h2>
     <p id="forecast-note" class="mb-2 text-xs text-amber-700 dark:text-amber-300"></p>
     <div class="empty-state text-sm text-gray-500" hidden>Predictia necesita cel putin cateva zile de istoric.</div>
+    <div class="error-state text-sm text-red-600" hidden>
+      Graficul nu a putut fi incarcat.
+      <button type="button" class="btn-secondary retry-btn">Reincearca</button>
+    </div>
     <div id="chart-forecast" style="height:320px"></div>
   </div>
 
@@ -86,6 +98,10 @@
   <div class="card">
     <h2 class="mb-2 font-medium">Medii lunare pe ani</h2>
     <div class="empty-state text-sm text-gray-500" hidden>Fara date lunare inca.</div>
+    <div class="error-state text-sm text-red-600" hidden>
+      Graficul nu a putut fi incarcat.
+      <button type="button" class="btn-secondary retry-btn">Reincearca</button>
+    </div>
     <div id="chart-monthly" style="height:320px"></div>
   </div>
 </div>
