@@ -83,6 +83,10 @@ def _next_step_redirect(station_id: uuid.UUID, current_step: str) -> RedirectRes
     return RedirectResponse(f"/stations/{station_id}/{next_step}?wizard=1", status_code=303)
 
 
+def _tariff_error_redirect(station_id: uuid.UUID, errors: list[str]) -> RedirectResponse:
+    return _error_redirect(f"/stations/{station_id}/tariffs", errors)
+
+
 def _dec(value: str | None, default: Decimal | None = None) -> Decimal | None:
     if value is None or str(value).strip() == "":
         return default
@@ -618,6 +622,7 @@ def tariffs_page(
         "previews": previews,
         "preview_sample_kwh": _INVOICE_PREVIEW_SAMPLE_KWH,
         "can_edit": can_manage_station_config(role),
+        "errors": request.query_params.getlist("error"),
         **build_nav_context(db, user, station.id),
     }
     if request.query_params.get("wizard") == "1":
@@ -649,24 +654,28 @@ def tariffs_submit(
     user: User = Depends(get_current_user),
 ):
     station, _role = station_role
-    tariff = tariff_service.get_or_create_tariff(db, station, direction, kind, name)
-    tariff_service.add_tariff_version(
-        db,
-        tariff,
-        valid_from=datetime.now(UTC),
-        fixed_price_lei_per_kwh=_dec(fixed_price_lei_per_kwh),
-        opcom_margin_lei_per_kwh=_dec(opcom_margin_lei_per_kwh),
-        fixed_monthly_fee_lei=_dec(fixed_monthly_fee_lei, Decimal("0")),
-        variable_component_lei_per_kwh=_dec(variable_component_lei_per_kwh, Decimal("0")),
-        distribution_lei_per_kwh=_dec(distribution_lei_per_kwh, Decimal("0")),
-        transport_lei_per_kwh=_dec(transport_lei_per_kwh, Decimal("0")),
-        other_regulated_lei_per_kwh=_dec(other_regulated_lei_per_kwh, Decimal("0")),
-        vat_rate_percent=_dec(vat_rate_percent),
-        settlement_method=settlement_method,
-        settlement_interval_days=settlement_interval_days,
-        economic_calculation_disabled=bool(economic_calculation_disabled),
-        limitation_note=limitation_note,
-    )
+    try:
+        tariff = tariff_service.get_or_create_tariff(db, station, direction, kind, name)
+        tariff_service.add_tariff_version(
+            db,
+            tariff,
+            valid_from=datetime.now(UTC),
+            fixed_price_lei_per_kwh=_dec(fixed_price_lei_per_kwh),
+            opcom_margin_lei_per_kwh=_dec(opcom_margin_lei_per_kwh),
+            fixed_monthly_fee_lei=_dec(fixed_monthly_fee_lei, Decimal("0")),
+            variable_component_lei_per_kwh=_dec(variable_component_lei_per_kwh, Decimal("0")),
+            distribution_lei_per_kwh=_dec(distribution_lei_per_kwh, Decimal("0")),
+            transport_lei_per_kwh=_dec(transport_lei_per_kwh, Decimal("0")),
+            other_regulated_lei_per_kwh=_dec(other_regulated_lei_per_kwh, Decimal("0")),
+            vat_rate_percent=_dec(vat_rate_percent),
+            settlement_method=settlement_method,
+            settlement_interval_days=settlement_interval_days,
+            economic_calculation_disabled=bool(economic_calculation_disabled),
+            limitation_note=limitation_note,
+        )
+    except ValueError as exc:
+        db.rollback()
+        return _tariff_error_redirect(station.id, [str(exc)])
     record_audit(
         db, action="tariff_version_created", resource_type="tariff", resource_id=str(tariff.id),
         actor_user_id=user.id, actor_label=user.email, station_id=station.id,

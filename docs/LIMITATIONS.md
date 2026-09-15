@@ -1900,3 +1900,284 @@ care nu exista):
   mai relevante (unde exista formulare cu mai multe campuri corelate), nu
   literal pe fiecare pagina din aplicatie (ex. paginile de listare simple nu
   au fost modificate, intrucat nu au campuri de grupat).
+
+## Addendum: Dashboard client "one station first", felie limitata (issue #45)
+
+**Domeniul acestui PR e strict felia de rutare + explicatii, NU refacerea
+completa a informatiei arhitecturale a dashboard-ului** ceruta de issue --
+acel domeniu complet (comparatie fata de ieri pentru fiecare KPI, skeleton
+per widget, limbaj complet non-tehnic peste tot, un audit de accesibilitate)
+e un proiect de mai multe zile; issue-ul insusi cere sa nu se rescrie
+backend-ul energetic, iar `dashboard_service`/`dashboard.js` au fost deja
+extinse semnificativ de #13/#18/#33/#49/#50 -- acest PR se adauga la ele, nu
+le inlocuieste.
+
+**Ce s-a implementat:**
+
+1. **Redirect automat "o singura statie" (`app/web/routes/dashboard.py`,
+   `home()`).** Cand un utilizator autentificat NON-admin de platforma are
+   acces la exact O statie si nu a cerut explicit alta (`station_id` lipseste
+   din query), `GET /` face 302 direct catre URL-ul relativ `/?station_id=<statia lui>` (fara a reflecta headerul `Host`, comportament acoperit de un test de regresie cu un header `Host` controlat) --
+   clientul NU mai vede o pagina intermediara cu un selector cu o singura
+   optiune. Cu 0 statii, ramane empty state-ul explicativ existent
+   (`dashboard/no_station.html`, neschimbat). Cu 2+ statii, comportamentul
+   ramane identic celui dinainte (pagina de alegere / selector din navbar).
+2. **Administratorii de platforma sunt exclusi explicit din acest
+   auto-redirect.** `build_nav_context` le arata TOATE statiile din sistem
+   (nu doar ale lor) -- daca sistemul are, la un moment dat, o singura statie
+   inregistrata, asta nu inseamna ca admin-ul e "clientul cu o singura
+   statie" din issue; ar fi fost teleportat implicit intr-o statie oarecare,
+   posibil a altcuiva. Verificat explicit
+   (`test_platform_admin_not_auto_redirected_with_single_system_station`).
+3. **Selectorul multi-statie din navbar (`partials/_nav.html`) apare DOAR
+   cand exista mai mult de o statie.** Cu exact o statie, navbar-ul arata
+   numele ei ca text simplu (nimic de "selectat"); cu zero, nu arata nimic
+   in acel loc. Inainte de acest PR, dropdown-ul cu o singura optiune plus
+   placeholder-ul "Selecteaza statia..." aparea intotdeauna, indiferent de
+   numarul de statii.
+4. **"Cum se calculeaza?" (`<details>`/`<summary>`, fara JavaScript nou)**
+   adaugat pe cele mai opace 4 KPI-uri de pe dashboard, NU pe toate ~15
+   widget-urile: cost efectiv import, venit efectiv export (text static,
+   formula din `tariff_service.compute_effective_price_lei_per_kwh`, plus
+   link catre `/stations/{id}/tariffs`) si cele doua KPI-uri de beneficiu
+   (Beneficiu sistem PV/baterie, Beneficiu incremental EMS -- text static ce
+   descrie metodologia celor doua repere din `dashboard_service.get_estimated_savings`,
+   DISTINCT de nota dinamica `kpi-savings-note`/`kpi-ems-benefit-note` deja
+   populata de `dashboard.js` din raspunsul API existent (#13), care ramane
+   neschimbata). Nicio cifra de economie/recomandare noua nu a fost
+   inventata -- acest PR doar explica in cuvinte formulele deja calculate
+   de codul existent.
+
+**De ce nu un redirect si pentru RBAC/rolul de membership.** Testele acopera
+explicit viewer/organization_admin ajungand direct pe dashboard cu o singura
+statie (comportamentul de rutare nu depinde de rol) si un utilizator FARA
+niciun membership, care nu vede/atinge nicio statie a altei organizatii
+(`test_no_membership_user_not_redirected_into_unrelated_station`) -- izolarea
+RBAC insasi (`build_nav_context`, `StationAccess`) nu a fost modificata,
+doar exercitata de testele noi.
+
+**Empty state / freshness / calitate date -- deja acoperite, nu duplicate
+aici.** `#kpi-quality` (masurat/estimat/simulat/invechit/lipsa),
+`#sse-status` (conectare/live/stale/offline) si KPI-urile afisand "-" in loc
+de un zero fals cand lipsesc date sunt deja livrate de #13/#18/#50 si au
+ramas neschimbate -- verificat ca suita completa (413 teste, minus 1
+deselectat, nelegat) trece neschimbata dupa acest PR.
+
+**Ramas explicit in afara scopului (nu ascuns):**
+- Comparatie "mai mult/mai putin decat ieri/perioada comparabila" pentru
+  FIECARE KPI de pe pagina -- ar necesita o sursa de agregate istorice
+  comparabile per-metrica si o decizie explicita despre cand "insuficiente
+  date" trebuie sa opreasca orice verdict; niciun calcul de acest fel nu a
+  fost adaugat in acest PR.
+- Skeleton loader per widget si o revizuire completa a "layout shift"-ului
+  la incarcare -- graficele principale (`echarts`) si empty state-urile lor
+  (#33/#50) raman neschimbate; nu s-a adaugat un schelet vizual per card KPI.
+- O reorganizare completa a ierarhiei vizuale (grafice secundare "compacte,
+  progresive, ordonate dupa utilitatea clientului" intr-o zona avansata
+  distincta) -- ordinea si gruparea actuala a cardurilor din
+  `dashboard/station.html` nu a fost restructurata, doar cele 4 KPI-uri de
+  mai sus au primit disclosure-uri noi.
+- "Cum se calculeaza?" pe restul KPI-urilor (PV, consum, retea, SOC, putere
+  baterie, EV, automatizare, EFC) -- acestea sunt fie masuratori brute directe
+  (nu au o "formula" de explicat), fie deja documentate de sectiuni anterioare
+  din acest fisier; nu s-a adaugat disclosure pe ele in acest PR.
+- Un audit complet de accesibilitate (focus vizibil, ordine de tab, roluri
+  ARIA pe grafice) -- neatins in acest PR, in afara de faptul ca
+  `<details>`/`<summary>` sunt native, deci focusabile si utilizabile de
+  tastatura fara JavaScript suplimentar.
+## 21. Meteo/PV versionat -- rasarit/apus reale si backtesting MAE/bias (issue #53)
+
+Issue #53 cere o re-arhitecturare ampla (evaluare formala de provider,
+worker cu retry/backoff/observabilitate, backtesting complet). Cea mai mare
+parte a infrastructurii de baza EXISTA DEJA in acest repo (verificat explicit
+inainte de a scrie cod nou, ca sa nu se reconstruiasca ce functioneaza):
+
+**Deja existent, verificat, neschimbat:**
+- **Provider ales si documentat.** `app/services/weather_service.py` +
+  `app/config.py` (`weather_provider="open-meteo"`, `weather_base_url`)
+  foloseste deja Open-Meteo (fara autentificare, gratuit pentru uz
+  necomercial, acoperire globala inclusiv Romania) -- alegerea e documentata
+  in limitarea 2 de mai sus. Fallback controlat: `WeatherUnavailableError`
+  se propaga explicit pana in optimizator/UI, fara date inventate.
+- **Prognoza deja versionata cu `issued_at`.** `WeatherForecast`/
+  `PvForecast`/`ConsumptionForecast` au deja `issued_at`, `source`,
+  `source_version`, `confidence`, `is_synthetic` (`app/models/forecast.py`)
+  -- fiecare rulare a importului creeaza un batch nou, niciodata suprascris.
+- **Look-ahead deja prevenit pentru istoric.** `dashboard_service.
+  get_forecast_vs_actual` alege deja, pentru fiecare `interval_start`, doar
+  cea mai recenta prognoza cu `issued_at <= interval_start` -- fix aplicat in
+  issue #13 (limitarea 17 de mai sus), verificat aici ca ramane corect si
+  reutilizat ca principiu (nu ca import direct) in noul modul de backtesting.
+- **Fetch in background, deja pe worker existent, la fiecare 30 minute.**
+  `app/workers/tasks.py::weather_and_forecast_task` (Celery beat, issue #10)
+  ruleaza deja meteo + PV + consum pentru toate statiile active, cu lock
+  Redis anti-suprapunere; ruta web nu asteapta niciodata providerul.
+
+**Adaugat de acest PR (gap real, nu acoperit inainte):**
+- **Rasarit/apus/ore utile de soare, calculate real, nu aproximate.**
+  `app/services/solar_geometry_service.py` (nou) foloseste algoritmul SPA din
+  `pvlib` (deja dependinta a platformei) pe latitudine/longitudine REALE ale
+  statiei, intotdeauna in UTC -- fara nicio migratie de schema (rasaritul e
+  calculabil determinist din data+coordonate, nu are nevoie sa fie
+  persistat/versionat ca prognoza meteo propriu-zisa, care depinde de un
+  provider extern). Conversia in ora LOCALA foloseste `zoneinfo` (DST corect
+  automat) -- testat explicit pe ambele treceri DST din 2026 ale Romaniei
+  (28->29 martie si 24->25 octombrie): ora UTC a rasaritului nu sare
+  (continuitate fizica), dar reprezentarea ei LOCALA sare cu ~1 ora, exact
+  cum ar trebui. `pv_forecast_service.generate_pv_forecast` foloseste acum
+  aceasta fereastra ca o plasa de siguranta suplimentara: orice interval din
+  afara ferestrei reale de lumina e clampat explicit la 0 kW, indiferent de
+  o eventuala valoare mica/nenula de iradianta raportata de sursa meteo
+  langa amurg/rasarit (artefact de medie orara).
+- **Backtesting MAE/bias pentru prognoza PV.**
+  `app/services/forecast_backtest_service.py` (nou) calculeaza eroarea medie
+  absoluta (MAE) si bias-ul (eroare medie semnata: prognoza - real) intre
+  prognoza PV "asa cum era cunoscuta la momentul respectiv" (aceeasi regula
+  anti-look-ahead ca mai sus) si productia PV masurata (telemetrie agregata
+  la 15 minute), pentru o statie si un interval date. Un interval fara
+  prognoza validă sau fara telemetrie suficient de acoperita
+  (`coverage['pv'] >= 0.9`) e raportat separat (`n_missing_forecast`/
+  `n_missing_actual`), NICIODATA tratat ca eroare zero.
+- **Teste deterministe noi**, toate cu fixtures explicite (nicio dependinta
+  de ceasul real sau de un provider extern):
+  `tests/unit/test_solar_geometry_service.py` (ambele treceri DST 2026,
+  durata zilei vara/iarna, `is_daylight` la amiaza/miezul noptii),
+  `tests/unit/test_pv_forecast_service.py` (clamp la 0 in afara ferestrei de
+  lumina reale, eroare explicita fara meteo), `tests/unit/
+  test_forecast_backtest_service.py` (MAE/bias pe fixture cunoscut,
+  excluderea explicita a unei prognoze "din viitor" -- look-ahead --,
+  raportarea separata a lipsei de prognoza/telemetrie/acoperire
+  insuficienta).
+  Intervalul cerut este semi-deschis `[start, end)`, trebuie sa fie
+  timezone-aware si aliniat exact la 15 minute, pentru ca numarul de
+  esantioane asteptate sa nu fie aproximat; limitele naive sau decalate sunt
+  refuzate explicit.
+
+**Ramas explicit in afara scopului acestui PR (documentat, nu ascuns):**
+- **Interfata provider-agnostica formala** (un `Protocol`/clasa abstracta
+  peste care s-ar putea plugini alt provider decat Open-Meteo) -- adaptorul
+  actual e un singur modul concret; o abstractizare completa, cu al doilea
+  provider real implementat si testat, ramane de facut cand exista un motiv
+  concret sa schimbam providerul (ex. limita de rate atinsa in productie).
+- **Worker retry/backoff/observabilitate dedicate.** `weather_and_forecast_task`
+  ruleaza deja pe Celery beat (issue #10), dar o eroare per-statie e doar
+  colectata intr-o lista si logata -- nu exista inca retry cu backoff
+  exponential per provider, rate-limiting explicit catre Open-Meteo, sau
+  metrici de observabilitate (latenta/rata de succes) expuse separat.
+- **Backtesting complet (dashboard, segmentare pe conditii meteo, pret).**
+  `forecast_backtest_service.py` e strict minimal -- MAE/bias pe puterea PV,
+  fara UI, fara segmentare senin/inorat, fara metrici pe prognoza de consum
+  sau de pret. Suficient sa dovedeasca ca metodologia e corecta si sa
+  inceapa masurarea reala, nu un panou de raportare complet.
+- **Optimizer/recomandari care sa consume explicit "ore utile de soare"
+  ramase azi.** `solar_geometry_service.py` e integrat direct doar in
+  `pv_forecast_service` (clamp de siguranta); niciun modul de "recomandari
+  pentru maine" nu exista inca in acest repo (nu doar in afara acestui PR --
+  nu exista deloc), deci nu exista inca un consumator pentru aceasta
+  informatie in afara prognozei PV.
+- **Control HVAC** -- exclus explicit de prompt-ul issue-ului, neatins.
+
+## Addendum: Tip de contract explicit, izolare import/export si teste DST/rotunjire (issue #46, a doua iteratie)
+
+Issue #46 a fost re-specificat mai detaliat dupa ce prima iteratie (vezi
+sectiunea "Contracte tarifare: componente de cost distincte, TVA explicit,
+preview numeric" de mai sus, PR #56) acoperise deja versionarea cu
+valabilitate, componentele de cost distincte (energie/distributie/transport/
+alte taxe reglementate/TVA/cost fix), separarea marginal-fix, formula
+explicita de indexare OPCOM+marja, blocarea calculului la pret OPCOM lipsa
+(fara fallback tacut) si preview-ul numeric pe pagina de tarife. Aceasta
+iteratie a verificat concret ce mai lipsea fata de noul text al issue-ului si
+a adaugat DOAR gaurile reale gasite:
+
+**`Tariff.kind` guverneaza acum efectiv formula, nu doar eticheta afisata.**
+Inainte, `compute_effective_price_lei_per_kwh` alegea ramura fix/indexat
+dupa care camp (`fixed_price_lei_per_kwh` / `opcom_margin_lei_per_kwh`) era
+completat, IGNORAND complet `kind` -- un tarif etichetat "indexat OPCOM"
+caruia i s-ar fi completat din greseala si `fixed_price_lei_per_kwh` s-ar fi
+comportat tacit ca fix. `app/models/tariff.py` defineste acum
+`TARIFF_KIND_FIXED`/`TARIFF_KIND_DYNAMIC_INDEXED`/`TARIFF_KINDS`, iar
+`tariff_service.validate_tariff_kind` (apelat din `get_or_create_tariff`)
+respinge orice `kind` in afara acestor doua valori. `add_tariff_version`
+valideaza acum, la SCRIERE, ca versiunea noua are EXACT campurile care
+corespund tipului declarat -- `kind=fixed` cere `fixed_price_lei_per_kwh` si
+interzice `opcom_margin_lei_per_kwh`; `kind=indexed_opcom` cere
+`opcom_margin_lei_per_kwh` si interzice `fixed_price_lei_per_kwh` -- esec
+explicit (`ValueError`), niciodata o alegere tacita intre cele doua campuri.
+Exceptia explicita este o versiune cu `economic_calculation_disabled=True`:
+pretul corespunzator tipului poate lipsi, deoarece platforma declara ca nu
+poate calcula acea formula si va returna un rezultat necunoscut; campul de
+pret al celuilalt tip ramane interzis.
+Ruta `/stations/{id}/tariffs` (POST) prinde aceasta eroare si o afiseaza in
+formular (macro-ul `_form_errors.html`, issue #48), fara sa creeze niciun
+rand nou -- nu doar teste de model, comportament HTTP verificat capat-la-cap.
+Tipul unui contract existent nu poate fi schimbat in loc: asta ar
+reclasifica retroactiv toate versiunile istorice, deoarece `kind` apartine
+in prezent lui `Tariff`, nu lui `TariffVersion`. Serviciul refuza explicit
+tranzitia pana cand ea va fi modelata ca inchiderea contractului vechi si
+crearea unuia nou, fara pierderea istoricului.
+"provider"/"custom" din textul issue-ului raman doar etichete libere in
+`Tariff.name`, nu tipuri de calcul distincte -- niciunul nu are o formula
+proprie implementata (nu exista o formula "de provider" verificata de
+adaugat fara sa fie inventata, vezi sectiunea de mai jos).
+
+**Independenta import/export, verificata explicit cu test, nu doar presupusa
+din arhitectura.** Directia (`import`/`export`) era deja un `Tariff` separat
+inainte de acest PR (nicio schimbare de schema aici), deci exportul avea deja
+structural propriul pret/formula, fara sa scada componente de import. Ce
+lipsea era un test care sa demonstreze asta explicit (criteriul din issue:
+"componentele nerecuperabile nu sunt scazute fictiv din import") --
+`test_export_price_is_independent_of_import_components` creste drastic
+componentele de import (distributie, abonament) DUPA calcularea pretului de
+export si verifica ca pretul de export ramane identic, exact regresia pe
+care o cere issue-ul daca cineva ar "optimiza" vreodata cele doua formule sa
+partajeze cod.
+
+**Teste DST adaugate -- niciunul nu exista inainte pentru versionarea
+tarifelor.** `valid_from`/`valid_to` sunt deja `DateTime(timezone=True)`,
+comparate ca instante absolute UTC (nicio schimbare de cod necesara), dar
+issue-ul cere explicit teste numerice pentru tranzitiile de ora de vara/
+iarna. `test_tariff_version_resolves_correctly_across_spring_forward_dst`
+si `..._fall_back_dst` verifica `get_current_tariff_version` chiar la
+instanta UTC a tranzitiei din Europe/Bucharest pentru 2026 (29 martie -- ora
+locala 03:00-04:00 nu exista deloc; 25 octombrie -- ora locala 03:00-04:00
+se repeta), confirmand ca rezolutia pe instanta absoluta nu produce o
+selectie ambigua sau gresita a versiunii in niciunul din cele doua cazuri.
+
+**Test de rotunjire cu Decimal.** `test_decimal_precision_avoids_float_rounding_drift`
+insumeaza componente la limita de precizie a coloanei `NUMERIC(10,5)`
+(inclusiv o zecimala a cincea nenula) si verifica rezultatul exact -- Decimal
+nu introduce drift binar-float (ex. suma nu devine `0.30000999...`).
+
+**Teste:** `tests/unit/test_tariff_service.py` include validarea `kind`
+necunoscut, blocarea reclasificarii istoricului, 4 combinatii fix/dinamic cu camp
+lipsa/strain, o regresie ca versiunile corect formate tot trec, independenta
+export/import, 2 teste DST, 1 test de rotunjire). `tests/integration/
+test_tariffs_routes.py` are acum 6 (4 preexistente + 2 noi: contract fix cu
+marja straina si contract dinamic fara marja sunt respinse cu eroare
+afisata in formular si NU salveaza niciun rand).
+
+**Ramas in afara scopului (deliberat, nu ascuns, neschimbat fata de prima
+iteratie -- vezi si sectiunea de mai sus):**
+- **Wizard-ul dedicat cu preseturi explicabile** (issue #41) -- la momentul
+  acestui PR, #41 inca nu era mergeat pe `main` (dezvoltat in paralel, pe
+  `feature/setup-wizard-issue-41`). Configurarea ramane prin pagina de
+  tarife existenta (`/stations/{id}/tariffs`, extinsa acum cu validarea de
+  tip de contract si un rezumat de erori consistent cu restul aplicatiei),
+  NU o experienta ghidata pas-cu-pas cu preseturi "explicabile" (ex. "Enel
+  standard", "OMV Petrom dinamic") -- niciun asemenea preset comercial
+  verificat nu exista in acest cod, ca sa nu fie inventat. Cand #41 va fi
+  mergeat, pagina de tarife ramane reutilizabila ca pas de wizard (acelasi
+  serviciu `tariff_service`, aceleasi validari), dar integrarea explicita
+  (navigare pas-cu-pas, preseturi) e responsabilitatea acelui issue.
+- **Reguli legale/comerciale romanesti verificate** (cote OPANAF/ANRE reale,
+  formule reglementate de distributie/transport, preseturi de furnizor) --
+  deliberat NEINVENTATE, neschimbat fata de prima iteratie: operatorul
+  introduce valorile reale din contractul/factura lui.
+- **Constrangere la nivel de baza de date (CHECK constraint)** pentru
+  consistenta `kind`/campuri -- validarea noua e doar la nivel de serviciu
+  (`tariff_service`), singurul punct de scriere folosit de aplicatie; un
+  `INSERT` SQL direct in `tariff_versions`, ocolind `add_tariff_version`,
+  tot ar putea crea o versiune inconsistenta. Nu exista alt cod in acest
+  repo care sa scrie in acest tabel altfel decat prin acest serviciu.
+- **Decontare neta ora-cu-ora in preview, formula "provider"/"custom"
+  distincta** -- neschimbate fata de prima iteratie (vezi mai sus).
