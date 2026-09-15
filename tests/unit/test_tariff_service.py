@@ -187,6 +187,19 @@ def test_get_or_create_tariff_rejects_unknown_kind(db):
         svc.get_or_create_tariff(db, station, "import", "some_random_string", "Bogus")
 
 
+def test_get_or_create_tariff_rejects_unknown_direction():
+    class _Station:
+        id = uuid.uuid4()
+
+    with pytest.raises(ValueError, match="directie de tarif necunoscuta"):
+        svc.get_or_create_tariff(None, _Station(), "self_consumption", "fixed", "Bogus")
+
+
+def test_get_current_tariff_version_rejects_unknown_direction():
+    with pytest.raises(ValueError, match="directie de tarif necunoscuta"):
+        svc.get_current_tariff_version(None, uuid.uuid4(), "self_consumption", datetime.now(UTC))
+
+
 def test_existing_contract_kind_cannot_reclassify_historical_versions(db):
     station = _station(db, "kind-transition")
     tariff = svc.get_or_create_tariff(db, station, "import", "fixed", "Contract initial")
