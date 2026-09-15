@@ -2250,7 +2250,10 @@ inainte de a scrie cod nou, ca sa nu se reconstruiasca ce functioneaza):
 - **Fetch in background, deja pe worker existent, la fiecare 30 minute.**
   `app/workers/tasks.py::weather_and_forecast_task` (Celery beat, issue #10)
   ruleaza deja meteo + PV + consum pentru toate statiile active, cu lock
-  Redis anti-suprapunere; ruta web nu asteapta niciodata providerul.
+  Redis anti-suprapunere; ruta web nu asteapta niciodata providerul. Rezultatul
+  task-ului raporteaza acum contoare separate pentru etapele `weather`, `pv`
+  si `consumption`, plus erori etichetate pe etapa, ca un esec de provider sa
+  nu fie confundat cu un esec de model PV sau consum.
 
 **Adaugat de acest PR (gap real, nu acoperit inainte):**
 - **Date meteo minime extinse cu precipitatii.**
@@ -2303,11 +2306,11 @@ inainte de a scrie cod nou, ca sa nu se reconstruiasca ce functioneaza):
   Comutarea automata catre un provider secundar ramane neimplementata pana
   exista un provider licentiat si o regula explicita de calitate/cost; sistemul
   prefera acum esec explicit in loc de fallback tacut.
-- **Worker retry/backoff/observabilitate dedicate.** `weather_and_forecast_task`
-  ruleaza deja pe Celery beat (issue #10), dar o eroare per-statie e doar
-  colectata intr-o lista si logata -- nu exista inca retry cu backoff
-  exponential per provider, rate-limiting explicit catre Open-Meteo, sau
-  metrici de observabilitate (latenta/rata de succes) expuse separat.
+- **Worker retry/backoff si metrici operationale dedicate.**
+  `weather_and_forecast_task` raporteaza acum succes/esec pe etapa per rulare,
+  dar nu are inca retry cu backoff exponential per provider, rate-limiting
+  explicit catre Open-Meteo, sau metrici persistente de latenta/rata de succes
+  expuse separat in admin/monitoring.
 - **Backtesting complet (dashboard, segmentare pe conditii meteo, pret).**
   `forecast_backtest_service.py` e strict minimal -- MAE/bias pe puterea PV,
   fara UI, fara segmentare senin/inorat, fara metrici pe prognoza de consum
