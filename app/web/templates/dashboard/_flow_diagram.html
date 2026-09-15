@@ -1,40 +1,70 @@
-<svg viewBox="0 0 480 220" class="mx-auto w-full max-w-2xl" role="img" aria-label="Diagrama fluxurilor de energie">
-  <!-- Noduri -->
+<svg id="energy-flow-diagram" viewBox="0 0 560 260" class="mx-auto w-full max-w-2xl" role="img" aria-labelledby="energy-flow-title energy-flow-summary">
+  <title id="energy-flow-title">Diagrama fluxurilor de energie</title>
+  <desc id="energy-flow-desc">Fluxuri nete intre PV, consum, baterie, retea, EV si bus-ul energetic al statiei.</desc>
+  <defs>
+    <marker id="flow-arrow-amber" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L8,4 L0,8 Z" class="fill-amber-500"></path>
+    </marker>
+    <marker id="flow-arrow-green" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L8,4 L0,8 Z" class="fill-green-600"></path>
+    </marker>
+    <marker id="flow-arrow-gray" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L8,4 L0,8 Z" class="fill-gray-500"></path>
+    </marker>
+    <marker id="flow-arrow-sky" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L8,4 L0,8 Z" class="fill-sky-600"></path>
+    </marker>
+  </defs>
+
   <g font-size="12" font-family="sans-serif">
-    <!-- PV (sus stanga) -->
-    <circle cx="90" cy="40" r="30" class="fill-amber-100 stroke-amber-500 dark:fill-amber-900/40" stroke-width="2" />
-    <text x="90" y="44" text-anchor="middle" class="fill-gray-800 dark:fill-gray-100">PV</text>
+    <circle cx="95" cy="54" r="32" class="fill-amber-100 stroke-amber-500 dark:fill-amber-900/40" stroke-width="2"></circle>
+    <text x="95" y="58" text-anchor="middle" class="fill-gray-800 dark:fill-gray-100">PV</text>
 
-    <!-- Casa (centru) -->
-    <rect x="200" y="90" width="80" height="50" rx="8" class="fill-brand-100 stroke-brand-600 dark:fill-brand-900/40" stroke-width="2" />
-    <text x="240" y="120" text-anchor="middle" class="fill-gray-800 dark:fill-gray-100">Consum casa</text>
+    <rect x="238" y="95" width="86" height="58" rx="8" class="fill-brand-100 stroke-brand-600 dark:fill-brand-900/40" stroke-width="2"></rect>
+    <text x="281" y="119" text-anchor="middle" class="fill-gray-800 dark:fill-gray-100">Bus</text>
+    <text x="281" y="137" text-anchor="middle" class="fill-gray-600 dark:fill-gray-300">statie</text>
 
-    <!-- Baterie (jos stanga) -->
-    <rect x="60" y="160" width="70" height="45" rx="8" class="fill-green-100 stroke-green-600 dark:fill-green-900/40" stroke-width="2" />
-    <text x="95" y="187" text-anchor="middle" class="fill-gray-800 dark:fill-gray-100">Baterie</text>
+    <rect x="420" y="95" width="92" height="58" rx="8" class="fill-gray-100 stroke-gray-500 dark:fill-gray-800" stroke-width="2"></rect>
+    <text x="466" y="119" text-anchor="middle" class="fill-gray-800 dark:fill-gray-100">Consum</text>
+    <text x="466" y="137" text-anchor="middle" class="fill-gray-600 dark:fill-gray-300">casa</text>
 
-    <!-- Retea (sus dreapta) -->
-    <rect x="360" y="20" width="90" height="45" rx="8" class="fill-gray-200 stroke-gray-500 dark:fill-gray-800" stroke-width="2" />
-    <text x="405" y="47" text-anchor="middle" class="fill-gray-800 dark:fill-gray-100">Retea</text>
+    <rect x="58" y="183" width="80" height="48" rx="8" class="fill-green-100 stroke-green-600 dark:fill-green-900/40" stroke-width="2"></rect>
+    <text x="98" y="211" text-anchor="middle" class="fill-gray-800 dark:fill-gray-100">Baterie</text>
 
-    <!-- EV (jos dreapta) -->
-    <rect x="360" y="160" width="90" height="45" rx="8" class="fill-sky-100 stroke-sky-600 dark:fill-sky-900/40" stroke-width="2" />
-    <text x="405" y="187" text-anchor="middle" class="fill-gray-800 dark:fill-gray-100">EV</text>
+    <rect x="408" y="18" width="100" height="48" rx="8" class="fill-gray-200 stroke-gray-500 dark:fill-gray-800" stroke-width="2"></rect>
+    <text x="458" y="47" text-anchor="middle" class="fill-gray-800 dark:fill-gray-100">Retea</text>
+
+    <rect x="408" y="183" width="100" height="48" rx="8" class="fill-sky-100 stroke-sky-600 dark:fill-sky-900/40" stroke-width="2"></rect>
+    <text x="458" y="211" text-anchor="middle" class="fill-gray-800 dark:fill-gray-100">EV</text>
   </g>
 
-  <!-- Legaturi (opacitatea e actualizata din JS in functie de directia fluxului) -->
-  <g stroke-width="3" fill="none">
-    <line id="flow-pv-home" x1="115" y1="60" x2="205" y2="100" class="stroke-amber-500" opacity="0.12" />
-    <line id="flow-battery-home" x1="120" y1="170" x2="210" y2="135" class="stroke-green-600" opacity="0.12" />
-    <line id="flow-home-battery" x1="210" y1="140" x2="120" y2="175" class="stroke-green-600" stroke-dasharray="4 3" opacity="0.12" />
-    <line id="flow-grid-home" x1="375" y1="60" x2="280" y2="105" class="stroke-gray-500" opacity="0.12" />
-    <line id="flow-home-grid" x1="280" y1="100" x2="375" y2="55" class="stroke-gray-500" stroke-dasharray="4 3" opacity="0.12" />
-    <line id="flow-home-ev" x1="280" y1="130" x2="365" y2="175" class="stroke-sky-600" opacity="0.12" />
+  <g id="energy-flow-edges" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <path id="flow-pv-bus" data-flow-edge="pv_bus" d="M124 66 C168 82 201 103 238 117" class="stroke-amber-500" opacity="0.18" marker-end="url(#flow-arrow-amber)"></path>
+    <path id="flow-bus-load" data-flow-edge="bus_load" d="M324 124 C356 124 386 124 420 124" class="stroke-gray-500" opacity="0.18" marker-end="url(#flow-arrow-gray)"></path>
+    <path id="flow-battery-bus" data-flow-edge="battery_bus" d="M136 201 C178 178 207 151 239 137" class="stroke-green-600" opacity="0.18" marker-end="url(#flow-arrow-green)"></path>
+    <path id="flow-bus-battery" data-flow-edge="bus_battery" d="M239 146 C207 160 176 184 136 207" class="stroke-green-600" opacity="0.18" marker-end="url(#flow-arrow-green)"></path>
+    <path id="flow-grid-bus" data-flow-edge="grid_bus" d="M410 56 C371 75 347 93 320 110" class="stroke-gray-500" opacity="0.18" marker-end="url(#flow-arrow-gray)"></path>
+    <path id="flow-bus-grid" data-flow-edge="bus_grid" d="M324 102 C354 83 380 65 410 49" class="stroke-gray-500" opacity="0.18" marker-end="url(#flow-arrow-gray)"></path>
+    <path id="flow-bus-ev" data-flow-edge="bus_ev" d="M321 145 C356 164 383 184 408 199" class="stroke-sky-600" opacity="0.18" marker-end="url(#flow-arrow-sky)"></path>
+  </g>
+
+  <g font-size="11" font-family="sans-serif" class="fill-gray-600 dark:fill-gray-300">
+    <text data-flow-label="pv_bus" x="176" y="81" text-anchor="middle">-</text>
+    <text data-flow-label="bus_load" x="372" y="116" text-anchor="middle">-</text>
+    <text data-flow-label="battery_bus" x="176" y="178" text-anchor="middle">-</text>
+    <text data-flow-label="bus_battery" x="176" y="221" text-anchor="middle">-</text>
+    <text data-flow-label="grid_bus" x="366" y="78" text-anchor="middle">-</text>
+    <text data-flow-label="bus_grid" x="366" y="44" text-anchor="middle">-</text>
+    <text data-flow-label="bus_ev" x="364" y="181" text-anchor="middle">-</text>
   </g>
 </svg>
-<div class="mt-2 flex flex-wrap justify-center gap-4 text-xs text-gray-500 dark:text-gray-400">
+<p id="energy-flow-summary" class="mt-2 text-center text-xs text-gray-500 dark:text-gray-400" aria-live="polite">
+  Se asteapta primul snapshot live.
+</p>
+<div class="mt-2 flex flex-wrap justify-center gap-3 text-xs text-gray-500 dark:text-gray-400">
   <span><span class="inline-block h-2 w-2 rounded-full bg-amber-500"></span> PV</span>
   <span><span class="inline-block h-2 w-2 rounded-full bg-green-600"></span> Baterie</span>
-  <span><span class="inline-block h-2 w-2 rounded-full bg-gray-500"></span> Retea</span>
+  <span><span class="inline-block h-2 w-2 rounded-full bg-gray-500"></span> Retea/consum</span>
   <span><span class="inline-block h-2 w-2 rounded-full bg-sky-600"></span> EV</span>
+  <span id="energy-flow-provenance" class="badge-muted" hidden></span>
 </div>

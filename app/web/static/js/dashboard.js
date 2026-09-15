@@ -1,5 +1,57 @@
 /* global echarts, emsConnectSSE */
 
+const EMS_FLOW_DEADBAND_KW = 0.05;
+const EMS_FLOW_ACTIVE_STATES = new Set(["measured", "estimated", "simulated"]);
+const EMS_FLOW_EDGES = {
+  pv_bus: { metric: "pv_power_kw", direction: "PV -> bus", positive: "active" },
+  bus_load: { metric: "load_power_kw", direction: "bus -> consum", positive: "active" },
+  battery_bus: { metric: "battery_power_kw", direction: "baterie -> bus", negative: "active" },
+  bus_battery: { metric: "battery_power_kw", direction: "bus -> baterie", positive: "active" },
+  grid_bus: { metric: "grid_power_kw", direction: "retea -> bus", positive: "active" },
+  bus_grid: { metric: "grid_power_kw", direction: "bus -> retea", negative: "active" },
+  bus_ev: { metric: "ev_power_kw", direction: "bus -> EV", positive: "active" },
+};
+const EMS_FLOW_METRIC_TO_EDGES = Object.entries(EMS_FLOW_EDGES).reduce((acc, [edge, cfg]) => {
+  if (!acc[cfg.metric]) acc[cfg.metric] = [];
+  acc[cfg.metric].push(edge);
+  return acc;
+}, {});
+
+function emsBuildFlowState(metrics) {
+  const quality = metrics.data_quality || "missing";
+  const values = {};
+  const active = [];
+  for (const [edge, cfg] of Object.entries(EMS_FLOW_EDGES)) {
+    const raw = metrics[cfg.metric];
+    let state = "missing";
+    let valueKw = null;
+    if (raw !== null && raw !== undefined && Number.isFinite(Number(raw))) {
+      valueKw = Math.abs(Number(raw));
+      const signed = Number(raw);
+      if (Math.abs(signed) <= EMS_FLOW_DEADBAND_KW) {
+        state = "idle";
+        valueKw = 0;
+      } else if ((signed > 0 && cfg.positive === "active") || (signed < 0 && cfg.negative === "active")) {
+        state = EMS_FLOW_ACTIVE_STATES.has(quality) ? "active" : quality;
+        active.push(edge);
+      } else {
+        state = "idle";
+        valueKw = 0;
+      }
+    }
+    values[edge] = {
+      metric: cfg.metric,
+      direction: cfg.direction,
+      state,
+      value_kw: valueKw,
+      label: valueKw === null ? "-" : `${valueKw.toFixed(2)} kW`,
+    };
+  }
+  return { quality, values, active };
+}
+
+window.emsBuildFlowState = emsBuildFlowState;
+
 function emsChartTheme() {
   return document.documentElement.classList.contains("dark") ? "dark" : undefined;
 }
@@ -77,25 +129,108 @@ function emsInitDashboard(stationId) {
     data_quality: updateQualityKpi,
     telemetry_source: updateSourceKpi,
   };
-  const FLOW_DIAGRAM_METRICS = new Set(["pv_power_kw", "battery_power_kw", "grid_power_kw", "ev_power_kw"]);
+  const FLOW_DIAGRAM_METRICS = new Set(["pv_power_kw", "load_power_kw", "battery_power_kw", "grid_power_kw", "ev_power_kw", "data_quality", "telemetry_source"]);
 
   function setKpis(s) {
     for (const widget of new Set(Object.values(kpiWidgetByMetric))) widget(s);
     updateFlowDiagram(s);
   }
 
-  function updateFlowDiagram(s) {
-    const flows = {
-      "flow-pv-home": s.pv_power_kw && s.pv_power_kw > 0.05,
-      "flow-battery-home": s.battery_power_kw && s.battery_power_kw < -0.05,
-      "flow-home-battery": s.battery_power_kw && s.battery_power_kw > 0.05,
-      "flow-grid-home": s.grid_power_kw && s.grid_power_kw > 0.05,
-      "flow-home-grid": s.grid_power_kw && s.grid_power_kw < -0.05,
-      "flow-home-ev": s.ev_power_kw && s.ev_power_kw > 0.05,
-    };
-    for (const [id, active] of Object.entries(flows)) {
-      const el = document.getElementById(id);
-      if (el) el.style.opacity = active ? "1" : "0.12";
+  const flowController = {
+    edges: new Map(),
+    labels: new Map(),
+    runners: new Map(),
+    reducedMotion: window.matchMedia("(prefers-reduced-motion: reduce)").matches,
+    initialized: false,
+  };
+
+  function initFlowDiagram() {
+    if (flowController.initialized) return;
+    const svg = $("energy-flow-diagram");
+    if (!svg) return;
+    for (const edgeEl of svg.querySelectorAll("[data-flow-edge]")) {
+      flowController.edges.set(edgeEl.dataset.flowEdge, window.SVG ? SVG(edgeEl) : null);
+    }
+    for (const labelEl of svg.querySelectorAll("[data-flow-label]")) {
+      flowController.labels.set(labelEl.dataset.flowLabel, labelEl);
+    }
+    const motion = window.matchMedia("(prefers-reduced-motion: reduce)");
+    motion.addEventListener("change", (ev) => {
+      flowController.reducedMotion = ev.matches;
+      if (ev.matches) stopFlowAnimations();
+      else updateFlowDiagram(liveMetrics);
+    });
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden) stopFlowAnimations();
+      else if (!flowController.reducedMotion) updateFlowDiagram(liveMetrics);
+    });
+    window.addEventListener("beforeunload", stopFlowAnimations);
+    flowController.initialized = true;
+  }
+
+  function stopFlowAnimation(edge) {
+    const runner = flowController.runners.get(edge);
+    if (runner && typeof runner.unschedule === "function") runner.unschedule();
+    else if (runner && typeof runner.stop === "function") runner.stop();
+    flowController.runners.delete(edge);
+  }
+
+  function stopFlowAnimations() {
+    for (const edge of flowController.runners.keys()) stopFlowAnimation(edge);
+  }
+
+  function setFlowAnimation(edge, isActive, speedMs) {
+    const item = flowController.edges.get(edge);
+    if (!item) return;
+    stopFlowAnimation(edge);
+    if (!isActive || flowController.reducedMotion || document.hidden) return;
+    item.attr({ "stroke-dasharray": "8 10", "stroke-dashoffset": 0 });
+    const runner = item.animate(speedMs).attr({ "stroke-dashoffset": -36 }).loop();
+    flowController.runners.set(edge, runner);
+  }
+
+  function updateFlowDiagram(s, changedMetrics = null) {
+    initFlowDiagram();
+    const diagram = $("energy-flow-diagram");
+    if (!diagram) return;
+    const state = emsBuildFlowState(s);
+    const affectedEdges = changedMetrics
+      ? new Set([...changedMetrics].flatMap((metric) => EMS_FLOW_METRIC_TO_EDGES[metric] || []))
+      : new Set(Object.keys(EMS_FLOW_EDGES));
+    if (changedMetrics && (changedMetrics.has("data_quality") || changedMetrics.has("telemetry_source"))) {
+      for (const edge of Object.keys(EMS_FLOW_EDGES)) affectedEdges.add(edge);
+    }
+
+    diagram.style.filter = ["stale", "missing"].includes(state.quality) ? "grayscale(1)" : "";
+    for (const edge of affectedEdges) {
+      const edgeState = state.values[edge];
+      const item = flowController.edges.get(edge);
+      const label = flowController.labels.get(edge);
+      if (!edgeState || !item) continue;
+      const isActive = edgeState.state === "active";
+      const isMissing = edgeState.state === "missing" || edgeState.state === "stale";
+      const width = isActive ? Math.min(7, 3 + edgeState.value_kw * 0.45) : 3;
+      const opacity = isActive ? 1 : (isMissing ? 0.1 : 0.22);
+      item.animate(400).attr({ opacity, "stroke-width": width });
+      if (!isActive) item.attr({ "stroke-dasharray": "4 8", "stroke-dashoffset": 0 });
+      else setFlowAnimation(edge, true, Math.max(650, 1800 - edgeState.value_kw * 90));
+      if (label) {
+        label.textContent = edgeState.label;
+        label.setAttribute("opacity", isMissing ? "0.55" : "1");
+      }
+    }
+
+    const summaryEl = $("energy-flow-summary");
+    if (summaryEl) {
+      const activeText = state.active.map((edge) => `${state.values[edge].direction}: ${state.values[edge].label}`);
+      summaryEl.textContent = activeText.length ? activeText.join(" | ") : "Fara fluxuri active peste pragul de 0.05 kW.";
+    }
+    const provenance = $("energy-flow-provenance");
+    if (provenance) {
+      const special = s.data_quality === "estimated" || s.data_quality === "simulated" || s.data_quality === "stale";
+      provenance.hidden = !special;
+      provenance.textContent = special ? `date: ${s.data_quality}` : "";
+      provenance.className = s.data_quality === "stale" ? "badge-error" : "badge-warn";
     }
   }
 
@@ -473,6 +608,9 @@ function emsInitDashboard(stationId) {
     const classes = { connecting: "badge-warn", live: "badge-ok", stale: "badge-warn", offline: "badge-error" };
     el.textContent = labels[status] || status;
     el.className = classes[status] || "badge-muted";
+    const diagram = $("energy-flow-diagram");
+    if (diagram && (status === "stale" || status === "offline")) diagram.style.filter = "grayscale(1)";
+    else if (diagram && liveMetrics.data_quality !== "stale" && liveMetrics.data_quality !== "missing") diagram.style.filter = "";
   }
 
   function applyMetrics(metrics, { replace = false } = {}) {
@@ -488,13 +626,15 @@ function emsInitDashboard(stationId) {
       // de metricile chiar primite in acest eveniment, nu toate cele 11.
       const widgetsToUpdate = new Set();
       let flowDiagramAffected = false;
+      const changedMetrics = new Set();
       for (const m of metrics) {
+        changedMetrics.add(m.metric);
         const widget = kpiWidgetByMetric[m.metric];
         if (widget) widgetsToUpdate.add(widget);
         if (FLOW_DIAGRAM_METRICS.has(m.metric)) flowDiagramAffected = true;
       }
       for (const widget of widgetsToUpdate) widget(liveMetrics);
-      if (flowDiagramAffected) updateFlowDiagram(liveMetrics);
+      if (flowDiagramAffected) updateFlowDiagram(liveMetrics, changedMetrics);
     }
 
     lastMessageAt = Date.now();
