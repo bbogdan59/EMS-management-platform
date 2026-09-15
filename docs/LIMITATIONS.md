@@ -1919,8 +1919,8 @@ si vedea telemetria statiei importata de acolo, read-only:
   obligatorie in formular inainte de orice autentificare; (2) selectie explicita
   a CARE statie din cont (un cont Deye Cloud poate avea mai multe) sa fie
   legata de statia platformei -- fara asta, nicio telemetrie nu e importata.
-  Lista minimala `id`/`name` este persistata la autentificare: pagina GET nu
-  asteapta providerul, iar POST-ul de selectie refuza orice id care nu a fost
+  Lista minimala `id`/`name` este persistata la autentificare: refresh-ul
+  paginii GET nu apeleaza si nu asteapta providerul, iar POST-ul de selectie refuza orice id care nu a fost
   returnat pentru acel cont si ignora numele controlat de browser.
 - **Credentiale criptate la repaus** (`app/core/crypto.py`, Fernet/AES cu cheie
   derivata din `SECRET_KEY` prin HKDF) -- parola contului client SI token-ul de
