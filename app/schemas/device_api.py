@@ -100,6 +100,28 @@ class TelemetryBatchResult(BaseModel):
     results: list[TelemetryItemAck] = Field(default_factory=list)
 
 
+class TelemetryMetricSpec(BaseModel):
+    name: str
+    unit: str | None
+    nullable: bool
+    quality: Literal["measured", "reported", "derived"]
+    description: str
+    sign: str | None = None
+    min_value: Decimal | None = None
+    max_value: Decimal | None = None
+
+
+class TelemetryContractResponse(BaseModel):
+    schema_version: int
+    endpoint: str
+    deduplication_key: list[str]
+    time: dict
+    metrics: list[TelemetryMetricSpec]
+    quality_flags: dict
+    raw_payload: dict
+    ack: dict
+
+
 class PlanIntervalOut(BaseModel):
     interval_start: datetime
     interval_end: datetime

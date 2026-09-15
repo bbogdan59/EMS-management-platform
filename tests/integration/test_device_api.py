@@ -14,6 +14,19 @@ def _claim_code(db, station, user):
     return raw_code
 
 
+def test_telemetry_contract_endpoint_is_public_and_declares_ack_semantics(client):
+    resp = client.get("/api/v1/telemetry/contract")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["schema_version"] == 1
+    assert body["endpoint"] == "/api/v1/telemetry/batch"
+    assert body["deduplication_key"] == ["device_id", "boot_id", "sequence"]
+    assert body["ack"]["statuses"] == ["accepted", "duplicate", "rejected"]
+    assert "future_timestamp" in body["ack"]["retryable_reason_codes"]
+    assert "timestamp_too_old" in body["ack"]["permanent_reason_codes"]
+
+
 def test_device_claim_and_telemetry_dedup(client, db):
     user = make_user(db, email="devowner1@test.local", password="Password1234")
     org = make_org(db, "Device Org 1")
