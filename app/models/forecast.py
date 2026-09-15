@@ -33,6 +33,7 @@ class WeatherForecast(Entity):
     dhi_w_m2: Mapped[float | None] = mapped_column(Float, nullable=True)
     cloud_cover_percent: Mapped[float | None] = mapped_column(Float, nullable=True)
     temperature_c: Mapped[float | None] = mapped_column(Float, nullable=True)
+    precipitation_mm: Mapped[float | None] = mapped_column(Float, nullable=True)
     wind_speed_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
 
     confidence: Mapped[str] = mapped_column(String(16), default="nominal", nullable=False)  # nominal|low|high
