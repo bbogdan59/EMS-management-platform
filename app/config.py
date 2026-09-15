@@ -97,6 +97,8 @@ class Settings(BaseSettings):
     weather_provider: Literal["open-meteo"] = "open-meteo"
     weather_base_url: str = "https://api.open-meteo.com/v1/forecast"
     weather_request_timeout_seconds: float = 15.0
+    weather_max_retries: int = 3
+    weather_retry_backoff_seconds: float = 0.2
     weather_cache_ttl_minutes: int = 30
 
     # --- Optimization ---
