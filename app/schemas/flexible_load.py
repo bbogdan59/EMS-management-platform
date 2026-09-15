@@ -118,7 +118,8 @@ class ThermalSimulationStep(BaseModel):
     outdoor_temperature_c: Decimal
     requested_mode: ThermalMode
     requested_input_power_kw: Decimal = Field(ge=0)
-    import_price_lei_kwh: Decimal | None = Field(default=None, ge=0)
+    # Preturile dinamice pot fi negative; `None` ramane distinct de zero.
+    import_price_lei_kwh: Decimal | None = None
 
     @model_validator(mode="after")
     def validate_step(self):

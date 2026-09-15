@@ -84,6 +84,21 @@ def test_missing_price_keeps_total_cost_unknown_not_zero():
     assert result.has_unknown_cost is True
 
 
+def test_negative_dynamic_price_is_preserved_in_cost():
+    start = datetime(2026, 1, 1, tzinfo=UTC)
+    result = simulate_thermal_response(
+        ThermalSimulationRequest(
+            initial_indoor_temperature_c=Decimal("20"),
+            capabilities=_capabilities(),
+            model=_model(),
+            steps=[_step(start, price="-0.25")],
+        )
+    )
+
+    assert result.total_cost_lei == Decimal("-0.1250")
+    assert result.has_unknown_cost is False
+
+
 def test_short_cycle_is_reported_without_rewriting_requested_schedule():
     start = datetime(2026, 1, 1, tzinfo=UTC)
     steps = [

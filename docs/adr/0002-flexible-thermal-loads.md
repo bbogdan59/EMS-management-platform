@@ -59,7 +59,7 @@ simulatorul nu creeaza comenzi si nu „repara” silentios valori imposibile.
 Puterea peste capabilitate si modurile nesuportate sunt refuzate. Schimbarile
 on/off prea rapide sunt raportate ca incalcari, pastrand scenariul pentru audit.
 
-Costul foloseste `Decimal`. Daca pretul lipseste pentru un singur interval,
+Costul foloseste `Decimal` si accepta preturi dinamice negative. Daca pretul lipseste pentru un singur interval,
 costul total ramane necunoscut (`None`), nu zero sau suma partiala prezentata
 ca exacta. Baseline-ul pilot va fi controlul nativ observat; economia va fi
 raportata numai dupa o perioada comparabila si cu interval de incredere.
