@@ -109,6 +109,35 @@ def _validate_version_time(valid_from: datetime) -> None:
         raise ValueError("valid_from: trebuie sa fie un instant timezone-aware (UTC recomandat).")
 
 
+def _validate_non_negative_decimal(field: str, value: Decimal | None) -> None:
+    if value is not None and value < 0:
+        raise ValueError(f"{field}: trebuie sa fie >= 0; nu introduce costuri/taxe negative neverificate.")
+
+
+def _validate_version_components(
+    *,
+    fixed_price_lei_per_kwh: Decimal | None,
+    fixed_monthly_fee_lei: Decimal,
+    variable_component_lei_per_kwh: Decimal,
+    distribution_lei_per_kwh: Decimal,
+    transport_lei_per_kwh: Decimal,
+    other_regulated_lei_per_kwh: Decimal,
+    vat_rate_percent: Decimal | None,
+    settlement_interval_days: int,
+) -> None:
+    _validate_non_negative_decimal("fixed_price_lei_per_kwh", fixed_price_lei_per_kwh)
+    _validate_non_negative_decimal("fixed_monthly_fee_lei", fixed_monthly_fee_lei)
+    _validate_non_negative_decimal("variable_component_lei_per_kwh", variable_component_lei_per_kwh)
+    _validate_non_negative_decimal("distribution_lei_per_kwh", distribution_lei_per_kwh)
+    _validate_non_negative_decimal("transport_lei_per_kwh", transport_lei_per_kwh)
+    _validate_non_negative_decimal("other_regulated_lei_per_kwh", other_regulated_lei_per_kwh)
+    _validate_non_negative_decimal("vat_rate_percent", vat_rate_percent)
+    if vat_rate_percent is not None and vat_rate_percent > 100:
+        raise ValueError("vat_rate_percent: trebuie sa fie intre 0 si 100.")
+    if settlement_interval_days <= 0:
+        raise ValueError("settlement_interval_days: trebuie sa fie un numar pozitiv de zile.")
+
+
 def add_tariff_version(
     db: Session,
     tariff: Tariff,
@@ -133,6 +162,16 @@ def add_tariff_version(
         fixed_price_lei_per_kwh=fixed_price_lei_per_kwh,
         opcom_margin_lei_per_kwh=opcom_margin_lei_per_kwh,
         economic_calculation_disabled=economic_calculation_disabled,
+    )
+    _validate_version_components(
+        fixed_price_lei_per_kwh=fixed_price_lei_per_kwh,
+        fixed_monthly_fee_lei=fixed_monthly_fee_lei,
+        variable_component_lei_per_kwh=variable_component_lei_per_kwh,
+        distribution_lei_per_kwh=distribution_lei_per_kwh,
+        transport_lei_per_kwh=transport_lei_per_kwh,
+        other_regulated_lei_per_kwh=other_regulated_lei_per_kwh,
+        vat_rate_percent=vat_rate_percent,
+        settlement_interval_days=settlement_interval_days,
     )
 
     open_version = db.scalar(
