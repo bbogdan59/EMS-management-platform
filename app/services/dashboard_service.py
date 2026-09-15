@@ -97,6 +97,12 @@ def get_summary(db: Session, station: Station) -> dict:
         "last_update": last_update.isoformat() if last_update else None,
         "data_quality": data_quality,
         "timezone": station.timezone,
+        # Provenienta ultimei telemetrii (issue #43) -- `device_rs485` sau
+        # `deye_cloud`. Regula de prioritate (dispozitiv local activ ->
+        # Deye Cloud nu mai scrie) e aplicata la INGERARE
+        # (`deye_cloud_service.poll_connection`), nu aici -- randul "cel mai
+        # recent" e deja cel corect de afisat, fara logica suplimentara.
+        "telemetry_source": latest.source if latest else None,
     }
 
 
@@ -186,6 +192,9 @@ def get_live_metrics(db: Session, station: Station) -> list[dict]:
         # separat de KPI-urile individuale de mai sus.
         _telemetry_metric("data_quality", data_quality, None),
         _telemetry_metric("last_update", measured_at_iso, None),
+        # Provenienta ultimei telemetrii (issue #43) -- vezi `get_summary`
+        # pentru semnificatia exacta (device_rs485/deye_cloud).
+        _telemetry_metric("telemetry_source", latest.source if latest else None, None),
         _evaluated_metric("price_buy_lei_kwh", price_buy, "lei/kWh", quality="measured" if price_buy is not None else "missing", source="tariff"),
         _evaluated_metric("price_sell_lei_kwh", price_sell, "lei/kWh", quality="measured" if price_sell is not None else "missing", source="tariff"),
         _evaluated_metric("execution_mode", station.execution_mode, None, source="plan"),

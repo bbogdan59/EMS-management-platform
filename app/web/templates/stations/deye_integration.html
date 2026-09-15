@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+{% from "partials/_breadcrumb.html" import trail as breadcrumb %}
+{% block title %}Deye Cloud - {{ station.name }} - {{ app_name }}{% endblock %}
+{% block content %}
+<div class="space-y-6">
+  {{ breadcrumb([
+    {"label": "Dashboard", "url": "/"},
+    {"label": station.organization.name, "url": "/organizations/" ~ station.organization_id},
+    {"label": station.name, "url": "/?station_id=" ~ station.id},
+    {"label": "Deye Cloud", "url": None},
+  ]) }}
+  <h1 class="text-xl font-semibold">Conector Deye Cloud (doar citire)</h1>
+  <p class="text-sm text-gray-500 dark:text-gray-400">
+    Pentru clienti fara dispozitiv EMS local: conecteaza contul tau Deye Cloud ca sa vezi
+    statia/telemetria importata direct din platforma Deye. <strong>Doar citire</strong> --
+    nicio comanda nu este trimisa catre invertor prin aceasta conexiune.
+  </p>
+
+  {% if request.query_params.get("error") %}
+  <div class="badge-error rounded p-3">{{ request.query_params.get("error") }}</div>
+  {% elif request.query_params.get("notice") %}
+  <div class="badge-ok rounded p-3">{{ request.query_params.get("notice") }}</div>
+  {% endif %}
+
+  {% if not connection or connection.status in ("disconnected", "error") %}
+    {% if connection and connection.status == "error" %}
+    <div class="badge-error rounded p-3">
+      Conexiunea are o eroare: {{ connection.last_sync_message or "autentificare esuata" }}.
+      Reconecteaza contul mai jos.
+    </div>
+    {% endif %}
+    {% if can_edit %}
+    <div class="card">
+      <h2 class="mb-2 font-medium">Conecteaza contul Deye Cloud</h2>
+      <p class="mb-3 text-sm text-gray-500 dark:text-gray-400">
+        Conexiunea TLS protejeaza transportul, iar parola este transformata SHA-256 conform
+        documentatiei Deye si stocata criptat pe platforma -- niciodata in clar in baza de date sau loguri.
+      </p>
+      <form method="post" action="/stations/{{ station.id }}/integrations/deye/connect" class="space-y-3 max-w-md">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}" />
+        <div><label class="label">Email cont Deye Cloud</label>
+          <input class="input" type="email" name="email" required /></div>
+        <div><label class="label">Parola</label>
+          <input class="input" type="password" name="password" required autocomplete="current-password" /></div>
+        <label class="flex items-start gap-2 text-sm">
+          <input type="checkbox" name="consent" value="yes" required class="mt-1" />
+          <span>Sunt de acord ca statiile si telemetria din contul meu Deye Cloud sa fie importate in aceasta platforma, dupa ce aleg explicit statia.</span>
+        </label>
+        <button type="submit" class="btn-primary">Conecteaza</button>
+      </form>
+    </div>
+    {% else %}
+    <p>Doar un administrator de organizatie poate conecta un cont Deye Cloud pentru aceasta statie.</p>
+    {% endif %}
+  {% elif connection.status == "pending_selection" %}
+    <div class="card">
+      <h2 class="mb-2 font-medium">Alege statia din contul Deye Cloud</h2>
+      <p class="mb-3 text-sm text-gray-500 dark:text-gray-400">
+        Contul <strong>{{ connection.account_email }}</strong> este autentificat. Alege ce statie
+        din acest cont sa fie legata de <strong>{{ station.name }}</strong> -- import explicit, o singura data.
+      </p>
+      {% if not remote_stations %}
+      <p>Contul nu are nicio statie in Deye Cloud.</p>
+      {% else %}
+      {% for rs in remote_stations %}
+      <form method="post" action="/stations/{{ station.id }}/integrations/deye/select" class="flex items-center justify-between border-t border-gray-100 py-2 dark:border-gray-800">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}" />
+        <input type="hidden" name="remote_station_id" value="{{ rs.id }}" />
+        <span>{{ rs.name or ("Statia " ~ rs.id) }} <span class="text-xs text-gray-500">(id {{ rs.id }})</span></span>
+        {% if can_edit %}<button type="submit" class="btn-primary">Selecteaza</button>{% endif %}
+      </form>
+      {% endfor %}
+      {% endif %}
+    </div>
+  {% elif connection.status == "connected" %}
+    <div class="card">
+      <h2 class="mb-2 font-medium">Conectat</h2>
+      <p>Cont: <strong>{{ connection.account_email }}</strong></p>
+      <p>Statie Deye Cloud legata: <strong>{{ connection.remote_station_name }}</strong> (id {{ connection.remote_station_id }})</p>
+      <p>
+        Ultima sincronizare:
+        {% if connection.last_sync_at %}{{ connection.last_sync_at.strftime("%d.%m.%Y %H:%M") }} UTC --
+          {% if connection.last_sync_status == "succeeded" %}<span class="badge-ok">reusita</span>
+          {% elif connection.last_sync_status == "skipped" %}<span class="badge-muted">omisa ({{ connection.last_sync_message }})</span>
+          {% else %}<span class="badge-error">esuata</span>{% endif %}
+        {% else %}<span class="badge-muted">inca nicio sincronizare</span>{% endif %}
+      </p>
+      <p class="mt-2 text-sm text-gray-500 dark:text-gray-400">
+        Datele Deye Cloud pot avea o latenta/rezolutie diferita fata de un dispozitiv EMS local si
+        NU garanteaza control instant (aceasta conexiune e doar citire).
+        Daca statia are si un dispozitiv EMS local activ, telemetria locala are intotdeauna prioritate --
+        Deye Cloud completeaza doar cand dispozitivul local nu raporteaza recent.
+      </p>
+      {% if connection.device_links %}
+      <h3 class="mt-3 font-medium">Dispozitive raportate de Deye Cloud</h3>
+      <ul class="list-disc pl-5 text-sm">
+        {% for link in connection.device_links %}
+        <li>{{ link.remote_device_sn }}{% if link.remote_device_type %} -- {{ link.remote_device_type }}{% endif %}</li>
+        {% endfor %}
+      </ul>
+      {% endif %}
+      {% if can_edit %}
+      <form method="post" action="/stations/{{ station.id }}/integrations/deye/disconnect" class="mt-4">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}" />
+        <button type="submit" class="btn-secondary">Deconecteaza</button>
+      </form>
+      {% endif %}
+    </div>
+  {% endif %}
+</div>
+{% endblock %}

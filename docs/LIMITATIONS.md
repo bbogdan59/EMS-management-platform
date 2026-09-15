@@ -1902,6 +1902,175 @@ care nu exista):
   literal pe fiecare pagina din aplicatie (ex. paginile de listare simple nu
   au fost modificate, intrucat nu au campuri de grupat).
 
+## Addendum: Conector Deye Cloud read-only pentru clienti fara EMS local (issue #43)
+
+**Ce s-a implementat.** Un client FARA hardware EMS poate conecta contul lui
+Deye Cloud (`/stations/{id}/integrations/deye`, organization_admin+ pentru
+conectare/selectie/deconectare, orice rol cu acces la statie pentru vizualizare)
+si vedea telemetria statiei importata de acolo, read-only:
+
+- **Flow de autentificare** (`app/services/deye_cloud_service.py`):
+  `POST /v1.0/account/token?appId=...` cu `appSecret` (al platformei, un singur
+  app inregistrat o data in portalul Deye) + `email`/`password` (contul Deye
+  Cloud AL CLIENTULUI, parola trimisa hash-uita SHA-256, niciodata in clar).
+  Regiune: doar centrul de date UE (`eu1-developer.deyecloud.com`) --
+  `am`/`india` raman nefolosite (`Settings.deye_cloud_region`, fixat la `"eu"`).
+- **Consimtamant explicit, in doi pasi**: (1) conectare cont -- bifa
+  obligatorie in formular inainte de orice autentificare; (2) selectie explicita
+  a CARE statie din cont (un cont Deye Cloud poate avea mai multe) sa fie
+  legata de statia platformei -- fara asta, nicio telemetrie nu e importata.
+  Lista minimala `id`/`name` este persistata la autentificare: refresh-ul
+  paginii GET nu apeleaza si nu asteapta providerul, iar POST-ul de selectie refuza orice id care nu a fost
+  returnat pentru acel cont si ignora numele controlat de browser.
+- **Credentiale criptate la repaus** (`app/core/crypto.py`, Fernet/AES cu cheie
+  derivata din `SECRET_KEY` prin HKDF) -- parola contului client SI token-ul de
+  acces cache-uit, niciodata in clar in baza de date. Redactate din loguri
+  (nici `authenticate`, nici `poll_connection` nu logheaza parola/token-ul;
+  doar `structlog` cu campuri safe: `connection_id`, tipul erorii).
+  **Deconectabil din UI** (`disconnect`): sterge parola si token-ul stocate
+  local, nedistructiv fata de telemetria deja importata (ramane ca istoric,
+  la fel ca arhivarea unei statii), si revoca device-ul sintetic ca sa nu mai
+  fie prezentat drept activ. Import/device/mapare explicita: fiecare
+  statie Deye Cloud selectata creeaza un device SINTETIC (`Device.capabilities
+  = {"deye_cloud": true, "read_only": true}`), FARA `DeviceCredential` -- nu
+  poate niciodata autentifica pe protocolul web-device si deci nu poate
+  niciodata deveni `Plan.accepted_by_device_id` (verificat direct in
+  `command_dispatch_service`: dispatch-ul tinteste STRICT
+  `plan.accepted_by_device_id`) -- garanteaza structural (nu doar prin
+  conventie) ca acest device nu poate primi NICIODATA o comanda dispecerizata.
+  Inventarul de dispozitive raportat de Deye (`/station/device`) e importat ca
+  metadata simpla (`DeyeCloudDeviceLink`, doar afisare), NU genereaza telemetrie
+  per-device.
+- **Polling in fundal, Celery** (`deye_cloud_poll_task`, la fiecare 5 minute,
+  `app/workers/tasks.py`+`celery_app.py`) -- dashboard-ul si pagina de stare
+  nu asteapta apeluri Deye. POST-ul explicit de conectare autentifica sincron
+  contul, cu timeout/retry si limita de 10 incercari pe ora per user/statie.
+  Backoff exponential per-conexiune dupa esecuri
+  repetate (60s/120s/240s/... plafonat la 1h,
+  `deye_cloud_service._backoff_seconds`), `last_sync_at`/`last_sync_status`/
+  `last_sync_message`/`consecutive_failure_count` persistate si vizibile in UI.
+  O eroare de autentificare (parola schimbata/cont revocat la Deye) trece
+  conexiunea in starea `error`, vizibila explicit, nu ascunsa/retry infinit tacit.
+- **Provenienta distincta, prin acelasi camp folosit deja de alte modele**
+  (`ForecastPV.source`/`ImportRun.source`/`Command.source` -- pattern
+  reutilizat, nu inventat separat): `TelemetryRaw.source` (nou,
+  migratia `e0544ddedc8b`) e `"device_rs485"` (implicit, inclusiv pentru toate
+  randurile istorice existente, prin `server_default`) sau `"deye_cloud"`.
+  `TelemetrySource` (enum) in `app/models/enums.py`.
+- **Regula de prioritate: dispozitiv local activ CASTIGA INTOTDEAUNA, prin
+  gating la INGERARE, nu prin logica de afisare.** `poll_connection` verifica,
+  la FIECARE ciclu, daca exista telemetrie `device_rs485` mai recenta decat
+  `Settings.deye_cloud_local_device_active_minutes` (implicit 15 min, acelasi
+  prag ca detectia `device_offline` din `alerts_task`) pentru statie -- daca
+  da, Deye Cloud NU scrie deloc in acel ciclu (marcat explicit
+  `last_sync_status="skipped"`, motiv vizibil in UI). Asta elimina structural
+  riscul de dublare/conflict in dashboard: interogarea deja existenta
+  "ultima telemetrie dupa `measured_at`" (`dashboard_service.get_latest_telemetry`,
+  NESCHIMBATA) devine automat corecta, fara nicio logica de merge suplimentara
+  -- daca dispozitivul local e activ, e singurul care scrie; daca nu (sau nu
+  mai e), Deye Cloud preia. Documentat si afisat explicit in UI
+  (`stations/deye_integration.html`) si pe dashboard (badge "sursa: Deye Cloud",
+  `dashboard_service.get_summary`/`get_live_metrics`, camp nou `telemetry_source`).
+- **Idempotenta/deduplicare prin constrangerea unica EXISTENTA** pe
+  `TelemetryRaw` (`device_id, boot_id, sequence`) -- fara mecanism paralel:
+  `boot_id="deye_cloud"` (constanta `CLOUD_BOOT_ID`), `sequence` = timestamp-ul
+  UNIX raportat de Deye (`lastUpdateTime`). O rulare repetata cu acelasi
+  raspuns (retry, dublu-declansare) nu creeaza randuri duplicate.
+- **Timestamps UTC + fus local la afisare** -- `measured_at` se deriva din
+  `lastUpdateTime` (UNIX seconds, UTC prin definitie), stocat `DateTime(timezone=True)`
+  ca restul platformei; afisarea foloseste fusul statiei ca peste tot altundeva
+  (nicio conversie speciala adaugata, cea existenta se aplica neschimbat).
+- **Unitati si conventii de semn documentate explicit, dar NEVERIFICATE live**
+  (vezi limitarea de mai jos): `chargePower`/`dischargePower` (presupuse kW,
+  ambele >= 0) combinate in `battery_power_w` cu conventia platformei
+  (pozitiv=incarcare); `purchasePower`/`wirePower` combinate similar in
+  `grid_power_w` (pozitiv=import). O cheie lipsa produce `None` (necunoscut),
+  NICIODATA 0 -- consecvent cu `docs/CODE_STANDARDS.md` regula 2.
+- **Niciun endpoint de scriere/comanda** -- `device/register`, `order*`,
+  `strategy*` din API-ul oficial Deye Cloud raman complet neatinse. Explicit
+  in afara scopului acestui PR (controlul prin cloud necesita un review
+  separat de siguranta, ca la orice alta comanda catre invertor).
+
+**Ce NU a putut fi verificat live (onest, nu ascuns) -- fetch-ul HTTP direct
+catre `developer.deyecloud.com` e blocat in acest mediu de dezvoltare
+(`EGRESS_BLOCKED`), acelasi tip de limitare de retea ca la OPCOM (sectiunea 1)
+si Open-Meteo (sectiunea 2):**
+
+- **Flow-ul de autentificare si endpoint-urile de citire ale statiei/
+  dispozitivelor SUNT verificate** impotriva specificatiei OpenAPI reale,
+  bundle-uita intr-un server MCP Deye disponibil in aceasta sesiune
+  (`list_deye_endpoints`, care expune metoda/path/schema de request REZOLVATA
+  pentru fiecare endpoint) -- nu presupuse din memorie. Eroarea de
+  autentificare cu credentiale invalide a fost testata DIRECT impotriva
+  serverului real Deye Cloud prin acelasi server MCP (`get_access_token` cu
+  `appId`/`appSecret` deliberat gresite): plicul exact de eroare
+  (`{"code": "2101021", "msg": "auth invalid appId", "success": false,
+  "requestId": "..."}`) e cel folosit in cod si in testul de contract
+  aferent -- NU o presupunere.
+- **Raspunsul de SUCCES al `/v1.0/station/latest` (campurile efective:
+  `generationPower`, `consumptionPower`, `chargePower`, `dischargePower`,
+  `purchasePower`, `wirePower`, `batterySOC`, `lastUpdateTime`) NU a putut fi
+  verificat impotriva unui cont Deye Cloud real cu o statie reala** -- accesul
+  MCP disponibil in aceasta sesiune nu are credentiale reale (doar
+  `appId`/`appSecret` de test, respinse de server), iar specificatia OpenAPI
+  bundle-uita expune doar schema REQUEST-urilor (rezolvata), nu si schema
+  raspunsurilor de succes. Numele de camp folosite reflecta conventia publica
+  documentata a familiei de API-uri Deye/Solarman pentru date in timp real --
+  maparea (`map_station_latest_to_telemetry`) e deliberat DEFENSIVA (o cheie
+  lipsa/neasteptata produce `None`, niciodata o valoare inventata sau 0), ca
+  un raspuns real cu alte nume de camp sa degradeze la "date lipsa", nu la
+  date gresite afisate ca reale. **Inainte de a considera acest conector gata
+  de productie: verificat impotriva a cel putin un cont Deye Cloud real, cu
+  hardware real inregistrat, si ajustat maparea daca numele de camp difera.**
+- **Rate limits reale, ToS si constrangeri de account-linking** -- portalul
+  developer.deyecloud.com (unde ar fi documentate limitele de request/minut,
+  politica de utilizare acceptabila, procesul de aprobare a aplicatiei) nu a
+  putut fi accesat direct (acelasi `EGRESS_BLOCKED`). Intervalul de polling
+  ales (5 minute) e conservator, nu calibrat pe o limita reala confirmata;
+  backoff-ul exponential per-conexiune reduce oricum frecventa dupa esecuri
+  repetate, indiferent de cauza (auth, rate-limit sau server indisponibil --
+  tratate identic, pentru ca nu am putut confirma un cod de eroare specific
+  de rate-limit din specificatia disponibila).
+- **Absenta unui grant `refresh_token`** e verificata impotriva specificatiei
+  bundle-uite (singurul endpoint de autentificare documentat e "Obtain token",
+  fara variante de reimprospatare) -- NU impotriva unei confirmari oficiale
+  Deye ca acest grant nu exista deloc. Consecinta practica, acceptata
+  deliberat: platforma retine parola contului Deye Cloud al clientului
+  (criptata), nu doar un token rotativ -- o integrare OAuth "curata" ar fi
+  evitat asta daca un refresh_token ar fi fost documentat/disponibil.
+
+**Explicit in afara scopului acestui PR:**
+
+- **Telemetrie per-dispozitiv** (nu doar per-statie) -- `/v1.0/device/latest`
+  si punctele de masura (`/v1.0/device/measurePoints`) nu sunt folosite pentru
+  ingestie; doar `/v1.0/station/latest` (agregat pe toata statia). Motiv:
+  numele exacte ale punctelor de masura per tip de dispozitiv nu au putut fi
+  verificate live (acelasi blocaj de retea), iar acceptance criteria cere
+  "statie/telemetrie", nu neaparat detaliu per-invertor.
+- **Backfill istoric** -- `/v1.0/station/history`/`/history/power` (date
+  istorice) nu sunt folosite; doar polling incremental al starii curente.
+- **Regiuni `am`/`india`** -- doar `eu` in aceasta versiune.
+- **Rotatie automata de credentiale / re-cerere periodica a parolei** -- dupa
+  conectare, parola ramane stocata (criptat) pana la deconectare explicita sau
+  pana la un esec de autentificare (stare `error`); nu exista inca un flux de
+  "confirma din nou parola la fiecare N luni".
+- **O interfata de administrare la nivel de platforma** (cate conexiuni Deye
+  Cloud active, rata de esec agregata) -- doar pagina per-statie exista.
+- **Orice scriere/comanda catre invertor prin Deye Cloud** -- vezi mai sus,
+  explicit in afara scopului, necesita review separat de siguranta.
+
+**Testare.** `tests/unit/test_deye_cloud_service.py` (26 teste: hashing parola,
+plicul real de eroare de autentificare via `respx`, retry pe 5xx vs. esec
+imediat pe eroare de business, maparea defensiva Deye -> model canonic, regula
+de prioritate fata de un dispozitiv local, idempotenta ingestiei, backoff,
+criptare/decriptare) + `tests/integration/test_deye_integration_routes.py`
+(6 teste: RBAC viewer-vs-organization_admin, izolare intre organizatii, consimtamant
+obligatoriu, flow complet connect/select/disconnect) +
+`tests/integration/test_deye_cloud_task.py` (4 teste, acelasi tipar ca
+`test_admin_job_tasks.py` -- `engine` real, nu fixture-ul `db` izolat prin
+SAVEPOINT: taskul Celery ingereaza telemetrie, ignora conexiuni deconectate,
+o eroare la o conexiune nu blocheaza pe celelalte, gating fata de dispozitiv
+local activ). Niciun apel de retea real catre Deye Cloud in teste.
 ## Addendum: Hardening SSE live -- update per-widget si teste de concurenta reala (issue #50, follow-up)
 
 **Context important, verificat inainte de a scrie o singura linie de cod:**
@@ -1967,7 +2136,6 @@ addendumul anterior, neatinse aici.
 - Un test de sarcina real la scara de productie (sute/mii de conexiuni,
   profilare CPU/memorie) -- sanity check-ul de mai sus prinde o regresie de
   tip "conexiunile se serializeaza", nu inlocuieste un load-test dedicat.
-
 ## Addendum: Dashboard client "one station first", felie limitata (issue #45)
 
 **Domeniul acestui PR e strict felia de rutare + explicatii, NU refacerea

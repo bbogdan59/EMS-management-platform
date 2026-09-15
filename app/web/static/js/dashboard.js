@@ -43,6 +43,20 @@ function emsInitDashboard(stationId) {
     qualityBadge.textContent = { measured: "masurat", estimated: "estimat", simulated: "simulat", stale: "invechit", missing: "lipsa" }[s.data_quality] || s.data_quality;
   }
 
+  function updateSourceKpi(s) {
+    const sourceBadge = $("kpi-source");
+    if (sourceBadge) {
+      if (s.telemetry_source === "deye_cloud") {
+        sourceBadge.className = "badge-muted";
+        sourceBadge.textContent = "sursa: Deye Cloud (doar citire)";
+        sourceBadge.title = "Telemetrie importata din contul Deye Cloud, fara dispozitiv EMS local activ. Latenta/rezolutia pot fi diferite fata de un dispozitiv local.";
+        sourceBadge.hidden = false;
+      } else {
+        sourceBadge.hidden = true;
+      }
+    }
+  }
+
   // Metrica SSE (issue #50) -> widget-ul KPI pe care il afecteaza. Mai multe
   // metrici pot alimenta acelasi widget compus (ex. `ev_connected` +
   // `ev_power_kw` -> "kpi-ev"), dar niciun update nu mai atinge widget-uri
@@ -61,6 +75,7 @@ function emsInitDashboard(stationId) {
     has_active_plan: updateAutomationKpi,
     last_update: updateLastUpdateKpi,
     data_quality: updateQualityKpi,
+    telemetry_source: updateSourceKpi,
   };
   const FLOW_DIAGRAM_METRICS = new Set(["pv_power_kw", "battery_power_kw", "grid_power_kw", "ev_power_kw"]);
 

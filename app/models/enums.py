@@ -133,6 +133,35 @@ class AdminJobStatus(str, enum.Enum):
     skipped_locked = "skipped_locked"
 
 
+class TelemetrySource(str, enum.Enum):
+    """Provenienta unui rand `TelemetryRaw` -- distinct de `DataQuality`
+    (masurata/simulata/etc.), care descrie increderea in valoare, nu DE UNDE
+    vine. `device_rs485` e valoarea implicita/istorica (dispozitiv EMS local,
+    protocolul web-device existent); `deye_cloud` e telemetrie importata din
+    contul Deye Cloud al clientului (issue #43), fara hardware EMS local."""
+
+    device_rs485 = "device_rs485"
+    deye_cloud = "deye_cloud"
+
+
+class DeyeCloudConnectionStatus(str, enum.Enum):
+    """Stare a unei conexiuni Deye Cloud pentru o statie (issue #43).
+
+    `pending_selection`: autentificare reusita, dar clientul nu a ales inca
+    CE statie din contul lui Deye Cloud sa importe (un cont poate avea mai
+    multe). `connected`: statie aleasa, polling activ. `error`: autentificare
+    esuata repetat (parola schimbata/revocata la Deye, cont blocat etc.) --
+    polling-ul se opreste, dar conexiunea ramane vizibila in UI pentru
+    reconectare, nu e stearsa silentios. `disconnected`: deconectat explicit
+    de utilizator -- credentialele sunt sterse, istoricul de telemetrie deja
+    importat RAMANE (nedistructiv, ca la arhivarea statiei)."""
+
+    pending_selection = "pending_selection"
+    connected = "connected"
+    error = "error"
+    disconnected = "disconnected"
+
+
 class EquipmentType(str, enum.Enum):
     """Tip de echipament in catalogul administrabil -- issue #42. Catalogul
     comercial (aceasta lista) e distinct de harta de registre RS485 (issue

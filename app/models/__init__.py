@@ -9,6 +9,7 @@ from app.models.alert import Alert
 from app.models.audit import AuditLog
 from app.models.command import Command, CommandEvent
 from app.models.device import ClaimCode, Device, DeviceCredential
+from app.models.deye_integration import DeyeCloudConnection, DeyeCloudDeviceLink
 from app.models.equipment_catalog import EquipmentManufacturer, EquipmentModel
 from app.models.forecast import ConsumptionForecast, PvForecast, WeatherForecast
 from app.models.inverter_config import InverterDesired, InverterProfile, InverterReport
@@ -38,6 +39,8 @@ __all__ = [
     "ConsumptionForecast",
     "Device",
     "DeviceCredential",
+    "DeyeCloudConnection",
+    "DeyeCloudDeviceLink",
     "EquipmentManufacturer",
     "EquipmentModel",
     "ImportRun",

@@ -110,6 +110,27 @@ class Settings(BaseSettings):
     # presupunere documentata drept atare).
     optimization_soc_max_age_minutes: int = 10
 
+    # --- Deye Cloud (issue #43) ---
+    # Aplicatia (appId/appSecret) e inregistrata O SINGURA DATA de platforma
+    # in portalul de dezvoltatori Deye Cloud (developer.deyecloud.com) --
+    # NU e per-client. Fiecare client isi conecteaza propriul cont Deye Cloud
+    # (email+parola) prin acest app; vezi docs/LIMITATIONS.md pentru flow-ul
+    # complet si ce nu a putut fi verificat live.
+    deye_cloud_app_id: str | None = None
+    deye_cloud_app_secret: str | None = None
+    # Doar UE in aceasta versiune (vezi docs/LIMITATIONS.md) -- celelalte
+    # centre de date documentate de Deye (am/india) raman nefolosite.
+    deye_cloud_region: Literal["eu"] = "eu"
+    deye_cloud_base_url: str = "https://eu1-developer.deyecloud.com"
+    deye_cloud_request_timeout_seconds: float = 20.0
+    deye_cloud_max_retries: int = 3
+    deye_cloud_connect_attempts_per_hour: int = 10
+    # Cat de recenta trebuie sa fie ultima telemetrie de la un dispozitiv EMS
+    # local (RS485) ca sa fie considerat "activ" si sa aiba prioritate fata
+    # de Deye Cloud pentru aceeasi statie -- acelasi prag ca detectia
+    # device_offline din `alerts_task`.
+    deye_cloud_local_device_active_minutes: int = 15
+
     # --- Retention ---
     telemetry_raw_retention_days: int = 90
     telemetry_aggregate_retention_days: int = 730

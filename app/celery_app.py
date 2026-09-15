@@ -58,6 +58,14 @@ celery_app.conf.beat_schedule = {
         "task": "app.workers.tasks.alerts_task",
         "schedule": crontab(minute="*/5"),
     },
+    # Interval ales conservator (nu verificat impotriva unui rate limit real
+    # Deye Cloud -- vezi docs/LIMITATIONS.md); backoff-ul per-conexiune din
+    # `deye_cloud_service.poll_connection` reduce oricum frecventa reala dupa
+    # esecuri repetate.
+    "deye-cloud-poll-every-5-min": {
+        "task": "app.workers.tasks.deye_cloud_poll_task",
+        "schedule": crontab(minute="*/5"),
+    },
     "retention-daily": {
         "task": "app.workers.tasks.retention_task",
         "schedule": crontab(hour=3, minute=0),

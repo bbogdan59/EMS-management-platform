@@ -18,6 +18,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Entity
+from app.models.enums import TelemetrySource
 
 # Conventii de semn (documentate si in docs/API.md):
 #   battery_power_w: pozitiv = incarcare, negativ = descarcare
@@ -62,6 +63,15 @@ class TelemetryRaw(Entity):
     raw_payload: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
     is_simulated: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     is_late: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
+    # Provenienta (issue #43) -- `device_rs485` (implicit, istoric) pentru
+    # protocolul web-device existent, `deye_cloud` pentru telemetrie
+    # importata din contul Deye Cloud al clientului. Vezi `TelemetrySource`
+    # si `deye_cloud_service` pentru regula de prioritate (local activ ->
+    # Deye Cloud nu mai scrie deloc pentru acea statie cat timp ramane activ).
+    source: Mapped[str] = mapped_column(
+        String(32), default=TelemetrySource.device_rs485.value, server_default=TelemetrySource.device_rs485.value, nullable=False
+    )
 
 
 class TelemetryAggregate(Entity):
