@@ -15,7 +15,7 @@ from tests.web_helpers import login
 
 
 def _stub_auth(monkeypatch, stations=None):
-    monkeypatch.setattr(svc, "authenticate", lambda email, password: {"access_token": "tok", "expires_in": 3600})
+    monkeypatch.setattr(svc, "authenticate", lambda app_id, app_secret, email, password: {"access_token": "tok", "expires_in": 3600})
     monkeypatch.setattr(svc, "list_remote_stations", lambda token: stations or [{"id": 322, "name": "Casa Test"}])
     monkeypatch.setattr(svc, "list_remote_station_devices", lambda token, remote_station_id: [])
 
@@ -62,7 +62,7 @@ def test_viewer_cannot_post_connect(client, db):
     csrf = client.cookies.get("ems_csrf")
     resp = client.post(
         f"/stations/{station.id}/integrations/deye/connect",
-        data={"csrf_token": csrf, "email": "a@b.com", "password": "x", "consent": "yes"},
+        data={"csrf_token": csrf, "app_id": "app", "app_secret": "secret", "email": "a@b.com", "password": "x", "consent": "yes"},
     )
     assert resp.status_code == 403
 
@@ -81,7 +81,7 @@ def test_organization_admin_can_connect_select_and_disconnect(client, db, monkey
 
     connect_resp = client.post(
         f"/stations/{station.id}/integrations/deye/connect",
-        data={"csrf_token": csrf, "email": "client@example.com", "password": "hunter2", "consent": "yes"},
+        data={"csrf_token": csrf, "app_id": "station-app", "app_secret": "station-secret", "email": "client@example.com", "password": "hunter2", "consent": "yes"},
         follow_redirects=False,
     )
     assert connect_resp.status_code == 303
@@ -89,6 +89,8 @@ def test_organization_admin_can_connect_select_and_disconnect(client, db, monkey
 
     conn = db.query(DeyeCloudConnection).filter_by(station_id=station.id).one()
     assert conn.status == DeyeCloudConnectionStatus.pending_selection.value
+    assert conn.app_id == "station-app"
+    assert conn.encrypted_app_secret != "station-secret"
     assert conn.account_email == "client@example.com"
 
     def _network_must_not_run(*args, **kwargs):
@@ -138,7 +140,7 @@ def test_station_selection_rejects_forged_remote_id(client, db, monkeypatch):
     csrf = client.cookies.get("ems_csrf")
     client.post(
         f"/stations/{station.id}/integrations/deye/connect",
-        data={"csrf_token": csrf, "email": "client@example.com", "password": "hunter2", "consent": "yes"},
+        data={"csrf_token": csrf, "app_id": "station-app", "app_secret": "station-secret", "email": "client@example.com", "password": "hunter2", "consent": "yes"},
     )
 
     response = client.post(
@@ -167,7 +169,7 @@ def test_connect_without_consent_is_rejected(client, db, monkeypatch):
     csrf = client.cookies.get("ems_csrf")
     resp = client.post(
         f"/stations/{station.id}/integrations/deye/connect",
-        data={"csrf_token": csrf, "email": "client@example.com", "password": "hunter2"},
+        data={"csrf_token": csrf, "app_id": "station-app", "app_secret": "station-secret", "email": "client@example.com", "password": "hunter2"},
         follow_redirects=False,
     )
     assert resp.status_code == 303
@@ -198,7 +200,7 @@ def test_connect_rate_limit_blocks_provider_call(client, db, monkeypatch):
 
     response = client.post(
         f"/stations/{station.id}/integrations/deye/connect",
-        data={"csrf_token": csrf, "email": "client@example.com", "password": "hunter2", "consent": "yes"},
+        data={"csrf_token": csrf, "app_id": "station-app", "app_secret": "station-secret", "email": "client@example.com", "password": "hunter2", "consent": "yes"},
         follow_redirects=False,
     )
 
@@ -214,7 +216,7 @@ def test_connect_auth_failure_shows_generic_error_not_stack_trace(client, db, mo
     make_membership(db, user, org, role="organization_admin")
     db.commit()
 
-    def _raise(email, password):
+    def _raise(app_id, app_secret, email, password):
         raise svc.DeyeCloudAuthError("parola gresita")
 
     monkeypatch.setattr(svc, "authenticate", _raise)
@@ -223,11 +225,11 @@ def test_connect_auth_failure_shows_generic_error_not_stack_trace(client, db, mo
     csrf = client.cookies.get("ems_csrf")
     resp = client.post(
         f"/stations/{station.id}/integrations/deye/connect",
-        data={"csrf_token": csrf, "email": "client@example.com", "password": "wrong"},
+        data={"csrf_token": csrf, "app_id": "station-app", "app_secret": "station-secret", "email": "client@example.com", "password": "wrong", "consent": "yes"},
         follow_redirects=False,
     )
     assert resp.status_code == 303
-    assert "consimtamant" in resp.headers["location"]  # respins la fel ca lipsa consimtamant (nu s-a autentificat)
+    assert "Autentificare" in resp.headers["location"]
 
 
 def test_other_org_admin_cannot_manage_a_foreign_stations_connection(client, db, monkeypatch):
@@ -246,7 +248,7 @@ def test_other_org_admin_cannot_manage_a_foreign_stations_connection(client, db,
     csrf = client.cookies.get("ems_csrf")
     resp = client.post(
         f"/stations/{station.id}/integrations/deye/connect",
-        data={"csrf_token": csrf, "email": "client@example.com", "password": "hunter2", "consent": "yes"},
+        data={"csrf_token": csrf, "app_id": "station-app", "app_secret": "station-secret", "email": "client@example.com", "password": "hunter2", "consent": "yes"},
     )
     assert resp.status_code == 403
     assert db.query(DeyeCloudConnection).filter_by(station_id=station.id).count() == 0

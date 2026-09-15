@@ -1910,9 +1910,9 @@ conectare/selectie/deconectare, orice rol cu acces la statie pentru vizualizare)
 si vedea telemetria statiei importata de acolo, read-only:
 
 - **Flow de autentificare** (`app/services/deye_cloud_service.py`):
-  `POST /v1.0/account/token?appId=...` cu `appSecret` (al platformei, un singur
-  app inregistrat o data in portalul Deye) + `email`/`password` (contul Deye
-  Cloud AL CLIENTULUI, parola trimisa hash-uita SHA-256, niciodata in clar).
+  `POST /v1.0/account/token?appId=...` cu `appSecret` (configurat per
+  statie/conexiune, nu global pentru toata platforma) + `email`/`password` (contul
+  Deye Cloud AL CLIENTULUI, parola trimisa hash-uita SHA-256, niciodata in clar).
   Regiune: doar centrul de date UE (`eu1-developer.deyecloud.com`) --
   `am`/`india` raman nefolosite (`Settings.deye_cloud_region`, fixat la `"eu"`).
 - **Consimtamant explicit, in doi pasi**: (1) conectare cont -- bifa
@@ -1923,12 +1923,14 @@ si vedea telemetria statiei importata de acolo, read-only:
   paginii GET nu apeleaza si nu asteapta providerul, iar POST-ul de selectie refuza orice id care nu a fost
   returnat pentru acel cont si ignora numele controlat de browser.
 - **Credentiale criptate la repaus** (`app/core/crypto.py`, Fernet/AES cu cheie
-  derivata din `SECRET_KEY` prin HKDF) -- parola contului client SI token-ul de
-  acces cache-uit, niciodata in clar in baza de date. Redactate din loguri
+  derivata din `SECRET_KEY` prin HKDF) -- appSecret-ul statiei, parola contului
+  client SI token-ul de acces cache-uit, niciodata in clar in baza de date.
+  `appId` ramane in clar ca identificator al aplicatiei Deye folosite pentru
+  acea statie. Redactate din loguri
   (nici `authenticate`, nici `poll_connection` nu logheaza parola/token-ul;
   doar `structlog` cu campuri safe: `connection_id`, tipul erorii).
-  **Deconectabil din UI** (`disconnect`): sterge parola si token-ul stocate
-  local, nedistructiv fata de telemetria deja importata (ramane ca istoric,
+  **Deconectabil din UI** (`disconnect`): sterge appId/appSecret, parola si
+  token-ul stocate local, nedistructiv fata de telemetria deja importata (ramane ca istoric,
   la fel ca arhivarea unei statii), si revoca device-ul sintetic ca sa nu mai
   fie prezentat drept activ. Import/device/mapare explicita: fiecare
   statie Deye Cloud selectata creeaza un device SINTETIC (`Device.capabilities
@@ -2031,13 +2033,13 @@ si Open-Meteo (sectiunea 2):**
   repetate, indiferent de cauza (auth, rate-limit sau server indisponibil --
   tratate identic, pentru ca nu am putut confirma un cod de eroare specific
   de rate-limit din specificatia disponibila).
-- **Absenta unui grant `refresh_token`** e verificata impotriva specificatiei
-  bundle-uite (singurul endpoint de autentificare documentat e "Obtain token",
-  fara variante de reimprospatare) -- NU impotriva unei confirmari oficiale
-  Deye ca acest grant nu exista deloc. Consecinta practica, acceptata
-  deliberat: platforma retine parola contului Deye Cloud al clientului
-  (criptata), nu doar un token rotativ -- o integrare OAuth "curata" ar fi
-  evitat asta daca un refresh_token ar fi fost documentat/disponibil.
+- **Refresh token si credentiale de cont**: documentatia publica curenta a
+  tool-ului Deye mentioneaza campuri de raspuns `refreshToken`/`expiresIn`, dar
+  fluxul disponibil in cod foloseste inca reautentificarea cu email/parola cand
+  token-ul cache-uit expira. Asta trebuie reverificat live cu un cont real
+  inainte de productie; pana atunci, parola contului ramane criptata la repaus
+  si nu este logata. Daca refresh-ul real este confirmat, urmatorul PR ar trebui
+  sa migreze spre token rotativ si sa stearga parola dupa conectarea initiala.
 
 **Explicit in afara scopului acestui PR:**
 

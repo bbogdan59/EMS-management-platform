@@ -33,8 +33,14 @@ class DeyeCloudConnection(Entity):
     )
     region: Mapped[str] = mapped_column(String(8), default="eu", nullable=False)
 
-    # Contul Deye Cloud al CLIENTULUI (nu appId/appSecret-ul platformei, care
-    # vine din `Settings` si e comun tuturor conexiunilor).
+    # Credentialele aplicatiei Deye folosite pentru aceasta statie. `app_id`
+    # este identificatorul aplicatiei din portalul Deye; `app_secret` este
+    # secret si se pastreaza criptat, per statie/conexiune.
+    app_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    encrypted_app_secret: Mapped[str | None] = mapped_column(String(500), nullable=True)
+
+    # Contul Deye Cloud al clientului. API-ul Deye observat/documentat cere si
+    # credentiale de cont la obtinerea tokenului, pe langa appId/appSecret.
     account_email: Mapped[str] = mapped_column(String(320), nullable=False)
     encrypted_account_password: Mapped[str] = mapped_column(String(500), nullable=False)
 
