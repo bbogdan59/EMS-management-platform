@@ -410,6 +410,27 @@ def import_opcom_day(db: Session, delivery_date: date, triggered_by_user_id=None
         )
         logger.warning("opcom.fallback_synthetic", delivery_date=str(delivery_date), reason=str(fetch_error))
 
+    if intervals is not None and is_synthetic and has_successful_real_import(db, delivery_date, source):
+        run.is_synthetic_fixture = True
+        run.status = ImportRunStatus.failed.value
+        run.error_message = (
+            "Sursa OPCOM a esuat, dar exista deja o revizie reala reusita pentru aceasta zi; "
+            "fallback-ul sintetic NU a fost importat peste datele reale curente."
+        )
+        db.add(
+            Alert(
+                station_id=None,
+                category="opcom_import_failed",
+                severity=AlertSeverity.warning.value,
+                status="open",
+                title=f"Import OPCOM pastrat pe date reale pentru {delivery_date.isoformat()}",
+                description=run.error_message,
+                context={"import_run_id": str(run.id), "preserved_real_revision": True},
+            )
+        )
+        db.flush()
+        return run
+
     if intervals is None:
         run.status = ImportRunStatus.failed.value
         run.error_message = run.error_message or str(fetch_error)
