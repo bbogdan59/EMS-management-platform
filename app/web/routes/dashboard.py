@@ -161,6 +161,16 @@ def data_energy_totals(
     return JSONResponse(dashboard_service.get_energy_totals(db, station, granularity, periods))
 
 
+@router.get("/stations/{station_id}/data/energy-kpis")
+def data_energy_kpis(
+    station_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    station_role: tuple = Depends(StationAccess(min_role="viewer")),
+):
+    station, _role = station_role
+    return JSONResponse(dashboard_service.get_energy_period_kpis(db, station))
+
+
 @router.get("/stations/{station_id}/data/heatmap")
 def data_heatmap(
     station_id: uuid.UUID,

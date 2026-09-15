@@ -510,6 +510,66 @@ function emsInitDashboard(stationId) {
     }
   }
 
+  function energyKpiQualityLabel(quality) {
+    return { measured: "masurat", partial: "partial", estimated: "estimat", simulated: "simulat", stale: "invechit", missing: "fara date" }[quality] || quality || "fara date";
+  }
+
+  function energyKpiQualityClass(quality) {
+    return "badge-" + ({ measured: "ok", partial: "warn", estimated: "warn", simulated: "warn", stale: "error", missing: "muted" }[quality] || "muted");
+  }
+
+  function updatePeriodEnergyMetric(period, metric, item) {
+    const domKey = metric.replaceAll("_", "-");
+    const valueEl = $(`kpi-${period}-${domKey}`);
+    const coverageEl = $(`kpi-${period}-${domKey}-coverage`);
+    if (!valueEl) return;
+    if (!item || item.value === null || item.value === undefined) {
+      valueEl.textContent = "fara date";
+    } else {
+      valueEl.textContent = `${fmt(item.value, 2)} kWh`;
+    }
+    if (coverageEl) {
+      const coverage = item && item.coverage !== null && item.coverage !== undefined ? Math.round(item.coverage * 100) : 0;
+      coverageEl.textContent = `acoperire ${coverage}%`;
+    }
+  }
+
+  function updatePeriodQuality(period, metrics) {
+    const qualityEl = $(`kpi-${period}-quality`);
+    if (!qualityEl) return;
+    const qualities = Object.values(metrics || {}).map((item) => item.quality || "missing");
+    let quality = "missing";
+    if (qualities.includes("stale")) quality = "stale";
+    else if (qualities.includes("simulated")) quality = "simulated";
+    else if (qualities.includes("estimated")) quality = "estimated";
+    else if (qualities.includes("partial")) quality = "partial";
+    else if (qualities.length && qualities.every((q) => q === "measured")) quality = "measured";
+    qualityEl.textContent = energyKpiQualityLabel(quality);
+    qualityEl.className = energyKpiQualityClass(quality);
+  }
+
+  async function loadEnergyPeriodKpis() {
+    try {
+      const data = await fetchJson(`/stations/${stationId}/data/energy-kpis`);
+      for (const period of ["today", "month"]) {
+        const metrics = data[period] ? data[period].metrics : {};
+        for (const metric of ["pv", "load", "grid_import", "grid_export", "battery_charge", "battery_discharge"]) {
+          updatePeriodEnergyMetric(period, metric, metrics[metric]);
+        }
+        updatePeriodQuality(period, metrics);
+      }
+    } catch (e) {
+      console.error(e);
+      for (const period of ["today", "month"]) {
+        const qualityEl = $(`kpi-${period}-quality`);
+        if (qualityEl) {
+          qualityEl.textContent = "eroare";
+          qualityEl.className = "badge-error";
+        }
+      }
+    }
+  }
+
   async function loadMonthlyEnergyTotals() {
     const widget = widgetCard("chart-energy-monthly");
     if (!widget) return;
@@ -671,6 +731,7 @@ function emsInitDashboard(stationId) {
   loadForecastChart("pv");
   loadForecastChart("load");
   loadHeatmap();
+  loadEnergyPeriodKpis();
   loadDailyEnergyTotals();
   loadMonthlyEnergyTotals();
   loadEfcAndSavings();

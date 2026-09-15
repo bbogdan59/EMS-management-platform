@@ -162,7 +162,10 @@ def test_price_and_benefit_kpi_cards_have_calculation_disclosure(client, db):
     page = client.get(f"/?station_id={station.id}")
 
     assert page.status_code == 200
-    # 4 KPI-uri explicate in acest PR: cost import, venit export, beneficiu
-    # sistem PV/baterie, beneficiu incremental EMS.
-    assert page.text.count("Cum se calculeaza?") == 4
+    # Costurile/beneficiile si KPI-urile Astazi/Luna curenta au disclosure-uri
+    # explicite; testul cere existenta lor, nu un numar inghetat de carduri.
+    assert page.text.count("Cum se calculeaza?") >= 6
+    assert "Astazi" in page.text
+    assert "Luna curenta" in page.text
+    assert "nu este inlocuita cu zero" in page.text
     assert f"/stations/{station.id}/tariffs" in page.text

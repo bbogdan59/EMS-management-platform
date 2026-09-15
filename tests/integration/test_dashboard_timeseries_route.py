@@ -3,12 +3,13 @@ aleasa server-side, metadatele explicite din raspuns si empty-state-ul care
 nu devine niciodata o serie umpluta cu zero."""
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from zoneinfo import ZoneInfo
 
 from app.core.rate_limit import reset_key
 from app.core.security import utcnow
-from app.models.telemetry import TelemetryRaw
+from app.models.telemetry import TelemetryAggregate, TelemetryRaw
 from tests.factories import make_device, make_membership, make_org, make_station, make_user
 from tests.web_helpers import login
 
@@ -33,6 +34,15 @@ def _add_raw(db, station, device, measured_at, *, pv=1.0, soc=50.0, sequence=1):
         )
     )
     db.flush()
+
+
+def _period_start(station, period):
+    local_now = utcnow().astimezone(ZoneInfo(station.timezone))
+    if period == "day":
+        local_start = datetime(local_now.year, local_now.month, local_now.day, tzinfo=ZoneInfo(station.timezone))
+    else:
+        local_start = datetime(local_now.year, local_now.month, 1, tzinfo=ZoneInfo(station.timezone))
+    return local_start.astimezone(UTC)
 
 
 def test_timeseries_route_declares_resolution_aggregation_timezone_coverage(client, db):
@@ -90,6 +100,57 @@ def test_timeseries_route_forbidden_for_other_organizations_station(client, db):
     resp = client.get(f"/stations/{other_station.id}/data/timeseries?range=24h")
 
     assert resp.status_code == 403
+
+
+def test_energy_kpi_route_keeps_missing_separate_from_zero(client, db):
+    user, station, _device = _setup(db)
+    day_start = _period_start(station, "day")
+    db.add(
+        TelemetryAggregate(
+            station_id=station.id, period_type="day",
+            period_start=day_start, period_end=day_start + timedelta(days=1),
+            pv_energy_kwh=Decimal("0.0000"), load_energy_kwh=None,
+            grid_import_energy_kwh=Decimal("2.5000"), grid_export_energy_kwh=None,
+            battery_charge_energy_kwh=None, battery_discharge_energy_kwh=None,
+            sample_count=1, data_quality="measured", coverage={"pv": 1.0, "grid": 1.0},
+        )
+    )
+    db.commit()
+
+    login(client, user.email, "Password1234")
+    resp = client.get(f"/stations/{station.id}/data/energy-kpis")
+
+    assert resp.status_code == 200
+    today = resp.json()["today"]["metrics"]
+    assert today["pv"] == {"value": 0.0, "coverage": 1.0, "quality": "measured"}
+    assert today["load"]["value"] is None
+    assert today["load"]["quality"] == "missing"
+    assert today["grid_import"]["value"] == 2.5
+    assert resp.json()["month"]["metrics"]["pv"]["value"] is None
+
+
+def test_energy_kpi_route_marks_partial_coverage(client, db):
+    user, station, _device = _setup(db)
+    month_start = _period_start(station, "month")
+    db.add(
+        TelemetryAggregate(
+            station_id=station.id, period_type="month",
+            period_start=month_start, period_end=month_start + timedelta(days=31),
+            pv_energy_kwh=Decimal("12.5000"), load_energy_kwh=Decimal("20.0000"),
+            grid_import_energy_kwh=None, grid_export_energy_kwh=None,
+            battery_charge_energy_kwh=None, battery_discharge_energy_kwh=None,
+            sample_count=1, data_quality="measured", coverage={"pv": 0.5, "load": 1.0},
+        )
+    )
+    db.commit()
+
+    login(client, user.email, "Password1234")
+    resp = client.get(f"/stations/{station.id}/data/energy-kpis")
+
+    assert resp.status_code == 200
+    month = resp.json()["month"]["metrics"]
+    assert month["pv"] == {"value": 12.5, "coverage": 0.5, "quality": "partial"}
+    assert month["load"] == {"value": 20.0, "coverage": 1.0, "quality": "measured"}
 
 
 def test_dashboard_chart_widgets_have_isolated_retry_errors(client, db):
