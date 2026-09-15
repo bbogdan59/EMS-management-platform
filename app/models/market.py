@@ -23,9 +23,10 @@ from app.models.base import Entity
 class ImportRun(Entity):
     """O incercare de import al preturilor PZU (OPCOM) pentru o zi de livrare.
 
-    Import idempotent: o noua rulare reusita pentru aceeasi `delivery_date`
-    creeaza o noua `revision`; revizia anterioara ramane in baza (audit),
-    dar doar ultima e "curenta" pentru afisare/optimizare.
+    Import idempotent: o rulare cu acelasi hash ca o revizie reusita ramane
+    auditabila ca `unchanged`, fara intervale duplicate. O rulare cu continut
+    schimbat creeaza o noua `revision`; revizia anterioara ramane in baza
+    (audit), dar doar ultima e "curenta" pentru afisare/optimizare.
     """
 
     __tablename__ = "import_runs"

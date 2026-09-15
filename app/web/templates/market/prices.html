@@ -26,16 +26,16 @@
       <p class="label !mb-1">Azi ({{ status.today.date if status.today else "-" }})</p>
       {% if status.today %}
       <p class="text-sm font-medium">
-        {% if status.today.status == "succeeded" %}<span class="badge-ok">publicat</span>{% else %}<span class="badge-warn">{{ status.today.status }}</span>{% endif %}
+        {% if status.today.status in ("succeeded", "unchanged") %}<span class="badge-ok">publicat{% if status.today.status == "unchanged" %} (neschimbat){% endif %}</span>{% else %}<span class="badge-warn">{{ status.today.status }}</span>{% endif %}
         {% if status.today.is_synthetic %}<span class="badge-warn">sintetic</span>{% endif %}
       </p>
       {% else %}<p class="text-sm text-gray-500">indisponibil</p>{% endif %}
     </div>
     <div class="card">
       <p class="label !mb-1">Maine ({{ status.tomorrow.date if status.tomorrow else "-" }})</p>
-      {% if status.tomorrow and status.tomorrow.status == "succeeded" %}
+      {% if status.tomorrow and status.tomorrow.status in ("succeeded", "unchanged") %}
       <p class="text-sm font-medium">
-        <span class="badge-ok">publicat</span>
+        <span class="badge-ok">publicat{% if status.tomorrow.status == "unchanged" %} (neschimbat){% endif %}</span>
         {% if status.tomorrow.is_synthetic %}<span class="badge-warn">sintetic</span>{% endif %}
       </p>
       {% else %}<p class="text-sm text-gray-500">nepublicat inca</p>{% endif %}
