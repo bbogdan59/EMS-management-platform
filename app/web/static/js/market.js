@@ -89,7 +89,8 @@ function emsInitMarket(availableYears) {
       // Fiecare fereastra e o cerere separata, declansata la cerere (buton) --
       // pagina nu incarca niciodata tot istoricul dintr-o singura cerere
       // initiala, indiferent cat de mare e intervalul selectat (issue #33).
-      const data = await fetchJson("/market/data/timeline?days=" + selectedTimelineDays);
+      const payload = await fetchJson("/market/data/timeline?days=" + selectedTimelineDays);
+      const data = payload.points || [];
       showEmpty(el, data.length === 0);
       if (!data.length) return;
 

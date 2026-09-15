@@ -69,7 +69,12 @@ def test_market_data_timeline_stays_bounded_for_large_windows(client, db):
     login(client, "market-timeline@test.local", "Password1234")
     resp = client.get("/market/data/timeline?days=365")
     assert resp.status_code == 200
-    points = resp.json()
+    body = resp.json()
+    assert body["resolution"] == "1d"
+    assert body["aggregation"] == {"price_lei_mwh": "mean", "price_lei_kwh": "mean"}
+    assert body["timezone"] == "Europe/Bucharest"
+    assert 0 < body["coverage"] <= 1
+    points = body["points"]
     assert 0 < len(points) <= 366
 
 

@@ -335,6 +335,20 @@ def test_timeline_split_daily_aggregation_excludes_synthetic_by_default(db):
     assert all(p["is_synthetic"] is False for p in series)
 
 
+def test_timeline_description_declares_contract_for_year_window():
+    start = datetime(2026, 1, 1, tzinfo=UTC)
+    end = datetime(2027, 1, 1, tzinfo=UTC)
+    points = [{"t": "2026-01-01T00:00:00+00:00", "price_lei_mwh": 100.0} for _ in range(183)]
+
+    payload = market.describe_timeline_split(start, end, points)
+
+    assert payload["resolution"] == "1d"
+    assert payload["aggregation"] == {"price_lei_mwh": "mean", "price_lei_kwh": "mean"}
+    assert payload["timezone"] == "Europe/Bucharest"
+    assert payload["coverage"] == 0.5014
+    assert payload["points"] == points
+
+
 def test_market_status_uses_bucharest_timezone_near_midnight(db):
     """22:00 UTC in septembrie e deja 01:00 a doua zi in Bucuresti (DST activ,
     UTC+3): "azi" trebuie sa fie ziua locala, nu cea UTC."""
