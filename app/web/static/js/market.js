@@ -3,11 +3,34 @@
 const EMS_YEAR_COLORS = ["#2f9354", "#4a86e8", "#f5a524", "#a479e2", "#f691b2", "#43d692"];
 const TIMELINE_RANGE_OPTIONS = [30, 90, 180, 365];
 const TIMELINE_DEFAULT_DAYS = 30;
+const YEARLY_OVERLAY_DEFAULT_YEARS = [2024, 2025, 2026];
 
 function emsInitMarket(availableYears) {
   const $ = (id) => document.getElementById(id);
-  let selectedYears = new Set(availableYears.slice(-3));
+  let selectedYears = new Set(defaultYearlyOverlayYears(availableYears));
   let selectedTimelineDays = TIMELINE_DEFAULT_DAYS;
+
+  function defaultYearlyOverlayYears(years) {
+    const preferred = YEARLY_OVERLAY_DEFAULT_YEARS.filter((year) => years.includes(year));
+    return preferred.length ? preferred : years.slice(-3);
+  }
+
+  function isLeapYear(year) {
+    return year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  }
+
+  function buildCalendarDayLabels(years) {
+    const includeLeapDay = years.some((year) => isLeapYear(year));
+    const labels = [];
+    for (let month = 1; month <= 12; month += 1) {
+      const daysInMonth = new Date(2025, month, 0).getDate();
+      for (let day = 1; day <= daysInMonth; day += 1) {
+        labels.push(`${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`);
+      }
+      if (month === 2 && includeLeapDay) labels.push("02-29");
+    }
+    return labels;
+  }
 
   async function fetchJson(url) {
     const res = await fetch(url, { headers: { Accept: "application/json" } });
@@ -96,25 +119,37 @@ function emsInitMarket(availableYears) {
     if (!el) return;
     try {
       const years = [...selectedYears].sort();
+      if (!years.length) {
+        showEmpty(el, true);
+        echarts.init(el, emsChartTheme()).clear();
+        return;
+      }
       const overlay = await fetchJson("/market/data/yearly-overlay?years=" + years.join(","));
       const keys = Object.keys(overlay);
       showEmpty(el, keys.length === 0);
-      if (!keys.length) return;
+      if (!keys.length) {
+        echarts.init(el, emsChartTheme()).clear();
+        return;
+      }
 
       const chart = echarts.init(el, emsChartTheme());
-      const series = keys.map((year, idx) => ({
-        name: year,
-        type: "line",
-        showSymbol: false,
-        smooth: true,
-        color: EMS_YEAR_COLORS[availableYears.indexOf(Number(year)) % EMS_YEAR_COLORS.length],
-        data: overlay[year].map((p) => [p.month_day, p.avg_price_lei_mwh]),
-      }));
+      const dayLabels = buildCalendarDayLabels(years);
+      const series = keys.map((year) => {
+        const pointsByDay = new Map(overlay[year].map((p) => [p.month_day, p.avg_price_lei_mwh]));
+        return {
+          name: year,
+          type: "line",
+          showSymbol: false,
+          smooth: true,
+          color: EMS_YEAR_COLORS[Math.max(availableYears.indexOf(Number(year)), 0) % EMS_YEAR_COLORS.length],
+          data: dayLabels.map((monthDay) => pointsByDay.get(monthDay) ?? null),
+        };
+      });
       chart.setOption({
         grid: { left: 56, right: 16, top: 24, bottom: 40 },
         tooltip: { trigger: "axis" },
         legend: {},
-        xAxis: { type: "category", name: "Zi (luna-zi)", axisLabel: { interval: 29 } },
+        xAxis: { type: "category", name: "Zi (luna-zi)", data: dayLabels, axisLabel: { interval: 29 } },
         yAxis: { type: "value", name: "lei/MWh" },
         series,
       });
