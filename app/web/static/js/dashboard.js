@@ -56,7 +56,7 @@ function emsChartTheme() {
   return document.documentElement.classList.contains("dark") ? "dark" : undefined;
 }
 
-function emsInitDashboard(stationId) {
+function emsInitDashboard(stationId, initialSummary = null) {
   const $ = (id) => document.getElementById(id);
 
   function fmt(v, digits = 2) {
@@ -766,6 +766,7 @@ function emsInitDashboard(stationId) {
   }
 
   // Bootstrap initial
+  if (initialSummary) setKpis(initialSummary);
   lazyLoadWidget("chart-power", () => loadPowerChart("24h"));
   lazyLoadWidget("chart-soc", () => loadSocChart("24h"));
   lazyLoadWidget("chart-prices", loadPricesChart);
