@@ -29,7 +29,7 @@
         <tr class="border-t border-gray-100 dark:border-gray-800">
           <td class="py-1">{{ v.valid_from.strftime("%d.%m.%Y %H:%M") }}</td>
           <td>{{ v.valid_to.strftime("%d.%m.%Y %H:%M") if v.valid_to else "-" }}</td>
-          <td>{{ (v.fixed_price_lei_per_kwh | lei) if v.fixed_price_lei_per_kwh else "-" }}</td>
+          <td>{{ (v.fixed_price_lei_per_kwh | lei) if v.fixed_price_lei_per_kwh is not none else "-" }}</td>
           <td>{{ v.opcom_margin_lei_per_kwh if v.opcom_margin_lei_per_kwh is not none else "-" }}</td>
           <td>{{ v.distribution_lei_per_kwh }}</td>
           <td>{{ v.transport_lei_per_kwh }}</td>
