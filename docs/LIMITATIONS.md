@@ -2242,6 +2242,12 @@ inainte de a scrie cod nou, ca sa nu se reconstruiasca ce functioneaza):
   `PvForecast`/`ConsumptionForecast` au deja `issued_at`, `source`,
   `source_version`, `confidence`, `is_synthetic` (`app/models/forecast.py`)
   -- fiecare rulare a importului creeaza un batch nou, niciodata suprascris.
+- **Optimizerul vede calitatea prognozei, nu doar valorile completate.**
+  `optimization_service` pastreaza acum in `input_snapshot`
+  `pv_forecast_quality` si `load_forecast_quality` (`real`/`estimated`) pentru
+  fiecare interval. Daca statia e in modul `live` si oricare valoare PV/consum
+  a fost completata din fallback/ultimul interval cunoscut, planul calculat
+  este retrogradat la `shadow` cu motiv explicit in `explanation_summary`.
 - **Look-ahead deja prevenit pentru istoric.** `dashboard_service.
   get_forecast_vs_actual` alege deja, pentru fiecare `interval_start`, doar
   cea mai recenta prognoza cu `issued_at <= interval_start` -- fix aplicat in
