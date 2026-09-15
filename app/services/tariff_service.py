@@ -104,6 +104,11 @@ def _validate_version_matches_contract_kind(
             )
 
 
+def _validate_version_time(valid_from: datetime) -> None:
+    if valid_from.tzinfo is None or valid_from.utcoffset() is None:
+        raise ValueError("valid_from: trebuie sa fie un instant timezone-aware (UTC recomandat).")
+
+
 def add_tariff_version(
     db: Session,
     tariff: Tariff,
@@ -122,6 +127,7 @@ def add_tariff_version(
     economic_calculation_disabled: bool = False,
     limitation_note: str | None = None,
 ) -> TariffVersion:
+    _validate_version_time(valid_from)
     _validate_version_matches_contract_kind(
         tariff.kind,
         fixed_price_lei_per_kwh=fixed_price_lei_per_kwh,
@@ -135,6 +141,11 @@ def add_tariff_version(
         .order_by(TariffVersion.valid_from.desc())
         .limit(1)
     )
+    if open_version is not None and open_version.valid_from >= valid_from:
+        raise ValueError(
+            "valid_from: o versiune noua trebuie sa inceapa dupa versiunea deschisa curenta; "
+            "nu se insereaza retroactiv/duplicat peste istoricul tarifar."
+        )
     if open_version is not None and open_version.valid_from < valid_from:
         open_version.valid_to = valid_from
         db.add(open_version)

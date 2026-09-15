@@ -321,6 +321,69 @@ def test_valid_fixed_and_dynamic_versions_still_accepted(db):
     assert dynamic_version.opcom_margin_lei_per_kwh == Decimal("-0.05")
 
 
+def test_add_tariff_version_rejects_naive_valid_from(db):
+    station = _station(db, "naive-valid-from")
+    tariff = svc.get_or_create_tariff(db, station, "import", "fixed", "Naive blocked")
+
+    with pytest.raises(ValueError, match="timezone-aware"):
+        svc.add_tariff_version(
+            db, tariff, valid_from=datetime(2026, 1, 1, 0, 0),
+            fixed_price_lei_per_kwh=Decimal("0.85"), opcom_margin_lei_per_kwh=None,
+            fixed_monthly_fee_lei=Decimal("0"), variable_component_lei_per_kwh=Decimal("0"),
+            settlement_method="net_metering_15min", settlement_interval_days=30,
+        )
+
+
+def test_add_tariff_version_rejects_duplicate_or_backdated_open_version(db):
+    station = _station(db, "backdated")
+    tariff = svc.get_or_create_tariff(db, station, "import", "fixed", "Append only")
+    first_start = datetime(2026, 1, 1, tzinfo=UTC)
+    svc.add_tariff_version(
+        db, tariff, valid_from=first_start,
+        fixed_price_lei_per_kwh=Decimal("0.80"), opcom_margin_lei_per_kwh=None,
+        fixed_monthly_fee_lei=Decimal("0"), variable_component_lei_per_kwh=Decimal("0"),
+        settlement_method="net_metering_15min", settlement_interval_days=30,
+    )
+
+    with pytest.raises(ValueError, match="dupa versiunea deschisa"):
+        svc.add_tariff_version(
+            db, tariff, valid_from=first_start,
+            fixed_price_lei_per_kwh=Decimal("0.90"), opcom_margin_lei_per_kwh=None,
+            fixed_monthly_fee_lei=Decimal("0"), variable_component_lei_per_kwh=Decimal("0"),
+            settlement_method="net_metering_15min", settlement_interval_days=30,
+        )
+
+    with pytest.raises(ValueError, match="retroactiv"):
+        svc.add_tariff_version(
+            db, tariff, valid_from=first_start - timedelta(days=1),
+            fixed_price_lei_per_kwh=Decimal("0.70"), opcom_margin_lei_per_kwh=None,
+            fixed_monthly_fee_lei=Decimal("0"), variable_component_lei_per_kwh=Decimal("0"),
+            settlement_method="net_metering_15min", settlement_interval_days=30,
+        )
+
+
+def test_add_tariff_version_closes_previous_open_version_without_overlap(db):
+    station = _station(db, "append-ok")
+    tariff = svc.get_or_create_tariff(db, station, "import", "fixed", "Append ok")
+    first_start = datetime(2026, 1, 1, tzinfo=UTC)
+    second_start = datetime(2026, 2, 1, tzinfo=UTC)
+    first = svc.add_tariff_version(
+        db, tariff, valid_from=first_start,
+        fixed_price_lei_per_kwh=Decimal("0.80"), opcom_margin_lei_per_kwh=None,
+        fixed_monthly_fee_lei=Decimal("0"), variable_component_lei_per_kwh=Decimal("0"),
+        settlement_method="net_metering_15min", settlement_interval_days=30,
+    )
+    second = svc.add_tariff_version(
+        db, tariff, valid_from=second_start,
+        fixed_price_lei_per_kwh=Decimal("0.90"), opcom_margin_lei_per_kwh=None,
+        fixed_monthly_fee_lei=Decimal("0"), variable_component_lei_per_kwh=Decimal("0"),
+        settlement_method="net_metering_15min", settlement_interval_days=30,
+    )
+
+    assert first.valid_to == second_start
+    assert second.valid_to is None
+
+
 # --- Export are formula proprie, nu derivata din import (issue #46) -------
 
 
