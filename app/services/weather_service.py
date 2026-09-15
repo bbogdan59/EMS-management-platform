@@ -6,6 +6,7 @@ inventeaza date -- prognozele lipsesc explicit din UI/optimizator)."""
 from __future__ import annotations
 
 import json
+import math
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -151,13 +152,23 @@ def _infer_confidence(raw: dict) -> str:
         values = hourly.get(key)
         if not isinstance(values, list) or len(values) != expected_len:
             return "low"
-        if key != "time" and all(v is None for v in values):
+        if key != "time" and all(_safe_number(v) is None for v in values):
             return "low"
     for key in OPTIONAL_HOURLY_SERIES:
         values = hourly.get(key)
         if values is not None and len(values) != expected_len:
             return "low"
     return declared if declared in ALLOWED_CONFIDENCE else "nominal"
+
+
+def _safe_number(value) -> float | None:
+    if value is None:
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
 
 
 def store_weather_forecast(db: Session, station: Station, raw: dict) -> list[WeatherForecast]:
@@ -203,7 +214,7 @@ def store_weather_forecast(db: Session, station: Station, raw: dict) -> list[Wea
 
 def _safe_get(arr: list, i: int):
     if i < len(arr) and arr[i] is not None:
-        return float(arr[i])
+        return _safe_number(arr[i])
     return None
 
 

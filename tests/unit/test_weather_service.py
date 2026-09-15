@@ -268,3 +268,22 @@ def test_weather_confidence_degrades_when_required_series_are_missing():
 
     assert rows[0].temperature_c is None
     assert rows[0].confidence == "low"
+
+
+def test_weather_non_finite_required_values_are_missing_and_low_confidence():
+    db = _FakeDb()
+    raw = {
+        "provider": "weather-test",
+        "hourly": {
+            "time": ["2026-01-01T00:00", "2026-01-01T01:00"],
+            "shortwave_radiation": [float("nan"), "Infinity"],
+            "cloud_cover": [20, 25],
+            "temperature_2m": [3, 4],
+        },
+    }
+
+    rows = weather_service.store_weather_forecast(db, _Station(), raw)
+
+    assert rows[0].ghi_w_m2 is None
+    assert rows[1].ghi_w_m2 is None
+    assert rows[0].confidence == "low"
