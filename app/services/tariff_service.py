@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.models.station import Station
 from app.models.tariff import (
+    TARIFF_DIRECTIONS,
     TARIFF_KIND_DYNAMIC_INDEXED,
     TARIFF_KIND_FIXED,
     TARIFF_KINDS,
@@ -26,7 +27,18 @@ def validate_tariff_kind(kind: str) -> None:
         )
 
 
+def validate_tariff_direction(direction: str) -> None:
+    """Tarifele sunt separate strict pe import/export. O directie libera ar
+    crea un contract care nu intra corect nici in costul de import, nici in
+    venitul de export."""
+    if direction not in TARIFF_DIRECTIONS:
+        raise ValueError(
+            f"direction: directie de tarif necunoscuta ({direction!r}). Valorile permise sunt: {sorted(TARIFF_DIRECTIONS)}."
+        )
+
+
 def get_or_create_tariff(db: Session, station: Station, direction: str, kind: str, name: str) -> Tariff:
+    validate_tariff_direction(direction)
     validate_tariff_kind(kind)
     tariff = db.scalar(
         select(Tariff).where(Tariff.station_id == station.id, Tariff.direction == direction, Tariff.is_active.is_(True))
@@ -241,6 +253,7 @@ def build_invoice_preview(
 
 
 def get_current_tariff_version(db: Session, station_id, direction: str, at: datetime) -> TariffVersion | None:
+    validate_tariff_direction(direction)
     return db.scalar(
         select(TariffVersion)
         .join(Tariff, Tariff.id == TariffVersion.tariff_id)
