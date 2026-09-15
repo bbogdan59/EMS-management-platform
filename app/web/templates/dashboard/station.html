@@ -159,36 +159,65 @@
         Pretul de piata (lei/kWh), NU costul tau efectiv (vezi KPI-urile de mai sus) -- diferenta e formula contractului tau (marja, taxe, distributie).
       </p>
       <p id="prices-tomorrow-status" class="mb-2 text-xs text-amber-700 dark:text-amber-300"></p>
+      <div class="empty-state text-sm text-gray-500" hidden>Nu exista preturi publicate pentru azi sau maine.</div>
+      <div class="error-state text-sm text-red-700 dark:text-red-300 bg-red-50 dark:bg-red-900/30 rounded p-3" hidden>
+        <p class="mb-2">Nu am putut incarca acest grafic. Celelalte grafice nu sunt afectate.</p>
+        <button type="button" class="btn-secondary retry-btn">Reincearca</button>
+      </div>
       <div id="chart-prices" style="height:280px"></div>
     </div>
     <div class="card">
       <h2 class="mb-2 font-medium">Plan incarcare/descarcare <span id="plan-status-badge" class="badge-muted"></span></h2>
       <div class="empty-state text-sm text-gray-500" hidden>Nu exista un plan publicat momentan.</div>
+      <div class="error-state text-sm text-red-700 dark:text-red-300 bg-red-50 dark:bg-red-900/30 rounded p-3" hidden>
+        <p class="mb-2">Nu am putut incarca acest grafic. Celelalte grafice nu sunt afectate.</p>
+        <button type="button" class="btn-secondary retry-btn">Reincearca</button>
+      </div>
       <div id="chart-plan" style="height:280px"></div>
     </div>
     <div class="card">
       <h2 class="mb-2 font-medium">Prognoza vs. realizat - PV</h2>
       <div class="empty-state text-sm text-gray-500" hidden>Nu exista prognoze PV pentru acest interval.</div>
+      <div class="error-state text-sm text-red-700 dark:text-red-300 bg-red-50 dark:bg-red-900/30 rounded p-3" hidden>
+        <p class="mb-2">Nu am putut incarca acest grafic. Celelalte grafice nu sunt afectate.</p>
+        <button type="button" class="btn-secondary retry-btn">Reincearca</button>
+      </div>
       <div id="chart-forecast-pv" style="height:260px"></div>
     </div>
     <div class="card">
       <h2 class="mb-2 font-medium">Prognoza vs. realizat - consum</h2>
       <div class="empty-state text-sm text-gray-500" hidden>Nu exista prognoze de consum pentru acest interval.</div>
+      <div class="error-state text-sm text-red-700 dark:text-red-300 bg-red-50 dark:bg-red-900/30 rounded p-3" hidden>
+        <p class="mb-2">Nu am putut incarca acest grafic. Celelalte grafice nu sunt afectate.</p>
+        <button type="button" class="btn-secondary retry-btn">Reincearca</button>
+      </div>
       <div id="chart-forecast-load" style="height:260px"></div>
     </div>
     <div class="card lg:col-span-2">
       <h2 class="mb-2 font-medium">Heatmap consum (ora x zi din saptamana)</h2>
       <div class="empty-state text-sm text-gray-500" hidden>Insuficiente agregate orare pentru heatmap.</div>
+      <div class="error-state text-sm text-red-700 dark:text-red-300 bg-red-50 dark:bg-red-900/30 rounded p-3" hidden>
+        <p class="mb-2">Nu am putut incarca acest grafic. Celelalte grafice nu sunt afectate.</p>
+        <button type="button" class="btn-secondary retry-btn">Reincearca</button>
+      </div>
       <div id="chart-heatmap" style="height:320px"></div>
     </div>
     <div class="card">
       <h2 class="mb-2 font-medium">Energie zilnica (30 zile)</h2>
       <div class="empty-state text-sm text-gray-500" hidden>Fara agregate zilnice inca.</div>
+      <div class="error-state text-sm text-red-700 dark:text-red-300 bg-red-50 dark:bg-red-900/30 rounded p-3" hidden>
+        <p class="mb-2">Nu am putut incarca acest grafic. Celelalte grafice nu sunt afectate.</p>
+        <button type="button" class="btn-secondary retry-btn">Reincearca</button>
+      </div>
       <div id="chart-energy-daily" style="height:280px"></div>
     </div>
     <div class="card">
       <h2 class="mb-2 font-medium">Energie lunara (12 luni)</h2>
       <div class="empty-state text-sm text-gray-500" hidden>Fara agregate lunare inca.</div>
+      <div class="error-state text-sm text-red-700 dark:text-red-300 bg-red-50 dark:bg-red-900/30 rounded p-3" hidden>
+        <p class="mb-2">Nu am putut incarca acest grafic. Celelalte grafice nu sunt afectate.</p>
+        <button type="button" class="btn-secondary retry-btn">Reincearca</button>
+      </div>
       <div id="chart-energy-monthly" style="height:280px"></div>
     </div>
   </div>

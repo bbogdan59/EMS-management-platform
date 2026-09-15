@@ -90,3 +90,32 @@ def test_timeseries_route_forbidden_for_other_organizations_station(client, db):
     resp = client.get(f"/stations/{other_station.id}/data/timeseries?range=24h")
 
     assert resp.status_code == 403
+
+
+def test_dashboard_chart_widgets_have_isolated_retry_errors(client, db):
+    user, station, _device = _setup(db)
+    db.commit()
+
+    login(client, user.email, "Password1234")
+    resp = client.get(f"/?station_id={station.id}")
+
+    assert resp.status_code == 200
+    for chart_id in [
+        "chart-power",
+        "chart-soc",
+        "chart-prices",
+        "chart-plan",
+        "chart-forecast-pv",
+        "chart-forecast-load",
+        "chart-heatmap",
+        "chart-energy-daily",
+        "chart-energy-monthly",
+    ]:
+        idx = resp.text.find(f'id="{chart_id}"')
+        assert idx != -1
+        card_start = resp.text.rfind('<div class="card', 0, idx)
+        assert card_start != -1
+        card_html = resp.text[card_start:idx]
+        assert "empty-state" in card_html
+        assert "error-state" in card_html
+        assert "retry-btn" in card_html
