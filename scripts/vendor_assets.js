@@ -10,6 +10,7 @@ fs.mkdirSync(destDir, { recursive: true });
 const files = [
   ["node_modules/htmx.org/dist/htmx.min.js", "htmx.min.js"],
   ["node_modules/echarts/dist/echarts.min.js", "echarts.min.js"],
+  ["node_modules/@svgdotjs/svg.js/dist/svg.min.js", "svg.min.js"],
 ];
 
 for (const [src, destName] of files) {
