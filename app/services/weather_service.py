@@ -6,7 +6,9 @@ inventeaza date -- prognozele lipsesc explicit din UI/optimizator)."""
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from typing import Protocol
 
 import httpx
 import structlog
@@ -29,35 +31,79 @@ class WeatherUnavailableError(Exception):
 HOURLY_VARS = "shortwave_radiation,direct_normal_irradiance,diffuse_radiation,cloud_cover,temperature_2m,wind_speed_10m"
 
 
-def _cache_key(lat: float, lon: float) -> str:
-    return f"weather_forecast:{round(lat, 3)}:{round(lon, 3)}"
+@dataclass(frozen=True)
+class WeatherProviderRequest:
+    latitude: float
+    longitude: float
+    base_url: str
+    timeout_seconds: float
+    cache_ttl_minutes: int
 
 
-def fetch_forecast_raw(latitude: float, longitude: float) -> dict:
-    cache = get_redis()
-    key = _cache_key(latitude, longitude)
-    cached = cache.get(key)
-    if cached:
-        return json.loads(cached)
+class WeatherProvider(Protocol):
+    name: str
 
-    params = {
-        "latitude": latitude,
-        "longitude": longitude,
-        "hourly": HOURLY_VARS,
-        "timezone": "UTC",
-        "forecast_days": 3,
-    }
-    try:
-        with httpx.Client(timeout=settings.weather_request_timeout_seconds) as client:
-            resp = client.get(settings.weather_base_url, params=params)
-            resp.raise_for_status()
-            data = resp.json()
-    except httpx.HTTPError as exc:
-        logger.warning("weather.fetch_failed", error=str(exc))
-        raise WeatherUnavailableError(f"Sursa meteo ({settings.weather_provider}) indisponibila: {exc}") from exc
+    def fetch_raw(self, request: WeatherProviderRequest) -> dict:
+        """Returneaza payload-ul brut al providerului, cu timestamps UTC."""
 
-    cache.setex(key, settings.weather_cache_ttl_minutes * 60, json.dumps(data))
-    return data
+
+class OpenMeteoWeatherProvider:
+    name = "open-meteo"
+
+    def fetch_raw(self, request: WeatherProviderRequest) -> dict:
+        cache = get_redis()
+        key = _cache_key(self.name, request.latitude, request.longitude)
+        cached = cache.get(key)
+        if cached:
+            return json.loads(cached)
+
+        params = {
+            "latitude": request.latitude,
+            "longitude": request.longitude,
+            "hourly": HOURLY_VARS,
+            "timezone": "UTC",
+            "forecast_days": 3,
+        }
+        try:
+            with httpx.Client(timeout=request.timeout_seconds) as client:
+                resp = client.get(request.base_url, params=params)
+                resp.raise_for_status()
+                data = resp.json()
+        except httpx.HTTPError as exc:
+            logger.warning("weather.fetch_failed", provider=self.name, error=str(exc))
+            raise WeatherUnavailableError(f"Sursa meteo ({self.name}) indisponibila: {exc}") from exc
+
+        cache.setex(key, request.cache_ttl_minutes * 60, json.dumps(data))
+        return data
+
+
+PROVIDERS: dict[str, WeatherProvider] = {
+    OpenMeteoWeatherProvider.name: OpenMeteoWeatherProvider(),
+}
+
+
+def _cache_key(provider: str, lat: float, lon: float) -> str:
+    return f"weather_forecast:{provider}:{round(lat, 3)}:{round(lon, 3)}"
+
+
+def get_weather_provider(name: str | None = None) -> WeatherProvider:
+    provider_name = name or settings.weather_provider
+    provider = PROVIDERS.get(provider_name)
+    if provider is None:
+        raise WeatherUnavailableError(f"Provider meteo neacceptat: {provider_name}")
+    return provider
+
+
+def fetch_forecast_raw(latitude: float, longitude: float, provider_name: str | None = None) -> dict:
+    provider = get_weather_provider(provider_name)
+    request = WeatherProviderRequest(
+        latitude=latitude,
+        longitude=longitude,
+        base_url=settings.weather_base_url,
+        timeout_seconds=settings.weather_request_timeout_seconds,
+        cache_ttl_minutes=settings.weather_cache_ttl_minutes,
+    )
+    return provider.fetch_raw(request)
 
 
 def store_weather_forecast(db: Session, station: Station, raw: dict) -> list[WeatherForecast]:
