@@ -17,19 +17,18 @@ ca la OPCOM/Open-Meteo):
   body: {"appSecret": "...", "email": "...", "password": sha256(parola_in_clar)}
   -> {"access_token": "...", "expires_in": <secunde>, ...}
 
-`appId`/`appSecret` sunt ale APLICATIEI, inregistrata O SINGURA DATA de
-platforma in portalul Deye (`Settings.deye_cloud_app_id/app_secret`) -- NU
-per-client. Fiecare client isi conecteaza propriul cont Deye Cloud
-(email + parola contului SAU, un cont Deye Cloud existent, ex. de pe telefon).
-Parola se trimite hash-uita SHA-256 (cerut explicit de schema documentata a
-`tokenRequest` -- "must be sha256 encrypted"), NICIODATA in clar peste retea.
+`appId`/`appSecret` sunt credentialele aplicatiei create in portalul Deye.
+Pentru EMS le stocam pe conexiunea statiei, nu ca set global unic, deoarece
+operatorii pot folosi aplicatii Deye diferite pe statii/organizatii diferite.
+API-ul token observat/documentat cere in continuare si email/parola de cont
+Deye; parola se trimite hash-uita SHA-256 (cerut explicit de schema
+documentata a `tokenRequest`), NICIODATA in clar peste retea.
 
-Nu exista, in specificatia bundle-uita, niciun endpoint separat de tip
-`refresh_token` -- reautentificarea dupa expirarea `access_token`-ului
-necesita din nou parola contului. De aceea, spre deosebire de o integrare
-OAuth "curata" (unde am fi putut pastra doar un refresh_token rotativ),
-aceasta integrare TREBUIE sa retina parola contului clientului, criptata la
-repaus (`app.core.crypto`) -- documentat explicit, nu ascuns.
+Documentatia publica curenta mentioneaza `refreshToken` in raspunsul de
+token, dar aceasta versiune a conectorului nu implementeaza inca rotirea pe
+refresh token; dupa expirarea `access_token` reautentifica folosind
+email/parola, criptate la repaus (`app.core.crypto`). Nu stergem parola pana
+nu verificam live grant-ul de refresh si semantica expirarii.
 
 Regiune: doar centrul de date UE (`eu1-developer.deyecloud.com`) e suportat in
 aceasta versiune (`Settings.deye_cloud_region`) -- vezi docs/LIMITATIONS.md.
@@ -80,7 +79,7 @@ class DeyeCloudError(Exception):
 
 
 class DeyeCloudConfigError(DeyeCloudError):
-    """Platforma nu are `DEYE_CLOUD_APP_ID`/`DEYE_CLOUD_APP_SECRET` configurate."""
+    """Conexiunea nu are credentiale Deye appId/appSecret configurate."""
 
 
 class DeyeCloudAuthError(DeyeCloudError):
@@ -103,13 +102,11 @@ def _hash_password(password: str) -> str:
     return hashlib.sha256(password.encode("utf-8")).hexdigest()
 
 
-def _require_app_credentials() -> tuple[str, str]:
-    if not settings.deye_cloud_app_id or not settings.deye_cloud_app_secret:
-        raise DeyeCloudConfigError(
-            "Integrarea Deye Cloud nu e configurata pe aceasta platforma "
-            "(DEYE_CLOUD_APP_ID/DEYE_CLOUD_APP_SECRET lipsesc)."
-        )
-    return settings.deye_cloud_app_id, settings.deye_cloud_app_secret
+def _require_app_credentials(app_id: str | None, app_secret: str | None) -> tuple[str, str]:
+    clean_app_id = (app_id or "").strip()
+    if not clean_app_id or not app_secret:
+        raise DeyeCloudConfigError("Integrarea Deye Cloud necesita appId si appSecret configurate pentru aceasta statie.")
+    return clean_app_id, app_secret
 
 
 def _post(path: str, *, params: dict | None = None, body: dict | None = None, access_token: str | None = None) -> dict:
@@ -152,15 +149,19 @@ def _post(path: str, *, params: dict | None = None, body: dict | None = None, ac
     return data
 
 
-def authenticate(email: str, password: str) -> dict:
+def authenticate(app_id: str, app_secret: str, email: str, password: str) -> dict:
     """Obtine un access_token nou (POST /v1.0/account/token). Parola e
     hash-uita SHA-256 inainte de a fi trimisa, niciodata in clar."""
-    app_id, app_secret = _require_app_credentials()
+    app_id, app_secret = _require_app_credentials(app_id, app_secret)
     data = _post(
         "/v1.0/account/token",
         params={"appId": app_id},
         body={"appSecret": app_secret, "email": email, "password": _hash_password(password)},
     )
+    if "access_token" not in data and "accessToken" in data:
+        data["access_token"] = data["accessToken"]
+    if "expires_in" not in data and "expiresIn" in data:
+        data["expires_in"] = data["expiresIn"]
     if "access_token" not in data:
         raise DeyeCloudAuthError("Raspuns de autentificare fara access_token.")
     return data
@@ -250,13 +251,14 @@ def map_station_latest_to_telemetry(raw: dict) -> dict:
 
 
 def start_connection(
-    db: Session, station: Station, user: User, email: str, password: str
+    db: Session, station: Station, user: User, app_id: str, app_secret: str, email: str, password: str
 ) -> tuple[DeyeCloudConnection, list[dict]]:
     """Autentifica si creeaza/actualizeaza conexiunea in starea
     `pending_selection`, fara sa lege inca o statie Deye Cloud anume --
     utilizatorul alege explicit in pasul urmator (`select_remote_station`),
     consimtamant explicit inainte de orice import."""
-    auth = authenticate(email, password)
+    app_id, app_secret = _require_app_credentials(app_id, app_secret)
+    auth = authenticate(app_id, app_secret, email, password)
     stations = list_remote_stations(auth["access_token"])
 
     existing = db.scalar(select(DeyeCloudConnection).where(DeyeCloudConnection.station_id == station.id))
@@ -287,6 +289,8 @@ def start_connection(
             created_by_user_id=user.id,
             consent_accepted_at=now,
         )
+    connection.app_id = app_id
+    connection.encrypted_app_secret = encrypt_secret(app_secret)
     connection.account_email = email
     connection.encrypted_account_password = encrypt_secret(password)
     connection.encrypted_access_token = encrypt_secret(auth["access_token"])
@@ -402,6 +406,8 @@ def disconnect(db: Session, connection: DeyeCloudConnection, user: User) -> None
     e posibila -- specificatia bundle-uita nu expune un endpoint de revocare;
     stergerea locala a credentialelor e singura actiune disponibila."""
     connection.status = DeyeCloudConnectionStatus.disconnected.value
+    connection.app_id = None
+    connection.encrypted_app_secret = None
     connection.encrypted_account_password = ""
     connection.encrypted_access_token = None
     connection.access_token_expires_at = None
@@ -426,11 +432,18 @@ def _valid_access_token(connection: DeyeCloudConnection) -> str:
         except DecryptionError:
             pass  # SECRET_KEY schimbat de la criptare -- reautentifica mai jos.
 
+    if not connection.app_id or not connection.encrypted_app_secret:
+        raise DeyeCloudConfigError("Conexiunea Deye Cloud nu are appId/appSecret configurate; reconecteaza statia.")
+
     try:
         password = decrypt_secret(connection.encrypted_account_password)
     except DecryptionError as exc:
         raise DeyeCloudAuthError("Parola stocata nu a putut fi decriptata (SECRET_KEY schimbat?).") from exc
-    auth = authenticate(connection.account_email, password)
+    try:
+        app_secret = decrypt_secret(connection.encrypted_app_secret or "")
+    except DecryptionError as exc:
+        raise DeyeCloudAuthError("AppSecret-ul stocat nu a putut fi decriptat (SECRET_KEY schimbat?).") from exc
+    auth = authenticate(connection.app_id or "", app_secret, connection.account_email, password)
     connection.encrypted_access_token = encrypt_secret(auth["access_token"])
     expires_in = auth.get("expires_in")
     connection.access_token_expires_at = (
@@ -491,6 +504,15 @@ def poll_connection(db: Session, connection: DeyeCloudConnection) -> dict:
     try:
         access_token = _valid_access_token(connection)
         raw = fetch_station_latest(access_token, connection.remote_station_id)
+    except DeyeCloudConfigError as exc:
+        connection.status = DeyeCloudConnectionStatus.error.value
+        connection.last_sync_at = now
+        connection.last_sync_status = "failed"
+        connection.last_sync_message = "AppId/appSecret lipsesc -- reconectati Deye Cloud pentru aceasta statie."
+        connection.consecutive_failure_count += 1
+        db.add(connection)
+        logger.warning("deye_cloud.poll_config_failed", connection_id=str(connection.id), error=str(exc))
+        return {"status": "failed", "reason": "config_error"}
     except DeyeCloudAuthError as exc:
         connection.status = DeyeCloudConnectionStatus.error.value
         connection.last_sync_at = now

@@ -63,6 +63,8 @@ def page(
 
 @router.post("/stations/{station_id}/integrations/deye/connect", dependencies=[Depends(verify_csrf)])
 def connect(
+    app_id: str = Form(...),
+    app_secret: str = Form(...),
     email: str = Form(...),
     password: str = Form(...),
     consent: str | None = Form(None),
@@ -82,11 +84,13 @@ def connect(
     except RateLimitExceeded:
         return _redirect(station.id, error="Prea multe incercari de conectare. Reincearca mai tarziu.")
     try:
-        connection, _stations = deye_cloud_service.start_connection(db, station, user, email.strip(), password)
+        connection, _stations = deye_cloud_service.start_connection(
+            db, station, user, app_id.strip(), app_secret, email.strip(), password
+        )
         db.commit()
     except deye_cloud_service.DeyeCloudConfigError:
         db.rollback()
-        return _redirect(station.id, error="Integrarea Deye Cloud nu este configurata pe aceasta platforma.")
+        return _redirect(station.id, error="Integrarea Deye Cloud necesita appId si appSecret pentru aceasta statie.")
     except deye_cloud_service.DeyeCloudAuthError:
         db.rollback()
         return _redirect(station.id, error="Autentificare Deye Cloud esuata -- verifica email-ul si parola.")
@@ -97,7 +101,7 @@ def connect(
     record_audit(
         db, action="deye_cloud_connected", resource_type="deye_cloud_connection", resource_id=str(connection.id),
         actor_user_id=user.id, actor_label="user", station_id=station.id,
-        metadata={"account_email": email.strip()},
+        metadata={"account_email": email.strip(), "app_id": app_id.strip()},
     )
     db.commit()
     return _redirect(station.id, notice="Autentificare reusita. Alege statia din contul tau Deye Cloud.")

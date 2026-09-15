@@ -33,11 +33,16 @@
     <div class="card">
       <h2 class="mb-2 font-medium">Conecteaza contul Deye Cloud</h2>
       <p class="mb-3 text-sm text-gray-500 dark:text-gray-400">
-        Conexiunea TLS protejeaza transportul, iar parola este transformata SHA-256 conform
-        documentatiei Deye si stocata criptat pe platforma -- niciodata in clar in baza de date sau loguri.
+        Configureaza appId/appSecret pentru aceasta statie, apoi autentifica accesul la contul Deye Cloud.
+        Secretul aplicatiei si parola contului sunt stocate criptat; parola este transformata SHA-256
+        inainte de apelul catre Deye.
       </p>
       <form method="post" action="/stations/{{ station.id }}/integrations/deye/connect" class="space-y-3 max-w-md">
         <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}" />
+        <div><label class="label">Deye App ID</label>
+          <input class="input font-mono" type="text" name="app_id" required autocomplete="off" value="{{ connection.app_id if connection and connection.app_id else '' }}" /></div>
+        <div><label class="label">Deye App Secret</label>
+          <input class="input font-mono" type="password" name="app_secret" required autocomplete="new-password" /></div>
         <div><label class="label">Email cont Deye Cloud</label>
           <input class="input" type="email" name="email" required /></div>
         <div><label class="label">Parola</label>
@@ -56,7 +61,8 @@
     <div class="card">
       <h2 class="mb-2 font-medium">Alege statia din contul Deye Cloud</h2>
       <p class="mb-3 text-sm text-gray-500 dark:text-gray-400">
-        Contul <strong>{{ connection.account_email }}</strong> este autentificat. Alege ce statie
+        Aplicatia Deye <strong>{{ connection.app_id or "neconfigurata" }}</strong> si contul
+        <strong>{{ connection.account_email }}</strong> sunt autentificate. Alege ce statie
         din acest cont sa fie legata de <strong>{{ station.name }}</strong> -- import explicit, o singura data.
       </p>
       {% if not remote_stations %}
@@ -75,6 +81,7 @@
   {% elif connection.status == "connected" %}
     <div class="card">
       <h2 class="mb-2 font-medium">Conectat</h2>
+      <p>Deye App ID: <strong>{{ connection.app_id or "neconfigurat" }}</strong></p>
       <p>Cont: <strong>{{ connection.account_email }}</strong></p>
       <p>Statie Deye Cloud legata: <strong>{{ connection.remote_station_name }}</strong> (id {{ connection.remote_station_id }})</p>
       <p>

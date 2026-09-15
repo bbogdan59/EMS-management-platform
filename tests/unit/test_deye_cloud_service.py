@@ -29,9 +29,7 @@ BASE = "https://eu1-developer.deyecloud.com"
 
 
 @pytest.fixture(autouse=True)
-def _app_credentials(monkeypatch):
-    monkeypatch.setattr(svc.settings, "deye_cloud_app_id", "test-app-id")
-    monkeypatch.setattr(svc.settings, "deye_cloud_app_secret", "test-app-secret")
+def _fast_retries(monkeypatch):
     monkeypatch.setattr(svc.settings, "deye_cloud_max_retries", 3)
 
 
@@ -40,6 +38,8 @@ def _connection(db, station, user, **overrides) -> DeyeCloudConnection:
         "station_id": station.id,
         "created_by_user_id": user.id,
         "status": DeyeCloudConnectionStatus.connected.value,
+        "app_id": "test-app-id",
+        "encrypted_app_secret": encrypt_secret("test-app-secret"),
         "account_email": "client@example.com",
         "encrypted_account_password": encrypt_secret("s3cret"),
         "encrypted_access_token": encrypt_secret("cached-token"),
@@ -58,14 +58,27 @@ def _connection(db, station, user, **overrides) -> DeyeCloudConnection:
 # --- Config si hashing ------------------------------------------------------
 
 
-def test_require_app_credentials_raises_when_unconfigured(monkeypatch):
-    monkeypatch.setattr(svc.settings, "deye_cloud_app_id", None)
+def test_require_app_credentials_raises_when_unconfigured():
     with pytest.raises(svc.DeyeCloudConfigError):
-        svc._require_app_credentials()
+        svc._require_app_credentials("", None)
 
 
 def test_password_is_hashed_sha256_never_sent_in_clear():
     assert svc._hash_password("hunter2") == hashlib.sha256(b"hunter2").hexdigest()
+
+
+def test_valid_access_token_requires_station_app_credentials():
+    conn = DeyeCloudConnection(
+        station_id=uuid.uuid4(),
+        created_by_user_id=uuid.uuid4(),
+        status=DeyeCloudConnectionStatus.connected.value,
+        account_email="client@example.com",
+        encrypted_account_password=encrypt_secret("hunter2"),
+        consent_accepted_at=utcnow(),
+    )
+
+    with pytest.raises(svc.DeyeCloudConfigError):
+        svc._valid_access_token(conn)
 
 
 # --- Autentificare (plic real de eroare, verificat live) --------------------
@@ -76,14 +89,27 @@ def test_authenticate_success():
     route = respx.post(f"{BASE}/v1.0/account/token").mock(
         return_value=httpx.Response(200, json={"access_token": "abc123", "expires_in": 86400, "token_type": "bearer"})
     )
-    data = svc.authenticate("client@example.com", "hunter2")
+    data = svc.authenticate("station-app-id", "station-app-secret", "client@example.com", "hunter2")
     assert data["access_token"] == "abc123"
     request = route.calls[0].request
-    assert request.url.params["appId"] == "test-app-id"
+    assert request.url.params["appId"] == "station-app-id"
     payload = json.loads(request.content)
+    assert payload["appSecret"] == "station-app-secret"
     assert payload["email"] == "client@example.com"
     assert payload["password"] == hashlib.sha256(b"hunter2").hexdigest()
     assert "hunter2" not in request.content.decode("utf-8")
+
+
+@respx.mock
+def test_authenticate_accepts_camel_case_token_response():
+    respx.post(f"{BASE}/v1.0/account/token").mock(
+        return_value=httpx.Response(200, json={"accessToken": "abc123", "expiresIn": 86400, "tokenType": "bearer"})
+    )
+
+    data = svc.authenticate("station-app-id", "station-app-secret", "client@example.com", "hunter2")
+
+    assert data["access_token"] == "abc123"
+    assert data["expires_in"] == 86400
 
 
 @respx.mock
@@ -96,7 +122,7 @@ def test_authenticate_invalid_app_id_raises_auth_error():
         )
     )
     with pytest.raises(svc.DeyeCloudAuthError):
-        svc.authenticate("client@example.com", "hunter2")
+        svc.authenticate("bad-app-id", "station-app-secret", "client@example.com", "hunter2")
 
 
 @respx.mock
@@ -105,7 +131,7 @@ def test_unrecognized_api_error_is_not_treated_as_auth_error():
         return_value=httpx.Response(200, json={"code": "9999999", "msg": "eroare necunoscuta", "success": False})
     )
     with pytest.raises(svc.DeyeCloudApiError) as exc_info:
-        svc.authenticate("client@example.com", "hunter2")
+        svc.authenticate("station-app-id", "station-app-secret", "client@example.com", "hunter2")
     assert exc_info.value.code == "9999999"
 
 
@@ -116,7 +142,7 @@ def test_transient_5xx_is_retried_then_succeeds():
         httpx.Response(503),
         httpx.Response(200, json={"access_token": "ok-after-retry", "expires_in": 3600}),
     ]
-    data = svc.authenticate("client@example.com", "hunter2")
+    data = svc.authenticate("station-app-id", "station-app-secret", "client@example.com", "hunter2")
     assert data["access_token"] == "ok-after-retry"
     assert route.call_count == 2
 
@@ -127,7 +153,7 @@ def test_business_error_is_not_retried():
         return_value=httpx.Response(200, json={"code": "9999999", "msg": "x", "success": False})
     )
     with pytest.raises(svc.DeyeCloudApiError):
-        svc.authenticate("client@example.com", "hunter2")
+        svc.authenticate("station-app-id", "station-app-secret", "client@example.com", "hunter2")
     assert route.call_count == 1
 
 
@@ -137,7 +163,7 @@ def test_non_json_success_response_fails_explicitly_without_retry():
         return_value=httpx.Response(200, text="not-json")
     )
     with pytest.raises(svc.DeyeCloudApiError, match="JSON invalid"):
-        svc.authenticate("client@example.com", "hunter2")
+        svc.authenticate("station-app-id", "station-app-secret", "client@example.com", "hunter2")
     assert route.call_count == 1
 
 
@@ -146,7 +172,7 @@ def test_persistent_5xx_raises_unavailable_after_max_retries(monkeypatch):
     monkeypatch.setattr(svc.settings, "deye_cloud_max_retries", 2)  # limiteaza timpul real de asteptare al testului
     respx.post(f"{BASE}/v1.0/account/token").mock(return_value=httpx.Response(500))
     with pytest.raises(svc.DeyeCloudUnavailableError):
-        svc.authenticate("client@example.com", "hunter2")
+        svc.authenticate("station-app-id", "station-app-secret", "client@example.com", "hunter2")
 
 
 # --- Mapare Deye -> model canonic (defensiva, unitati/semne) ----------------
@@ -351,11 +377,27 @@ def test_start_connection_creates_pending_selection(db, monkeypatch):
     user = make_user(db, email="start@test.local")
     station = make_station(db, org, user, name="Statie Start")
 
-    monkeypatch.setattr(svc, "authenticate", lambda email, password: {"access_token": "tok", "expires_in": 3600})
+    seen_credentials = {}
+
+    def _auth(app_id, app_secret, email, password):
+        seen_credentials.update(
+            {"app_id": app_id, "app_secret": app_secret, "email": email, "password": password}
+        )
+        return {"access_token": "tok", "expires_in": 3600}
+
+    monkeypatch.setattr(svc, "authenticate", _auth)
     monkeypatch.setattr(svc, "list_remote_stations", lambda token: [{"id": 322, "name": "Casa Test"}])
 
-    conn, stations = svc.start_connection(db, station, user, "client@example.com", "hunter2")
+    conn, stations = svc.start_connection(db, station, user, "station-app-id", "station-app-secret", "client@example.com", "hunter2")
     assert conn.status == DeyeCloudConnectionStatus.pending_selection.value
+    assert seen_credentials == {
+        "app_id": "station-app-id",
+        "app_secret": "station-app-secret",
+        "email": "client@example.com",
+        "password": "hunter2",
+    }
+    assert conn.app_id == "station-app-id"
+    assert decrypt_secret(conn.encrypted_app_secret) == "station-app-secret"
     assert decrypt_secret(conn.encrypted_account_password) == "hunter2"
     assert stations == [{"id": 322, "name": "Casa Test"}]
     assert conn.pending_remote_stations == [{"id": 322, "name": "Casa Test"}]
@@ -426,6 +468,8 @@ def test_disconnect_wipes_credentials_but_keeps_history(db):
 
     svc.disconnect(db, conn, user)
     assert conn.status == DeyeCloudConnectionStatus.disconnected.value
+    assert conn.app_id is None
+    assert conn.encrypted_app_secret is None
     assert conn.encrypted_access_token is None
     assert conn.encrypted_account_password == ""
     assert cloud_device.status == "revoked"

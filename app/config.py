@@ -111,13 +111,9 @@ class Settings(BaseSettings):
     optimization_soc_max_age_minutes: int = 10
 
     # --- Deye Cloud (issue #43) ---
-    # Aplicatia (appId/appSecret) e inregistrata O SINGURA DATA de platforma
-    # in portalul de dezvoltatori Deye Cloud (developer.deyecloud.com) --
-    # NU e per-client. Fiecare client isi conecteaza propriul cont Deye Cloud
-    # (email+parola) prin acest app; vezi docs/LIMITATIONS.md pentru flow-ul
-    # complet si ce nu a putut fi verificat live.
-    deye_cloud_app_id: str | None = None
-    deye_cloud_app_secret: str | None = None
+    # appId/appSecret sunt configurate per conexiune de statie, in UI-ul Deye
+    # Cloud, si stocate criptat unde e cazul. Setarile globale de mai jos
+    # controleaza doar regiunea, endpoint-ul, timeout/retry si limitele locale.
     # Doar UE in aceasta versiune (vezi docs/LIMITATIONS.md) -- celelalte
     # centre de date documentate de Deye (am/india) raman nefolosite.
     deye_cloud_region: Literal["eu"] = "eu"
