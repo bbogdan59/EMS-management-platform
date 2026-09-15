@@ -519,7 +519,8 @@ def test_forecast_vs_actual_picks_most_recent_valid_as_of_forecast(db):
     ))
     db.add(PvForecast(
         station_id=station.id, issued_at=t - timedelta(hours=1), interval_start=t, interval_end=t + timedelta(minutes=15),
-        source="test", predicted_power_kw=Decimal("2.5"), scenario="expected",  # mai recenta, tot inainte de t
+        source="test", source_version="pv-test-v2", predicted_power_kw=Decimal("2.5"), scenario="expected",
+        confidence="low", is_synthetic=True,  # mai recenta, tot inainte de t
     ))
     db.commit()
 
@@ -527,6 +528,11 @@ def test_forecast_vs_actual_picks_most_recent_valid_as_of_forecast(db):
 
     assert len(out) == 1
     assert abs(out[0]["forecast_kw"] - 2.5) < 0.001
+    assert out[0]["is_synthetic"] is True
+    assert out[0]["forecast_confidence"] == "low"
+    assert out[0]["forecast_source"] == "test"
+    assert out[0]["forecast_source_version"] == "pv-test-v2"
+    assert out[0]["forecast_issued_at"] == (t - timedelta(hours=1)).isoformat()
 
 
 def test_forecast_vs_actual_load_metric_uses_consumption_forecast(db):
@@ -544,6 +550,8 @@ def test_forecast_vs_actual_load_metric_uses_consumption_forecast(db):
 
     assert len(out) == 1
     assert abs(out[0]["forecast_kw"] - 0.8) < 0.001
+    assert out[0]["forecast_confidence"] == "nominal"
+    assert out[0]["forecast_source"] == "test"
 
 
 # --- get_plan_chart -------------------------------------------------------

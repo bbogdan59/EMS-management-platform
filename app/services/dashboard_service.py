@@ -706,7 +706,18 @@ def get_forecast_vs_actual(db: Session, station: Station, metric: str, start: da
             energy = actual.pv_energy_kwh if metric == "pv" else actual.load_energy_kwh
             actual_kw = float(energy) * 4 if energy is not None and (actual.coverage or {}).get(metric, 0) >= 0.9 else None  # kWh pe interval de 15 min -> kW mediu
         forecast_kw = float(f.predicted_power_kw) if metric == "pv" else float(f.base_load_kw + f.ev_component_kw + f.flexible_component_kw)
-        out.append({"t": f.interval_start.isoformat(), "forecast_kw": forecast_kw, "actual_kw": actual_kw, "is_synthetic": f.is_synthetic})
+        out.append(
+            {
+                "t": f.interval_start.isoformat(),
+                "forecast_kw": forecast_kw,
+                "actual_kw": actual_kw,
+                "is_synthetic": f.is_synthetic,
+                "forecast_confidence": f.confidence,
+                "forecast_source": f.source,
+                "forecast_source_version": f.source_version,
+                "forecast_issued_at": f.issued_at.isoformat(),
+            }
+        )
     return out
 
 
