@@ -14,3 +14,19 @@ def test_market_charts_have_isolated_error_retry_states():
     assert script.count('showChartState(el, "error")') == 4
     for load_fn in ["loadTimeline", "loadYearlyOverlay", "loadForecast", "loadMonthly"]:
         assert f"wireRetry(el, {load_fn});" in script
+
+
+def test_market_chart_fetches_have_timeout_and_stale_request_cancellation():
+    script = Path("app/web/static/js/market.js").read_text()
+
+    assert "timeoutMs = 15000" in script
+    assert "setTimeout(() => timeoutController.abort(), timeoutMs)" in script
+    for controller in [
+        "timelineController",
+        "yearlyOverlayController",
+        "forecastController",
+        "monthlyController",
+    ]:
+        assert f"let {controller} = null;" in script
+        assert f"if ({controller}) {controller}.abort();" in script
+        assert f"controller !== {controller}" in script

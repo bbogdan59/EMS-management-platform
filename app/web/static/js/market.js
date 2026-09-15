@@ -9,6 +9,10 @@ function emsInitMarket(availableYears) {
   const $ = (id) => document.getElementById(id);
   let selectedYears = new Set(defaultYearlyOverlayYears(availableYears));
   let selectedTimelineDays = TIMELINE_DEFAULT_DAYS;
+  let timelineController = null;
+  let yearlyOverlayController = null;
+  let forecastController = null;
+  let monthlyController = null;
 
   function defaultYearlyOverlayYears(years) {
     const preferred = YEARLY_OVERLAY_DEFAULT_YEARS.filter((year) => years.includes(year));
@@ -32,10 +36,19 @@ function emsInitMarket(availableYears) {
     return labels;
   }
 
-  async function fetchJson(url) {
-    const res = await fetch(url, { headers: { Accept: "application/json" } });
-    if (!res.ok) throw new Error("HTTP " + res.status);
-    return res.json();
+  async function fetchJson(url, { signal, timeoutMs = 15000 } = {}) {
+    const timeoutController = new AbortController();
+    const timer = setTimeout(() => timeoutController.abort(), timeoutMs);
+    const onExternalAbort = () => timeoutController.abort();
+    if (signal) signal.addEventListener("abort", onExternalAbort);
+    try {
+      const res = await fetch(url, { headers: { Accept: "application/json" }, signal: timeoutController.signal });
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      return res.json();
+    } finally {
+      clearTimeout(timer);
+      if (signal) signal.removeEventListener("abort", onExternalAbort);
+    }
   }
 
   function showChartState(el, state) {
@@ -97,11 +110,15 @@ function emsInitMarket(availableYears) {
     const el = $("chart-timeline");
     if (!el) return;
     wireRetry(el, loadTimeline);
+    if (timelineController) timelineController.abort();
+    const controller = new AbortController();
+    timelineController = controller;
     try {
       // Fiecare fereastra e o cerere separata, declansata la cerere (buton) --
       // pagina nu incarca niciodata tot istoricul dintr-o singura cerere
       // initiala, indiferent cat de mare e intervalul selectat (issue #33).
-      const payload = await fetchJson("/market/data/timeline?days=" + selectedTimelineDays);
+      const payload = await fetchJson("/market/data/timeline?days=" + selectedTimelineDays, { signal: controller.signal });
+      if (controller !== timelineController) return;
       const data = payload.points || [];
       showChartState(el, data.length === 0 ? "empty" : "ok");
       if (!data.length) return;
@@ -125,6 +142,7 @@ function emsInitMarket(availableYears) {
         ],
       });
     } catch (e) {
+      if (controller !== timelineController) return;
       console.error(e);
       showChartState(el, "error");
     }
@@ -134,6 +152,9 @@ function emsInitMarket(availableYears) {
     const el = $("chart-yearly-overlay");
     if (!el) return;
     wireRetry(el, loadYearlyOverlay);
+    if (yearlyOverlayController) yearlyOverlayController.abort();
+    const controller = new AbortController();
+    yearlyOverlayController = controller;
     try {
       const years = [...selectedYears].sort();
       if (!years.length) {
@@ -141,7 +162,8 @@ function emsInitMarket(availableYears) {
         echarts.init(el, emsChartTheme()).clear();
         return;
       }
-      const overlay = await fetchJson("/market/data/yearly-overlay?years=" + years.join(","));
+      const overlay = await fetchJson("/market/data/yearly-overlay?years=" + years.join(","), { signal: controller.signal });
+      if (controller !== yearlyOverlayController) return;
       const keys = Object.keys(overlay);
       showChartState(el, keys.length === 0 ? "empty" : "ok");
       if (!keys.length) {
@@ -171,6 +193,7 @@ function emsInitMarket(availableYears) {
         series,
       });
     } catch (e) {
+      if (controller !== yearlyOverlayController) return;
       console.error(e);
       showChartState(el, "error");
     }
@@ -180,8 +203,12 @@ function emsInitMarket(availableYears) {
     const el = $("chart-forecast");
     if (!el) return;
     wireRetry(el, loadForecast);
+    if (forecastController) forecastController.abort();
+    const controller = new AbortController();
+    forecastController = controller;
     try {
-      const forecast = await fetchJson("/market/data/forecast");
+      const forecast = await fetchJson("/market/data/forecast", { signal: controller.signal });
+      if (controller !== forecastController) return;
       if (!forecast.points || !forecast.points.length) { showChartState(el, "empty"); return; }
       showChartState(el, "ok");
 
@@ -189,7 +216,8 @@ function emsInitMarket(availableYears) {
         (forecast.trend_ratio ? ` (raport tendinta recenta: ${forecast.trend_ratio}x fata de baza sezoniera)` : "");
 
       const currentYear = forecast.target_year;
-      const actual = await fetchJson(`/market/data/yearly-overlay?years=${currentYear}`);
+      const actual = await fetchJson(`/market/data/yearly-overlay?years=${currentYear}`, { signal: controller.signal });
+      if (controller !== forecastController) return;
       const actualPoints = (actual[String(currentYear)] || []).map((p) => [`${currentYear}-${p.month_day}`, p.avg_price_lei_mwh]);
       const forecastPoints = forecast.points.map((p) => [p.date, p.predicted_price_lei_mwh]);
 
@@ -206,6 +234,7 @@ function emsInitMarket(availableYears) {
         ],
       });
     } catch (e) {
+      if (controller !== forecastController) return;
       console.error(e);
       showChartState(el, "error");
     }
@@ -215,9 +244,13 @@ function emsInitMarket(availableYears) {
     const el = $("chart-monthly");
     if (!el) return;
     wireRetry(el, loadMonthly);
+    if (monthlyController) monthlyController.abort();
+    const controller = new AbortController();
+    monthlyController = controller;
     try {
       const years = [...selectedYears].sort();
-      const monthly = await fetchJson("/market/data/monthly?years=" + years.join(","));
+      const monthly = await fetchJson("/market/data/monthly?years=" + years.join(","), { signal: controller.signal });
+      if (controller !== monthlyController) return;
       const keys = Object.keys(monthly);
       showChartState(el, keys.length === 0 ? "empty" : "ok");
       if (!keys.length) return;
@@ -242,6 +275,7 @@ function emsInitMarket(availableYears) {
         series,
       });
     } catch (e) {
+      if (controller !== monthlyController) return;
       console.error(e);
       showChartState(el, "error");
     }
