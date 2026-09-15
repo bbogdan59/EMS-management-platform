@@ -232,14 +232,17 @@ function emsInitDashboard(stationId) {
   }
 
   async function loadPricesChart() {
-    const el = $("chart-prices");
-    if (!el) return;
+    const widget = widgetCard("chart-prices");
+    if (!widget) return;
+    wireRetry(widget, loadPricesChart);
     try {
       const [today, tomorrow] = await Promise.all([
         fetchJson(`/stations/${stationId}/data/prices?day=today`),
         fetchJson(`/stations/${stationId}/data/prices?day=tomorrow`),
       ]);
-      const chart = echarts.init(el, emsChartTheme());
+      if (!today.intervals.length && !tomorrow.intervals.length) { showWidgetState(widget, "empty"); return; }
+      showWidgetState(widget, "ok");
+      const chart = echarts.init(widget.chartEl, emsChartTheme());
       const mkBar = (payload, name) => ({
         name,
         type: "bar",
@@ -254,19 +257,22 @@ function emsInitDashboard(stationId) {
         series: [mkBar(today, "Azi"), mkBar(tomorrow, "Maine")],
       });
       $("prices-tomorrow-status").textContent = tomorrow.published ? "" : "Preturile de maine nu au fost inca publicate.";
-    } catch (e) { console.error(e); }
+    } catch (e) {
+      console.error(e);
+      showWidgetState(widget, "error");
+    }
   }
 
   async function loadPlanChart() {
-    const el = $("chart-plan");
-    if (!el) return;
+    const widget = widgetCard("chart-plan");
+    if (!widget) return;
+    wireRetry(widget, loadPlanChart);
     try {
       const data = await fetchJson(`/stations/${stationId}/data/plan`);
-      const empty = el.closest(".card").querySelector(".empty-state");
-      if (!data.plan) { empty.hidden = false; return; }
-      empty.hidden = true;
+      if (!data.plan) { showWidgetState(widget, "empty"); return; }
+      showWidgetState(widget, "ok");
       $("plan-status-badge").textContent = `${data.plan.status} (${data.plan.execution_mode})`;
-      const chart = echarts.init(el, emsChartTheme());
+      const chart = echarts.init(widget.chartEl, emsChartTheme());
       const series = [
         { name: "Baterie (plan)", type: "bar", data: data.intervals.map((i) => [i.t, i.battery_kw]) },
         { name: "Retea (plan)", type: "bar", data: data.intervals.map((i) => [i.t, i.grid_kw]) },
@@ -292,34 +298,40 @@ function emsInitDashboard(stationId) {
         yAxis: { type: "value", name: "kW / %" },
         series,
       });
-    } catch (e) { console.error(e); }
+    } catch (e) {
+      console.error(e);
+      showWidgetState(widget, "error");
+    }
   }
 
   async function loadForecastChart(metric) {
-    const el = $("chart-forecast-" + metric);
-    if (!el) return;
+    const widget = widgetCard("chart-forecast-" + metric);
+    if (!widget) return;
+    wireRetry(widget, () => loadForecastChart(metric));
     try {
       const data = await fetchJson(`/stations/${stationId}/data/forecast-vs-actual?metric=${metric}&range=24h`);
-      const empty = el.closest(".card").querySelector(".empty-state");
-      if (!data.length) { empty.hidden = false; return; }
-      empty.hidden = true;
-      lineChart(el, [
+      if (!data.length) { showWidgetState(widget, "empty"); return; }
+      showWidgetState(widget, "ok");
+      lineChart(widget.chartEl, [
         { name: "Prognoza", type: "line", showSymbol: false, data: data.map((d) => [d.t, d.forecast_kw]) },
         { name: "Realizat", type: "line", showSymbol: false, data: data.map((d) => [d.t, d.actual_kw]) },
       ], { yName: "kW" });
-    } catch (e) { console.error(e); }
+    } catch (e) {
+      console.error(e);
+      showWidgetState(widget, "error");
+    }
   }
 
   async function loadHeatmap() {
-    const el = $("chart-heatmap");
-    if (!el) return;
+    const widget = widgetCard("chart-heatmap");
+    if (!widget) return;
+    wireRetry(widget, loadHeatmap);
     try {
       const data = await fetchJson(`/stations/${stationId}/data/heatmap`);
-      const empty = el.closest(".card").querySelector(".empty-state");
-      if (!data.length) { empty.hidden = false; return; }
-      empty.hidden = true;
+      if (!data.length) { showWidgetState(widget, "empty"); return; }
+      showWidgetState(widget, "ok");
       const days = ["Luni", "Marti", "Miercuri", "Joi", "Vineri", "Sambata", "Duminica"];
-      const chart = echarts.init(el, emsChartTheme());
+      const chart = echarts.init(widget.chartEl, emsChartTheme());
       const values = data.map((d) => [d.hour, d.weekday, Number(d.avg_load_kwh.toFixed(3))]);
       const max = Math.max(...values.map((v) => v[2]), 0.1);
       chart.setOption({
@@ -330,53 +342,63 @@ function emsInitDashboard(stationId) {
         visualMap: { min: 0, max, calculable: true, orient: "horizontal", left: "center", bottom: 0 },
         series: [{ type: "heatmap", data: values, label: { show: false } }],
       });
-    } catch (e) { console.error(e); }
+    } catch (e) {
+      console.error(e);
+      showWidgetState(widget, "error");
+    }
   }
 
-  async function loadEnergyTotals() {
-    const el = $("chart-energy-daily");
-    const elMonthly = $("chart-energy-monthly");
+  async function loadDailyEnergyTotals() {
+    const widget = widgetCard("chart-energy-daily");
+    if (!widget) return;
+    wireRetry(widget, loadDailyEnergyTotals);
     try {
       const daily = await fetchJson(`/stations/${stationId}/data/energy-totals?granularity=day&periods=30`);
-      if (el) {
-        if (!daily.length) { el.closest(".card").querySelector(".empty-state").hidden = false; }
-        else {
-          el.closest(".card").querySelector(".empty-state").hidden = true;
-          const chart = echarts.init(el, emsChartTheme());
-          chart.setOption({
-            grid: { left: 48, right: 16, top: 24, bottom: 48 },
-            tooltip: { trigger: "axis" },
-            legend: {},
-            xAxis: { type: "category", data: daily.map((d) => d.period_start.slice(0, 10)), axisLabel: { rotate: 45 } },
-            yAxis: { type: "value", name: "kWh" },
-            series: [
-              { name: "PV", type: "bar", stack: "e", data: daily.map((d) => d.pv_kwh) },
-              { name: "Import", type: "bar", stack: "i", data: daily.map((d) => d.grid_import_kwh) },
-              { name: "Export", type: "bar", stack: "x", data: daily.map((d) => -d.grid_export_kwh) },
-            ],
-          });
-        }
-      }
+      if (!daily.length) { showWidgetState(widget, "empty"); return; }
+      showWidgetState(widget, "ok");
+      const chart = echarts.init(widget.chartEl, emsChartTheme());
+      chart.setOption({
+        grid: { left: 48, right: 16, top: 24, bottom: 48 },
+        tooltip: { trigger: "axis" },
+        legend: {},
+        xAxis: { type: "category", data: daily.map((d) => d.period_start.slice(0, 10)), axisLabel: { rotate: 45 } },
+        yAxis: { type: "value", name: "kWh" },
+        series: [
+          { name: "PV", type: "bar", stack: "e", data: daily.map((d) => d.pv_kwh) },
+          { name: "Import", type: "bar", stack: "i", data: daily.map((d) => d.grid_import_kwh) },
+          { name: "Export", type: "bar", stack: "x", data: daily.map((d) => -d.grid_export_kwh) },
+        ],
+      });
+    } catch (e) {
+      console.error(e);
+      showWidgetState(widget, "error");
+    }
+  }
+
+  async function loadMonthlyEnergyTotals() {
+    const widget = widgetCard("chart-energy-monthly");
+    if (!widget) return;
+    wireRetry(widget, loadMonthlyEnergyTotals);
+    try {
       const monthly = await fetchJson(`/stations/${stationId}/data/energy-totals?granularity=month&periods=12`);
-      if (elMonthly) {
-        if (!monthly.length) { elMonthly.closest(".card").querySelector(".empty-state").hidden = false; }
-        else {
-          elMonthly.closest(".card").querySelector(".empty-state").hidden = true;
-          const chart = echarts.init(elMonthly, emsChartTheme());
-          chart.setOption({
-            grid: { left: 48, right: 16, top: 24, bottom: 48 },
-            tooltip: { trigger: "axis" },
-            legend: {},
-            xAxis: { type: "category", data: monthly.map((d) => d.period_start.slice(0, 7)) },
-            yAxis: { type: "value", name: "kWh" },
-            series: [
-              { name: "PV", type: "bar", data: monthly.map((d) => d.pv_kwh) },
-              { name: "Consum", type: "bar", data: monthly.map((d) => d.load_kwh) },
-            ],
-          });
-        }
-      }
-    } catch (e) { console.error(e); }
+      if (!monthly.length) { showWidgetState(widget, "empty"); return; }
+      showWidgetState(widget, "ok");
+      const chart = echarts.init(widget.chartEl, emsChartTheme());
+      chart.setOption({
+        grid: { left: 48, right: 16, top: 24, bottom: 48 },
+        tooltip: { trigger: "axis" },
+        legend: {},
+        xAxis: { type: "category", data: monthly.map((d) => d.period_start.slice(0, 7)) },
+        yAxis: { type: "value", name: "kWh" },
+        series: [
+          { name: "PV", type: "bar", data: monthly.map((d) => d.pv_kwh) },
+          { name: "Consum", type: "bar", data: monthly.map((d) => d.load_kwh) },
+        ],
+      });
+    } catch (e) {
+      console.error(e);
+      showWidgetState(widget, "error");
+    }
   }
 
   async function loadEfcAndSavings() {
@@ -509,7 +531,8 @@ function emsInitDashboard(stationId) {
   loadForecastChart("pv");
   loadForecastChart("load");
   loadHeatmap();
-  loadEnergyTotals();
+  loadDailyEnergyTotals();
+  loadMonthlyEnergyTotals();
   loadEfcAndSavings();
   initSSE();
 
