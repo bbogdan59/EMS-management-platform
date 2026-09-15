@@ -650,6 +650,27 @@ function emsInitDashboard(stationId) {
     } catch (e) { console.error(e); }
   }
 
+  function lazyLoadWidget(chartElId, loadFn) {
+    const widget = widgetCard(chartElId);
+    if (!widget || !widget.chartEl || widget.chartEl.dataset.lazyLoaded === "1") return;
+    const run = () => {
+      if (widget.chartEl.dataset.lazyLoaded === "1") return;
+      widget.chartEl.dataset.lazyLoaded = "1";
+      loadFn();
+    };
+    if (!("IntersectionObserver" in window)) {
+      run();
+      return;
+    }
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) {
+        observer.disconnect();
+        run();
+      }
+    }, { rootMargin: "160px 0px" });
+    observer.observe(widget.chartEl);
+  }
+
   // Actualizare live (issue #50): fiecare eveniment SSE poarta o lista de
   // metrici versionate (metric/value/unit/measured_at/received_at/quality/
   // source), nu un rezumat monolitic -- vezi docs/adr/0001-realtime-dashboard-transport.md.
@@ -724,22 +745,26 @@ function emsInitDashboard(stationId) {
   }
 
   // Bootstrap initial
-  loadPowerChart("24h");
-  loadSocChart("24h");
-  loadPricesChart();
-  loadPlanChart();
-  loadForecastChart("pv");
-  loadForecastChart("load");
-  loadHeatmap();
+  lazyLoadWidget("chart-power", () => loadPowerChart("24h"));
+  lazyLoadWidget("chart-soc", () => loadSocChart("24h"));
+  lazyLoadWidget("chart-prices", loadPricesChart);
+  lazyLoadWidget("chart-plan", loadPlanChart);
+  lazyLoadWidget("chart-forecast-pv", () => loadForecastChart("pv"));
+  lazyLoadWidget("chart-forecast-load", () => loadForecastChart("load"));
+  lazyLoadWidget("chart-heatmap", loadHeatmap);
   loadEnergyPeriodKpis();
-  loadDailyEnergyTotals();
-  loadMonthlyEnergyTotals();
+  lazyLoadWidget("chart-energy-daily", loadDailyEnergyTotals);
+  lazyLoadWidget("chart-energy-monthly", loadMonthlyEnergyTotals);
   loadEfcAndSavings();
   initSSE();
 
   const rangeSelect = $("range-select");
   if (rangeSelect) {
     rangeSelect.addEventListener("change", () => {
+      const powerEl = $("chart-power");
+      const socEl = $("chart-soc");
+      if (powerEl) powerEl.dataset.lazyLoaded = "0";
+      if (socEl) socEl.dataset.lazyLoaded = "0";
       loadPowerChart(rangeSelect.value);
       loadSocChart(rangeSelect.value);
       const exportLink = $("export-link");
