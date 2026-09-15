@@ -54,6 +54,22 @@ class _FakeClient:
         return _Response(self.payload, self.error)
 
 
+class _FakeDb:
+    def __init__(self) -> None:
+        self.rows = []
+        self.flushed = False
+
+    def add(self, row) -> None:
+        self.rows.append(row)
+
+    def flush(self) -> None:
+        self.flushed = True
+
+
+class _Station:
+    id = "station-id"
+
+
 def test_open_meteo_provider_fetches_utc_payload_and_caches(monkeypatch):
     redis = _MemoryRedis()
     calls: list[dict] = []
@@ -81,6 +97,7 @@ def test_open_meteo_provider_fetches_utc_payload_and_caches(monkeypatch):
     assert calls[0]["params"]["timezone"] == "UTC"
     assert calls[0]["params"]["forecast_days"] == 3
     assert "shortwave_radiation" in calls[0]["params"]["hourly"]
+    assert "precipitation" in calls[0]["params"]["hourly"]
     cache_key = "weather_forecast:open-meteo:44.427:26.102"
     assert redis.ttls[cache_key] == 15 * 60
 
@@ -135,3 +152,27 @@ def test_open_meteo_provider_wraps_http_errors(monkeypatch):
         provider.fetch_raw(request)
 
     assert calls
+
+
+def test_store_weather_forecast_preserves_precipitation_and_unknowns():
+    db = _FakeDb()
+    raw = {
+        "generationtime_ms": 3.5,
+        "hourly": {
+            "time": ["2026-01-01T00:00", "2026-01-01T01:00"],
+            "shortwave_radiation": [0, 5],
+            "direct_normal_irradiance": [None, 10],
+            "diffuse_radiation": [0, 1],
+            "cloud_cover": [90, 80],
+            "temperature_2m": [2.5, 2.1],
+            "precipitation": [0.4, None],
+            "wind_speed_10m": [3.0, 3.5],
+        },
+    }
+
+    rows = weather_service.store_weather_forecast(db, _Station(), raw)
+
+    assert db.flushed is True
+    assert rows == db.rows
+    assert rows[0].precipitation_mm == 0.4
+    assert rows[1].precipitation_mm is None

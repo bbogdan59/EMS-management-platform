@@ -2228,12 +2228,16 @@ parte a infrastructurii de baza EXISTA DEJA in acest repo (verificat explicit
 inainte de a scrie cod nou, ca sa nu se reconstruiasca ce functioneaza):
 
 **Deja existent, verificat, neschimbat:**
-- **Provider ales si documentat.** `app/services/weather_service.py` +
-  `app/config.py` (`weather_provider="open-meteo"`, `weather_base_url`)
-  foloseste deja Open-Meteo (fara autentificare, gratuit pentru uz
-  necomercial, acoperire globala inclusiv Romania) -- alegerea e documentata
-  in limitarea 2 de mai sus. Fallback controlat: `WeatherUnavailableError`
-  se propaga explicit pana in optimizator/UI, fara date inventate.
+- **Provider ales si documentat, prin adaptor formal.**
+  `app/services/weather_service.py` + `app/config.py`
+  (`weather_provider="open-meteo"`, `weather_base_url`) foloseste Open-Meteo
+  (fara autentificare, gratuit pentru uz necomercial, acoperire globala
+  inclusiv Romania) -- alegerea e documentata in limitarea 2 de mai sus.
+  `WeatherProvider`/`WeatherProviderRequest` definesc acum contractul
+  provider-agnostic; `OpenMeteoWeatherProvider` este implementarea curenta,
+  cu cache key per provider. Fallback controlat: un provider necunoscut sau
+  indisponibil ridica `WeatherUnavailableError`, propagata explicit pana in
+  optimizator/UI, fara date inventate.
 - **Prognoza deja versionata cu `issued_at`.** `WeatherForecast`/
   `PvForecast`/`ConsumptionForecast` au deja `issued_at`, `source`,
   `source_version`, `confidence`, `is_synthetic` (`app/models/forecast.py`)
@@ -2249,6 +2253,11 @@ inainte de a scrie cod nou, ca sa nu se reconstruiasca ce functioneaza):
   Redis anti-suprapunere; ruta web nu asteapta niciodata providerul.
 
 **Adaugat de acest PR (gap real, nu acoperit inainte):**
+- **Date meteo minime extinse cu precipitatii.**
+  `WeatherForecast.precipitation_mm` este nullable si este populat din
+  variabila orara Open-Meteo `precipitation`; randurile istorice si valorile
+  lipsa raman `NULL`, nu 0 mm, pentru a pastra distinctia dintre "nu stim" si
+  "nu a plouat".
 - **Rasarit/apus/ore utile de soare, calculate real, nu aproximate.**
   `app/services/solar_geometry_service.py` (nou) foloseste algoritmul SPA din
   `pvlib` (deja dependinta a platformei) pe latitudine/longitudine REALE ale
@@ -2289,11 +2298,11 @@ inainte de a scrie cod nou, ca sa nu se reconstruiasca ce functioneaza):
   refuzate explicit.
 
 **Ramas explicit in afara scopului acestui PR (documentat, nu ascuns):**
-- **Interfata provider-agnostica formala** (un `Protocol`/clasa abstracta
-  peste care s-ar putea plugini alt provider decat Open-Meteo) -- adaptorul
-  actual e un singur modul concret; o abstractizare completa, cu al doilea
-  provider real implementat si testat, ramane de facut cand exista un motiv
-  concret sa schimbam providerul (ex. limita de rate atinsa in productie).
+- **Al doilea provider real si politica de failover automata.** Interfata
+  provider-agnostica exista, dar doar Open-Meteo este implementat/testat.
+  Comutarea automata catre un provider secundar ramane neimplementata pana
+  exista un provider licentiat si o regula explicita de calitate/cost; sistemul
+  prefera acum esec explicit in loc de fallback tacut.
 - **Worker retry/backoff/observabilitate dedicate.** `weather_and_forecast_task`
   ruleaza deja pe Celery beat (issue #10), dar o eroare per-statie e doar
   colectata intr-o lista si logata -- nu exista inca retry cu backoff

@@ -28,7 +28,7 @@ class WeatherUnavailableError(Exception):
     pass
 
 
-HOURLY_VARS = "shortwave_radiation,direct_normal_irradiance,diffuse_radiation,cloud_cover,temperature_2m,wind_speed_10m"
+HOURLY_VARS = "shortwave_radiation,direct_normal_irradiance,diffuse_radiation,cloud_cover,temperature_2m,precipitation,wind_speed_10m"
 
 
 @dataclass(frozen=True)
@@ -115,6 +115,7 @@ def store_weather_forecast(db: Session, station: Station, raw: dict) -> list[Wea
     dhi = hourly.get("diffuse_radiation", [])
     cloud = hourly.get("cloud_cover", [])
     temp = hourly.get("temperature_2m", [])
+    precipitation = hourly.get("precipitation", [])
     wind = hourly.get("wind_speed_10m", [])
 
     created = []
@@ -132,6 +133,7 @@ def store_weather_forecast(db: Session, station: Station, raw: dict) -> list[Wea
             dhi_w_m2=_safe_get(dhi, i),
             cloud_cover_percent=_safe_get(cloud, i),
             temperature_c=_safe_get(temp, i),
+            precipitation_mm=_safe_get(precipitation, i),
             wind_speed_ms=_safe_get(wind, i),
         )
         db.add(wf)
