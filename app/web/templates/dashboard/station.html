@@ -274,6 +274,6 @@
 
 <script src="/static/js/dashboard.js"></script>
 <script>
-  document.addEventListener("DOMContentLoaded", () => emsInitDashboard("{{ station.id }}"));
+  document.addEventListener("DOMContentLoaded", () => emsInitDashboard("{{ station.id }}", {{ summary | tojson }}));
 </script>
 {% endblock %}
