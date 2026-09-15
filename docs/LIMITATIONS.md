@@ -1826,7 +1826,8 @@ acel commit e deja stramos al `main`-ului curent.
   Adaugat `test_many_concurrent_connections_execute_loads_in_parallel`: 15 conexiuni
   concurente pe aceeasi statie, cu instrumentarea directa a numarului de
   incarcari active simultan (nu un prag fragil de timp dependent de runner),
-  pentru a demonstra ca nu se serializeaza reciproc -- un sanity check usor,
+  pentru a demonstra direct ca exista executie suprapusa si ca fluxurile nu se
+  serializeaza reciproc -- un sanity check usor,
   NU un load-test la scara de productie.
 
 **Ramas neschimbat, deliberat (nu un gap nou, doar reconfirmat):** contractul
