@@ -18,7 +18,7 @@ def _station(db, suffix=""):
     return make_station(db, org, user, name=f"PVFC Station {suffix}")
 
 
-def _add_weather(db, station, issued_at, interval_start, *, ghi):
+def _add_weather(db, station, issued_at, interval_start, *, ghi, confidence="nominal", is_synthetic=False):
     db.add(
         WeatherForecast(
             station_id=station.id,
@@ -32,6 +32,8 @@ def _add_weather(db, station, issued_at, interval_start, *, ghi):
             cloud_cover_percent=0.0,
             temperature_c=20.0,
             wind_speed_ms=1.0,
+            confidence=confidence,
+            is_synthetic=is_synthetic,
         )
     )
 
@@ -76,3 +78,17 @@ def test_generate_pv_forecast_raises_without_weather(db):
 
     with pytest.raises(ValueError):
         pv_forecast_service.generate_pv_forecast(db, station)
+
+
+def test_generate_pv_forecast_propagates_weather_quality_and_synthetic_flag(db):
+    station = _station(db, "quality")
+    sun_window = compute_sun_window(float(station.latitude), float(station.longitude), datetime(2026, 6, 21).date())
+    daylight = sun_window.sunrise_utc + timedelta(hours=4)
+    issued_at = daylight - timedelta(hours=1)
+    _add_weather(db, station, issued_at, daylight, ghi=700.0, confidence="low", is_synthetic=True)
+    db.commit()
+
+    created = pv_forecast_service.generate_pv_forecast(db, station)
+
+    assert created[0].confidence == "low"
+    assert created[0].is_synthetic is True
