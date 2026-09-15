@@ -1774,7 +1774,8 @@ statia + o versiune v1 de configuratie tehnica + o versiune v1 de preferinte
 NU sunt niciodata cu adevarat incompleti dupa crearea statiei, doar
 rafinabili. Singurele stari genuin incomplete, derivate direct din date reale
 (nu dintr-un payload de formular nesalvat), sunt "niciun device activ
-asociat" si "niciun tarif activ configurat" (`station_service.setup_progress`).
+asociat" si "niciun tarif activ configurat" (`station_service.setup_progress`;
+tarifele dezactivate sunt ignorate explicit).
 Reluarea inseamna doar recalcularea pasului urmator din aceasta stare reala
 (`next_wizard_step`) -- refresh, inchiderea tab-ului sau revenirea a doua zi
 nu pierd nimic, pentru ca nu exista niciun payload intermediar nesalvat de
