@@ -102,22 +102,38 @@ def weather_and_forecast_task() -> dict:
         if not acquired:
             return {"skipped": "already_running"}
         processed, errors = 0, []
+        stages = {
+            "weather": {"succeeded": 0, "failed": 0},
+            "pv": {"succeeded": 0, "failed": 0},
+            "consumption": {"succeeded": 0, "failed": 0},
+        }
         with session_scope() as db:
             stations = db.scalars(select(Station).where(Station.is_active.is_(True))).all()
             for station in stations:
                 try:
                     weather_service.refresh_weather_for_station(db, station)
+                    stages["weather"]["succeeded"] += 1
+                except Exception as exc:
+                    stages["weather"]["failed"] += 1
+                    errors.append(f"{station.id}: weather: {exc}")
+                try:
                     pv_forecast_service.generate_pv_forecast(db, station)
                 except Exception as exc:
-                    errors.append(f"{station.id}: {exc}")
+                    stages["pv"]["failed"] += 1
+                    errors.append(f"{station.id}: pv: {exc}")
+                else:
+                    stages["pv"]["succeeded"] += 1
                 try:
                     generate_consumption_forecast(
                         db, station, utcnow(), utcnow() + timedelta(hours=settings.optimization_horizon_hours + 1)
                     )
                 except ConsumptionForecastError as exc:
-                    errors.append(f"{station.id}: {exc}")
+                    stages["consumption"]["failed"] += 1
+                    errors.append(f"{station.id}: consumption: {exc}")
+                else:
+                    stages["consumption"]["succeeded"] += 1
                 processed += 1
-        return {"stations_processed": processed, "errors": errors}
+        return {"stations_processed": processed, "stages": stages, "errors": errors}
 
 
 @celery_app.task(name="app.workers.tasks.optimization_all_stations_task")
