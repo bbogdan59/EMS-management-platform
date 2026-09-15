@@ -5,6 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 from decimal import Decimal
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -80,11 +81,23 @@ class TelemetryBatchRequest(BaseModel):
     items: list[TelemetryItem] = Field(..., min_length=1)
 
 
+class TelemetryItemAck(BaseModel):
+    """Rezultat stabil pentru un item, in aceeasi ordine ca request-ul."""
+
+    boot_id: str
+    sequence: int
+    status: Literal["accepted", "duplicate", "rejected"]
+    retryable: bool = False
+    reason_code: str | None = None
+
+
 class TelemetryBatchResult(BaseModel):
     accepted: int
     duplicates: int
     rejected: int
     errors: list[str] = Field(default_factory=list)
+    # Camp aditiv: clientii v1 care citesc doar contoarele raman compatibili.
+    results: list[TelemetryItemAck] = Field(default_factory=list)
 
 
 class PlanIntervalOut(BaseModel):

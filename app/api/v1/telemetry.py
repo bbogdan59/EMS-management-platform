@@ -27,6 +27,12 @@ def ingest_telemetry(
             detail=f"Batch prea mare (max {settings.device_telemetry_batch_max_items} elemente).",
         )
 
-    accepted, duplicates, rejected, errors = device_service.ingest_telemetry_batch(db, device, payload.items)
+    accepted, duplicates, rejected, errors, results = device_service.ingest_telemetry_batch(db, device, payload.items)
     db.commit()
-    return TelemetryBatchResult(accepted=accepted, duplicates=duplicates, rejected=rejected, errors=errors)
+    return TelemetryBatchResult(
+        accepted=accepted,
+        duplicates=duplicates,
+        rejected=rejected,
+        errors=errors,
+        results=results,
+    )

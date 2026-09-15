@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from collections import Counter
 from datetime import timedelta
 
 from sqlalchemy import select, update
@@ -26,7 +27,7 @@ from app.models.preference import PreferenceVersion
 from app.models.station import Station, StationConfigVersion
 from app.models.telemetry import TelemetryRaw
 from app.models.user import User
-from app.schemas.device_api import TelemetryItem
+from app.schemas.device_api import TelemetryItem, TelemetryItemAck
 
 MAX_FUTURE_SKEW = timedelta(minutes=5)
 MAX_TELEMETRY_AGE = timedelta(days=400)
@@ -133,25 +134,39 @@ def record_heartbeat(db: Session, device: Device, boot_id: str, firmware_version
     return device
 
 
-def ingest_telemetry_batch(db: Session, device: Device, items: list[TelemetryItem]) -> tuple[int, int, int, list[str]]:
+def ingest_telemetry_batch(
+    db: Session, device: Device, items: list[TelemetryItem]
+) -> tuple[int, int, int, list[str], list[TelemetryItemAck]]:
     now = utcnow()
-    rows = []
+    rows: list[tuple[int, TelemetryItem, dict]] = []
     errors: list[str] = []
-    rejected = 0
+    results_by_index: dict[int, TelemetryItemAck] = {}
 
     for idx, item in enumerate(items):
         if item.measured_at > now + MAX_FUTURE_SKEW:
-            rejected += 1
             errors.append(f"item {idx}: measured_at in viitor (peste toleranta de {MAX_FUTURE_SKEW}).")
+            results_by_index[idx] = TelemetryItemAck(
+                boot_id=item.boot_id,
+                sequence=item.sequence,
+                status="rejected",
+                retryable=True,
+                reason_code="future_timestamp",
+            )
             continue
         if item.measured_at < now - MAX_TELEMETRY_AGE:
-            rejected += 1
             errors.append(f"item {idx}: measured_at prea vechi (peste {MAX_TELEMETRY_AGE.days} zile).")
+            results_by_index[idx] = TelemetryItemAck(
+                boot_id=item.boot_id,
+                sequence=item.sequence,
+                status="rejected",
+                retryable=False,
+                reason_code="timestamp_too_old",
+            )
             continue
 
         is_late = (now - item.measured_at) > LATE_TELEMETRY_THRESHOLD
         rows.append(
-            {
+            (idx, item, {
                 "id": uuid.uuid4(),
                 "device_id": device.id,
                 "station_id": device.station_id,
@@ -171,7 +186,7 @@ def ingest_telemetry_batch(db: Session, device: Device, items: list[TelemetryIte
                 "raw_payload": item.raw_payload,
                 "is_simulated": bool(item.raw_payload.get("simulated", False)),
                 "is_late": is_late,
-            }
+            })
         )
 
     accepted = 0
@@ -179,17 +194,31 @@ def ingest_telemetry_batch(db: Session, device: Device, items: list[TelemetryIte
     if rows:
         stmt = (
             pg_insert(TelemetryRaw)
-            .values(rows)
+            .values([row for _, _, row in rows])
             .on_conflict_do_nothing(index_elements=["device_id", "boot_id", "sequence"])
-            .returning(TelemetryRaw.id)
+            .returning(TelemetryRaw.boot_id, TelemetryRaw.sequence)
         )
         result = db.execute(stmt)
-        inserted_ids = result.fetchall()
-        accepted = len(inserted_ids)
+        inserted = Counter((row.boot_id, row.sequence) for row in result)
+        accepted = sum(inserted.values())
         duplicates = len(rows) - accepted
+        for idx, item, _ in rows:
+            key = (item.boot_id, item.sequence)
+            if inserted[key] > 0:
+                inserted[key] -= 1
+                status_value = "accepted"
+            else:
+                status_value = "duplicate"
+            results_by_index[idx] = TelemetryItemAck(
+                boot_id=item.boot_id,
+                sequence=item.sequence,
+                status=status_value,
+            )
         db.flush()
 
-    return accepted, duplicates, rejected, errors
+    item_results = [results_by_index[idx] for idx in range(len(items))]
+    rejected = sum(result.status == "rejected" for result in item_results)
+    return accepted, duplicates, rejected, errors, item_results
 
 
 def get_active_station_config(db: Session, station_id: uuid.UUID) -> tuple[StationConfigVersion | None, PreferenceVersion | None]:
