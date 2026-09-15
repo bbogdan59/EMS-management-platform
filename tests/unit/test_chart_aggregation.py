@@ -126,6 +126,14 @@ def test_coverage_is_fraction_of_buckets_with_at_least_one_point():
     assert coverage == pytest.approx(0.5)
 
 
+def test_coverage_counts_partial_bucket_at_range_end():
+    start = _t(0)
+    end = datetime(2026, 1, 1, 10, 16, 0, tzinfo=UTC)  # atinge bucket-urile 10:00 si 10:15
+    rows = [{"t": _t(0)}]
+    coverage = agg.compute_coverage(rows, timestamp_key="t", start=start, end=end, bucket_seconds=900)
+    assert coverage == pytest.approx(0.5)
+
+
 def test_coverage_is_zero_for_no_rows():
     start = _t(0)
     end = datetime(2026, 1, 1, 11, 0, 0, tzinfo=UTC)

@@ -20,6 +20,7 @@ pentru o metrica ramane `None` pentru acea metrica.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Sequence
 from datetime import datetime
 from statistics import mean
@@ -132,7 +133,7 @@ def compute_coverage(
     dens" -- doar daca bucketul e complet gol -- suficient pentru a semnala
     onest o fereastra cu gauri mari, fara sa pretinda o precizie pe care
     calculul nu o are."""
-    expected_buckets = max(1, int((end - start).total_seconds() // bucket_seconds))
+    expected_buckets = max(1, math.ceil((end - start).total_seconds() / bucket_seconds))
     present: set[datetime] = set()
     for row in rows:
         present.add(bucket_start(row[timestamp_key], bucket_seconds))
