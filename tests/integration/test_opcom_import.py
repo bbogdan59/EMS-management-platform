@@ -7,6 +7,7 @@ from sqlalchemy import select
 from app.models.enums import ImportRunStatus
 from app.models.market import MarketPriceInterval
 from app.services import opcom_service
+from app.services.opcom_fixtures import generate_synthetic_csv
 from app.services.opcom_service import (
     OpcomFetchError,
     get_real_imported_dates,
@@ -68,28 +69,33 @@ def test_synthetic_fallback_does_not_replace_existing_real_current_import(db, mo
     }
 
 
-def test_import_idempotent_revisions(db):
-    d = date.today()
+def test_import_same_content_keeps_current_revision_without_duplicate_intervals(db, monkeypatch):
+    d = date(2026, 9, 9)
+    csv_text = generate_synthetic_csv(d)
+
+    def _same_content(url):
+        return csv_text.encode("utf-8")
+
+    monkeypatch.setattr(opcom_service, "_fetch_raw", _same_content)
+
     run1 = import_opcom_day(db, d)
     run2 = import_opcom_day(db, d)
-    assert run2.revision == run1.revision + 1
+    assert run1.status == ImportRunStatus.succeeded.value
+    assert run2.status == ImportRunStatus.unchanged.value
+    assert run2.interval_count == run1.interval_count
 
-    from sqlalchemy import select
-
-    from app.models.market import MarketPriceInterval
-
-    current_count = db.scalar(
-        select(MarketPriceInterval).where(
+    current_revision = db.scalar(
+        select(MarketPriceInterval.revision).where(
             MarketPriceInterval.delivery_date == d, MarketPriceInterval.is_current.is_(True)
         )
     )
-    assert current_count is not None
-    old_revision_still_present = db.scalar(
-        select(MarketPriceInterval).where(
-            MarketPriceInterval.delivery_date == d, MarketPriceInterval.revision == run1.revision
+    assert current_revision == run1.revision
+    revision2_interval = db.scalar(
+        select(MarketPriceInterval.id).where(
+            MarketPriceInterval.delivery_date == d, MarketPriceInterval.revision == run2.revision
         )
     )
-    assert old_revision_still_present is not None  # revizia veche ramane in baza (audit)
+    assert revision2_interval is None
 
 
 def test_has_successful_real_import_ignores_synthetic(db):

@@ -82,6 +82,7 @@
             <td>v{{ r.revision }}</td>
             <td>
               {% if r.status == "succeeded" %}<span class="badge-ok">succes</span>
+              {% elif r.status == "unchanged" %}<span class="badge-ok">neschimbat</span>
               {% elif r.status == "unpublished" %}<span class="badge-warn">nepublicat</span>
               {% else %}<span class="badge-error">{{ r.status }}</span>{% endif %}
               {% if r.is_synthetic_fixture %}<span class="badge-warn">sintetic</span>{% endif %}

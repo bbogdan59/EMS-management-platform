@@ -940,11 +940,13 @@ preview afisat/motiv-indisponibil pe pagina.
 
 **O revizie de pret e strict un `ImportRun` cu `status=succeeded`.** Fiecare
 incercare de import (`opcom_service.import_opcom_day`) primeste un numar de
-revizie nou, INDIFERENT daca reuseste sau esueaza -- deci `revision` singur
-nu distinge o versiune reala de pret de o tentativa esuata/metadata de
-audit. Politica de retentie noua (`app/services/market_retention_service.py`)
-numara si arhiveaza EXCLUSIV revizii reusite; tentativele esuate sunt
-ignorate complet (nu conteaza la prag, nu sunt niciodata arhivate).
+revizie pentru audit, dar un hash deja importat cu succes se incheie ca
+`status=unchanged` si NU creeaza intervale duplicate sau o noua revizie
+curenta. `revision` singur nu distinge o versiune reala de pret de o
+tentativa esuata/metadata de audit. Politica de retentie noua
+(`app/services/market_retention_service.py`) numara si arhiveaza EXCLUSIV
+revizii reusite; tentativele esuate/unchanged sunt ignorate complet (nu
+conteaza la prag, nu sunt niciodata arhivate).
 
 **Arhivare STRICT NEDISTRUCTIVA, nu stergere.** Peste
 `DEFAULT_MAX_ACTIVE_REVISIONS` (5) revizii reusite pastrate active per zi de

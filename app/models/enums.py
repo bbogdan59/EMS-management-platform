@@ -63,6 +63,7 @@ class ImportRunStatus(str, enum.Enum):
     pending = "pending"
     running = "running"
     succeeded = "succeeded"
+    unchanged = "unchanged"
     failed = "failed"
     unpublished = "unpublished"
 

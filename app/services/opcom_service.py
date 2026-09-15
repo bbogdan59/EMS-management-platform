@@ -339,6 +339,22 @@ def get_real_imported_dates(db: Session, start: date, end: date, source: str = "
     return {r[0] for r in rows}
 
 
+def _find_successful_import_by_hash(
+    db: Session, delivery_date: date, raw_response_hash: str, source: str
+) -> ImportRun | None:
+    return db.scalar(
+        select(ImportRun)
+        .where(
+            ImportRun.source == source,
+            ImportRun.delivery_date == delivery_date,
+            ImportRun.status == ImportRunStatus.succeeded.value,
+            ImportRun.raw_response_hash == raw_response_hash,
+        )
+        .order_by(ImportRun.revision.desc())
+        .limit(1)
+    )
+
+
 def import_opcom_day(db: Session, delivery_date: date, triggered_by_user_id=None) -> ImportRun:
     source = "opcom_pzu"
     existing_max = db.scalar(
@@ -430,6 +446,20 @@ def import_opcom_day(db: Session, delivery_date: date, triggered_by_user_id=None
         )
         db.flush()
         return run
+
+    if run.raw_response_hash:
+        unchanged_from = _find_successful_import_by_hash(db, delivery_date, run.raw_response_hash, source)
+        if unchanged_from is not None:
+            run.status = ImportRunStatus.unchanged.value
+            run.interval_count = unchanged_from.interval_count
+            run.is_synthetic_fixture = is_synthetic
+            run.error_message = (
+                f"Continut OPCOM identic cu revizia {unchanged_from.revision}; "
+                "intervalele curente au fost pastrate fara duplicare."
+            )
+            db.add(run)
+            db.flush()
+            return run
 
     if intervals is None:
         run.status = ImportRunStatus.failed.value
