@@ -217,7 +217,27 @@ POST /api/v1/devices/credentials/rotate
 Necesita autentificare cu credentiala **curenta**. Raspunsul contine noul
 secret; cel vechi e revocat imediat.
 
-## 4. Telemetrie (batch)
+## 4. Contract telemetrie
+
+```
+GET /api/v1/telemetry/contract
+```
+
+Endpoint read-only, fara autentificare, folosit de dispozitiv/simulator pentru
+a descoperi contractul masinabil al telemetriei acceptate de schema v1:
+
+- `schema_version`, endpointul de ingestie si cheia de deduplicare;
+- limitele temporale (`max_future_skew_seconds`, `max_age_days`,
+  `late_after_seconds`);
+- lista de metrici canonice, cu unitate, nullable, calitate si conventie de
+  semn;
+- statuturile ACK si codurile de motiv retryable/permanent.
+
+`raw_payload` ramane doar diagnostic/source payload. Metricile extinse
+neacceptate explicit in schema v1 nu devin telemetrie canonica doar fiindca
+apar in `raw_payload`.
+
+## 5. Telemetrie (batch)
 
 ```
 POST /api/v1/telemetry/batch
@@ -292,7 +312,7 @@ identificat sigur prin `boot_id`/`sequence`, are tipuri gresite, timestamp fara
 fus orar sau numere non-finite (`NaN`, `Infinity`) primeste HTTP 422 pentru
 intregul request.
 
-## 5. Configuratie curenta
+## 6. Configuratie curenta
 
 ```
 GET /api/v1/config
