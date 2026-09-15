@@ -1,0 +1,24 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+
+def test_dashboard_charts_are_registered_for_lazy_visibility_loading():
+    dashboard_js = Path("app/web/static/js/dashboard.js").read_text()
+
+    assert "function lazyLoadWidget(chartElId, loadFn)" in dashboard_js
+    assert "new IntersectionObserver" in dashboard_js
+    assert "rootMargin: \"160px 0px\"" in dashboard_js
+
+    for chart_id in [
+        "chart-power",
+        "chart-soc",
+        "chart-prices",
+        "chart-plan",
+        "chart-forecast-pv",
+        "chart-forecast-load",
+        "chart-heatmap",
+        "chart-energy-daily",
+        "chart-energy-monthly",
+    ]:
+        assert f'lazyLoadWidget("{chart_id}"' in dashboard_js
