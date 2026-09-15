@@ -12,6 +12,7 @@
     {"label": station.name, "url": "/?station_id=" ~ station.id},
     {"label": "Configurare", "url": None},
   ]) }}
+  {% include "partials/_wizard_progress.html" %}
   <h1 class="text-xl font-semibold">Configurare tehnica - {{ station.name }}</h1>
 
   {% if config %}
@@ -25,6 +26,7 @@
     <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}" />
     <input type="hidden" name="expected_version" value="{{ expected_version }}" />
     <input type="hidden" name="panel_groups_json" id="panel_groups_json" />
+    {% if wizard_step %}<input type="hidden" name="wizard" value="1" />{% endif %}
 
     {% call field_group("Sistem PV / invertor") %}
     {{ numeric_field("pv_installed_power_kw", "Putere PV instalata", value=config.pv_installed_power_kw if config, unit="kW", min=0.001, required=True) }}

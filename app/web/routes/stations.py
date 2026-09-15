@@ -31,6 +31,7 @@ from app.schemas.station_forms import PreferenceInput, StationConfigInput
 from app.services import device_service, equipment_catalog_service, station_service, tariff_service
 from app.web.context import build_nav_context
 from app.web.templating import templates
+from app.web.wizard import STEP_ORDER, wizard_chrome_context
 
 router = APIRouter()
 
@@ -52,19 +53,34 @@ def _none_if_blank(value: str | None) -> str | None:
     return value
 
 
-def _error_redirect(path: str, errors: list[str]) -> RedirectResponse:
+def _error_redirect(path: str, errors: list[str], wizard: bool = False) -> RedirectResponse:
     from urllib.parse import urlencode
 
-    query = urlencode([("error", e) for e in errors])
+    params = [("error", e) for e in errors]
+    if wizard:
+        params.append(("wizard", "1"))
+    query = urlencode(params)
     return RedirectResponse(f"{path}?{query}", status_code=303)
 
 
-def _config_error_redirect(station_id: uuid.UUID, errors: list[str]) -> RedirectResponse:
-    return _error_redirect(f"/stations/{station_id}/config", errors)
+def _config_error_redirect(station_id: uuid.UUID, errors: list[str], wizard: bool = False) -> RedirectResponse:
+    return _error_redirect(f"/stations/{station_id}/config", errors, wizard)
 
 
-def _preferences_error_redirect(station_id: uuid.UUID, errors: list[str]) -> RedirectResponse:
-    return _error_redirect(f"/stations/{station_id}/preferences", errors)
+def _preferences_error_redirect(station_id: uuid.UUID, errors: list[str], wizard: bool = False) -> RedirectResponse:
+    return _error_redirect(f"/stations/{station_id}/preferences", errors, wizard)
+
+
+def _next_step_redirect(station_id: uuid.UUID, current_step: str) -> RedirectResponse:
+    """Dupa un submit reusit in modul wizard, avanseaza la pasul urmator din
+    ordinea fixa (issue #41) -- niciodata la un pas calculat din starea reala
+    (acela e doar pentru reluare, vezi `next_wizard_step`), ca sa respecte
+    navigarea explicita Back/Next parcursa de utilizator."""
+    idx = STEP_ORDER.index(current_step)
+    next_step = STEP_ORDER[idx + 1] if idx + 1 < len(STEP_ORDER) else "summary"
+    if next_step == "summary":
+        return RedirectResponse(f"/stations/{station_id}/setup/summary", status_code=303)
+    return RedirectResponse(f"/stations/{station_id}/{next_step}?wizard=1", status_code=303)
 
 
 def _tariff_error_redirect(station_id: uuid.UUID, errors: list[str]) -> RedirectResponse:
@@ -204,6 +220,8 @@ def station_config_form(
         **_equipment_selection_context(config),
         **build_nav_context(db, user, station.id),
     }
+    if request.query_params.get("wizard") == "1":
+        context.update(wizard_chrome_context(db, "config", station=station))
     return templates.TemplateResponse(request, "stations/config.html", context)
 
 
@@ -230,18 +248,20 @@ def station_config_submit(
     inverter_custom_label: str | None = Form(None),
     battery_model_id: str | None = Form(None),
     battery_custom_label: str | None = Form(None),
+    wizard: str | None = Form(None),
     db: Session = Depends(get_db),
     station_role: tuple = Depends(StationAccess(min_role="organization_admin")),
     user: User = Depends(get_current_user),
 ):
     station, _role = station_role
+    is_wizard = wizard == "1"
 
     try:
         panel_groups_raw = json.loads(panel_groups_json)
     except json.JSONDecodeError:
-        return _config_error_redirect(station.id, ["Grupurile de panouri: JSON invalid."])
+        return _config_error_redirect(station.id, ["Grupurile de panouri: JSON invalid."], is_wizard)
     if not isinstance(panel_groups_raw, list):
-        return _config_error_redirect(station.id, ["Grupurile de panouri trebuie sa fie o lista."])
+        return _config_error_redirect(station.id, ["Grupurile de panouri trebuie sa fie o lista."], is_wizard)
 
     raw = {
         "pv_installed_power_kw": pv_installed_power_kw,
@@ -271,7 +291,7 @@ def station_config_submit(
     try:
         validated = StationConfigInput.model_validate(raw)
     except ValidationError as exc:
-        return _config_error_redirect(station.id, _validation_errors(exc))
+        return _config_error_redirect(station.id, _validation_errors(exc), is_wizard)
 
     try:
         inverter_model = (
@@ -293,7 +313,7 @@ def station_config_submit(
             for group in validated.panel_groups
         ]
     except ValueError as exc:
-        return _config_error_redirect(station.id, [str(exc)])
+        return _config_error_redirect(station.id, [str(exc)], is_wizard)
 
     # Concurenta optimista: daca o alta editare a fost publicata intre randarea
     # formularului si aceasta trimitere, respingem explicit in loc sa suprascriem
@@ -303,6 +323,7 @@ def station_config_submit(
         return _config_error_redirect(
             station.id,
             [f"Configuratia a fost modificata intre timp (v{current_version} e curenta) -- reincarca pagina si reaplica modificarile."],
+            is_wizard,
         )
 
     version = current_version + 1
@@ -364,7 +385,11 @@ def station_config_submit(
         db.commit()
     except IntegrityError:
         db.rollback()
-        return _config_error_redirect(station.id, ["Configuratia a fost modificata concurent -- reincarca pagina si reaplica modificarile."])
+        return _config_error_redirect(
+            station.id, ["Configuratia a fost modificata concurent -- reincarca pagina si reaplica modificarile."], is_wizard
+        )
+    if is_wizard:
+        return _next_step_redirect(station.id, "config")
     return RedirectResponse(f"/stations/{station.id}/config", status_code=303)
 
 
@@ -410,6 +435,8 @@ def preferences_form(
         "errors": request.query_params.getlist("error"),
         **build_nav_context(db, user, station.id),
     }
+    if request.query_params.get("wizard") == "1":
+        context.update(wizard_chrome_context(db, "preferences", station=station))
     return templates.TemplateResponse(request, "stations/preferences.html", context)
 
 
@@ -430,6 +457,7 @@ def preferences_submit(
     automation_suspended_until: str | None = Form(None),
     arbitrage_min_benefit_lei: str = Form("0"),
     expected_version: int = Form(...),
+    wizard: str | None = Form(None),
     db: Session = Depends(get_db),
     station_role: tuple = Depends(StationAccess(min_role="operator")),
     user: User = Depends(get_current_user),
@@ -437,13 +465,14 @@ def preferences_submit(
     from app.models.preference import PreferenceVersion
 
     station, _role = station_role
+    is_wizard = wizard == "1"
 
     try:
         soc_targets_raw = json.loads(soc_targets_json) if soc_targets_json else []
     except json.JSONDecodeError:
-        return _preferences_error_redirect(station.id, ["Tintele SOC: JSON invalid."])
+        return _preferences_error_redirect(station.id, ["Tintele SOC: JSON invalid."], is_wizard)
     if not isinstance(soc_targets_raw, list):
-        return _preferences_error_redirect(station.id, ["Tintele SOC trebuie sa fie o lista."])
+        return _preferences_error_redirect(station.id, ["Tintele SOC trebuie sa fie o lista."], is_wizard)
 
     ev_time_str = None
     if ev_departure_time:
@@ -451,7 +480,7 @@ def preferences_submit(
             h, m = ev_departure_time.split(":")
             ev_time_str = f"{int(h):02d}:{int(m):02d}"
         except ValueError:
-            return _preferences_error_redirect(station.id, ["Ora plecare EV: format invalid (asteptat HH:MM)."])
+            return _preferences_error_redirect(station.id, ["Ora plecare EV: format invalid (asteptat HH:MM)."], is_wizard)
 
     raw = {
         "min_reserve_soc_percent": min_reserve_soc_percent,
@@ -474,7 +503,7 @@ def preferences_submit(
     try:
         validated = PreferenceInput.model_validate(raw)
     except ValidationError as exc:
-        return _preferences_error_redirect(station.id, _validation_errors(exc))
+        return _preferences_error_redirect(station.id, _validation_errors(exc), is_wizard)
 
     suspended_until_utc = None
     if validated.automation_suspended_until:
@@ -485,7 +514,7 @@ def preferences_submit(
         try:
             local_naive = datetime.fromisoformat(validated.automation_suspended_until)
         except ValueError:
-            return _preferences_error_redirect(station.id, ["Suspendare automatizare: data/ora invalida."])
+            return _preferences_error_redirect(station.id, ["Suspendare automatizare: data/ora invalida."], is_wizard)
         candidates = [local_naive.replace(tzinfo=tz, fold=fold) for fold in (0, 1)]
         valid = [
             candidate
@@ -496,6 +525,7 @@ def preferences_submit(
             return _preferences_error_redirect(
                 station.id,
                 ["Suspendare automatizare: ora locala este inexistenta sau ambigua din cauza schimbarii DST."],
+                is_wizard,
             )
         suspended_until_utc = valid[0].astimezone(UTC)
 
@@ -504,6 +534,7 @@ def preferences_submit(
         return _preferences_error_redirect(
             station.id,
             [f"Preferintele au fost modificate intre timp (v{current_version} e curenta) -- reincarca pagina si reaplica modificarile."],
+            is_wizard,
         )
     version = current_version + 1
 
@@ -544,7 +575,11 @@ def preferences_submit(
         db.commit()
     except IntegrityError:
         db.rollback()
-        return _preferences_error_redirect(station.id, ["Preferintele au fost modificate concurent -- reincarca pagina si reaplica modificarile."])
+        return _preferences_error_redirect(
+            station.id, ["Preferintele au fost modificate concurent -- reincarca pagina si reaplica modificarile."], is_wizard
+        )
+    if is_wizard:
+        return _next_step_redirect(station.id, "preferences")
     return RedirectResponse(f"/stations/{station.id}/preferences", status_code=303)
 
 
@@ -590,6 +625,8 @@ def tariffs_page(
         "errors": request.query_params.getlist("error"),
         **build_nav_context(db, user, station.id),
     }
+    if request.query_params.get("wizard") == "1":
+        context.update(wizard_chrome_context(db, "tariffs", station=station))
     return templates.TemplateResponse(request, "stations/tariffs.html", context)
 
 
@@ -611,6 +648,7 @@ def tariffs_submit(
     settlement_interval_days: int = Form(30),
     economic_calculation_disabled: str | None = Form(None),
     limitation_note: str | None = Form(None),
+    wizard: str | None = Form(None),
     db: Session = Depends(get_db),
     station_role: tuple = Depends(StationAccess(min_role="organization_admin")),
     user: User = Depends(get_current_user),
@@ -643,6 +681,8 @@ def tariffs_submit(
         actor_user_id=user.id, actor_label=user.email, station_id=station.id,
     )
     db.commit()
+    if wizard == "1":
+        return _next_step_redirect(station.id, "tariffs")
     return RedirectResponse(f"/stations/{station.id}/tariffs", status_code=303)
 
 
@@ -672,6 +712,8 @@ def devices_page(
         "now": utcnow(),
         **build_nav_context(db, user, station.id),
     }
+    if request.query_params.get("wizard") == "1":
+        context.update(wizard_chrome_context(db, "devices", station=station))
     return templates.TemplateResponse(request, "stations/devices.html", context)
 
 
@@ -679,16 +721,18 @@ def devices_page(
 def activate_device_code(
     request: Request,
     activation_code: str = Form(...),
+    wizard: str | None = Form(None),
     onboarding: str | None = Form(None),
     db: Session = Depends(get_db),
     station_role: tuple = Depends(StationAccess(min_role="organization_admin")),
     user: User = Depends(get_current_user),
 ):
     station, _role = station_role
+    is_wizard = wizard == "1"
     # Pastreaza pasul din wizard-ul de setare (issue #44) prin redirect, ca
     # utilizatorul sa ajunga inapoi in fluxul "statie -> asociere device ->
     # configurare" in loc sa cada pe pagina simpla de dispozitive.
-    suffix = "&onboarding=1" if onboarding == "1" else ""
+    wizard_qs = "&wizard=1" if is_wizard else ("&onboarding=1" if onboarding == "1" else "")
     try:
         check_fixed_window(
             f"device_activation:{user.id}:{station.id}",
@@ -696,13 +740,13 @@ def activate_device_code(
             3600,
         )
     except RateLimitExceeded:
-        return RedirectResponse(f"/stations/{station.id}/devices?error=too_many_attempts{suffix}", status_code=303)
+        return RedirectResponse(f"/stations/{station.id}/devices?error=too_many_attempts{wizard_qs}", status_code=303)
 
     try:
         device = device_service.activate_device_for_station(db, activation_code, station, user)
     except device_service.DeviceServiceError:
         db.rollback()
-        return RedirectResponse(f"/stations/{station.id}/devices?error=invalid_device_code{suffix}", status_code=303)
+        return RedirectResponse(f"/stations/{station.id}/devices?error=invalid_device_code{wizard_qs}", status_code=303)
 
     record_audit(
         db, action="device_activated_by_customer", resource_type="device", resource_id=str(device.id),
@@ -710,12 +754,15 @@ def activate_device_code(
         metadata={"serial_number": device.serial_number},
     )
     db.commit()
-    return RedirectResponse(f"/stations/{station.id}/devices?linked=1{suffix}", status_code=303)
+    if is_wizard:
+        return _next_step_redirect(station.id, "devices")
+    return RedirectResponse(f"/stations/{station.id}/devices?linked=1{wizard_qs}", status_code=303)
 
 
 @router.post("/stations/{station_id}/claim-codes", dependencies=[Depends(verify_csrf)])
 def create_claim_code(
     request: Request,
+    wizard: str | None = Form(None),
     db: Session = Depends(get_db),
     station_role: tuple = Depends(StationAccess(min_role="organization_admin")),
     user: User = Depends(get_current_user),
@@ -736,6 +783,7 @@ def create_claim_code(
     claim_codes = db.scalars(
         select(ClaimCode).where(ClaimCode.station_id == station.id).order_by(ClaimCode.created_at.desc()).limit(10)
     ).all()
+    extra_context = wizard_chrome_context(db, "devices", station=station) if wizard == "1" else {}
     response = templates.TemplateResponse(
         request,
         "stations/devices.html",
@@ -748,6 +796,7 @@ def create_claim_code(
             "legacy_claim_code_enabled": True,
             "onboarding": request.query_params.get("onboarding") == "1",
             "now": utcnow(),
+            **extra_context,
             **build_nav_context(db, user, station.id),
         },
     )
@@ -777,3 +826,66 @@ def revoke_device(
     )
     db.commit()
     return RedirectResponse(f"/stations/{station.id}/devices", status_code=303)
+
+
+# --- Rezumat wizard si activare (issue #41) ---
+
+
+@router.get("/stations/{station_id}/setup/summary")
+def setup_summary(
+    request: Request,
+    db: Session = Depends(get_db),
+    station_role: tuple = Depends(StationAccess(min_role="viewer")),
+    user: User = Depends(get_current_user),
+):
+    from app.models.preference import PreferenceVersion
+
+    station, role = station_role
+    config = db.scalar(
+        select(StationConfigVersion)
+        .where(StationConfigVersion.station_id == station.id)
+        .order_by(StationConfigVersion.version.desc())
+        .limit(1)
+    )
+    preference = db.scalar(
+        select(PreferenceVersion)
+        .where(PreferenceVersion.station_id == station.id)
+        .order_by(PreferenceVersion.version.desc())
+        .limit(1)
+    )
+    devices = db.scalars(select(Device).where(Device.station_id == station.id, Device.status == "active")).all()
+    tariffs = db.scalars(select(Tariff).where(Tariff.station_id == station.id)).all()
+    context = {
+        "station": station,
+        "config": config,
+        "preference": preference,
+        "devices": devices,
+        "tariffs": tariffs,
+        "can_activate": can_manage_station_config(role),
+        **wizard_chrome_context(db, "summary", station=station),
+        **build_nav_context(db, user, station.id),
+    }
+    return templates.TemplateResponse(request, "stations/setup_summary.html", context)
+
+
+@router.post("/stations/{station_id}/setup/activate", dependencies=[Depends(verify_csrf)])
+def setup_activate(
+    request: Request,
+    db: Session = Depends(get_db),
+    station_role: tuple = Depends(StationAccess(min_role="organization_admin")),
+    user: User = Depends(get_current_user),
+):
+    """Pasul final al wizard-ului (issue #41). Idempotent: un al doilea
+    submit nu modifica nimic in plus -- pastreaza momentul PRIMEI activari,
+    nu-l suprascrie -- si redirecteaza oricum direct in dashboard-ul statiei,
+    exact ca prima data (criteriul de acceptare: "dupa finalizare, utilizatorul
+    ajunge direct in dashboard-ul statiei")."""
+    station, _role = station_role
+    if station.setup_completed_at is None:
+        station.setup_completed_at = datetime.now(UTC)
+        record_audit(
+            db, action="station_setup_completed", resource_type="station", resource_id=str(station.id),
+            actor_user_id=user.id, actor_label=user.email, station_id=station.id,
+        )
+        db.commit()
+    return RedirectResponse(f"/?station_id={station.id}", status_code=303)

@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% from "partials/_breadcrumb.html" import trail as breadcrumb %}
+{% from "partials/_field_group.html" import group as field_group %}
+{% from "partials/_numeric_input.html" import field as numeric_field %}
+{% from "partials/_form_errors.html" import summary as error_summary %}
+{% block title %}Configurare ghidata - {{ organization.name }} - {{ app_name }}{% endblock %}
+{% block content %}
+<div class="space-y-6">
+  {{ breadcrumb([
+    {"label": "Dashboard", "url": "/"},
+    {"label": organization.name, "url": "/organizations/" ~ organization.id},
+    {"label": "Statie noua", "url": None},
+  ]) }}
+  {% include "partials/_wizard_progress.html" %}
+  <div>
+    <h1 class="text-xl font-semibold">Configurare ghidata: statie noua</h1>
+    <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+      Pentru un client cu o singura locatie, acestea sunt singurele campuri necesare acum -- restul (echipamente, conectare, tarif, preferinte) se completeaza in pasii urmatori, cu valori implicite rezonabile deja pregatite.
+    </p>
+  </div>
+
+  {{ error_summary(errors, "Nu s-a creat statia:") }}
+
+  <form method="post" action="/organizations/{{ organization.id }}/stations" class="card space-y-4">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}" />
+    <input type="hidden" name="wizard" value="1" />
+    <div class="grid gap-3 sm:grid-cols-2">
+      <div>
+        <label class="label" for="new-station-name">Nume statie</label>
+        <input class="input" id="new-station-name" name="name" required autofocus />
+      </div>
+      <div>
+        <label class="label" for="new-station-timezone">Fus orar</label>
+        <input class="input" id="new-station-timezone" name="timezone" value="Europe/Bucharest" required />
+      </div>
+    </div>
+
+    {% call field_group("Locatie") %}
+    {{ numeric_field("latitude", "Latitudine", unit="°", step="0.000001", min=-90, max=90, required=True, help="Necesara pentru prognoza productiei solare (pozitia soarelui la locatia ta).") }}
+    {{ numeric_field("longitude", "Longitudine", unit="°", step="0.000001", min=-180, max=180, required=True) }}
+    {% endcall %}
+
+    {% call field_group("Sistem PV / invertor") %}
+    {{ numeric_field("pv_installed_power_kw", "Putere PV instalata", unit="kW", step="0.01", min=0.01, required=True) }}
+    {{ numeric_field("inverter_power_kw", "Putere invertor", unit="kW", step="0.01", min=0.01, required=True) }}
+    {% endcall %}
+
+    {% call field_group("Baterie (optional)") %}
+    {{ numeric_field("battery_reference_capacity_kwh", "Capacitate referinta", unit="kWh", step="0.01", min=0, help="Capacitatea maxima de fabrica -- foloseste pentru a calcula cate cicluri de incarcare/descarcare face bateria ta.") }}
+    {{ numeric_field("battery_max_charge_power_kw", "Putere max. incarcare", unit="kW", step="0.01", min=0) }}
+    {{ numeric_field("battery_max_discharge_power_kw", "Putere max. descarcare", unit="kW", step="0.01", min=0) }}
+    {% endcall %}
+
+    <label class="flex items-center gap-2 text-sm">
+      <input type="checkbox" name="ev_enabled" value="true" /> Statie de incarcare EV prezenta
+    </label>
+
+    <details>
+      <summary class="cursor-pointer text-sm font-medium text-gray-600 dark:text-gray-300">Setari avansate: limite retea</summary>
+      <div class="mt-3">
+        {% call field_group("Limite retea (optional)") %}
+        {{ numeric_field("grid_import_limit_kw", "Limita import", unit="kW", step="0.01", min=0) }}
+        {{ numeric_field("grid_export_limit_kw", "Limita export", unit="kW", step="0.01", min=0) }}
+        {% endcall %}
+      </div>
+    </details>
+
+    <button type="submit" class="btn-primary">Creeaza statia si continua &rarr;</button>
+  </form>
+</div>
+{% endblock %}
