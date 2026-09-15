@@ -51,7 +51,7 @@ class TelemetryItem(BaseModel):
     """Un punct de telemetrie. Conventii de semn documentate in docs/API.md:
     battery_power_w>0 inseamna incarcare; grid_power_w>0 inseamna import."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
 
     boot_id: str
     sequence: int = Field(..., ge=0, description="Contor monoton crescator in cadrul unui boot_id, pentru deduplicare.")
