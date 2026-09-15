@@ -138,6 +138,8 @@ def generate_pv_forecast(db: Session, station: Station) -> list[PvForecast]:
             based_on_weather_forecast_id=w.id,
             predicted_power_kw=round(power_kw, 4),
             scenario="expected",
+            confidence=w.confidence,
+            is_synthetic=w.is_synthetic,
         )
         db.add(pv)
         created.append(pv)
