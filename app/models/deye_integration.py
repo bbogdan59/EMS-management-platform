@@ -43,6 +43,10 @@ class DeyeCloudConnection(Entity):
     # avea mai multe statii Deye Cloud).
     remote_station_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     remote_station_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    # Snapshot minim (doar id/nume) al listei obtinute la autentificare.
+    # Evita apeluri Deye din GET-ul paginii si permite validarea server-side
+    # a selectiei, fara a avea incredere in hidden inputs controlate de client.
+    pending_remote_stations: Mapped[list[dict]] = mapped_column(JSON, default=list, nullable=False)
 
     # Device-ul SINTETIC (vezi `app.models.device.Device`) creat pentru a
     # atasa randurile `TelemetryRaw` importate din Deye Cloud -- nu reprezinta

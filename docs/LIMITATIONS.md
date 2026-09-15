@@ -1800,6 +1800,9 @@ si vedea telemetria statiei importata de acolo, read-only:
   obligatorie in formular inainte de orice autentificare; (2) selectie explicita
   a CARE statie din cont (un cont Deye Cloud poate avea mai multe) sa fie
   legata de statia platformei -- fara asta, nicio telemetrie nu e importata.
+  Lista minimala `id`/`name` este persistata la autentificare: pagina GET nu
+  asteapta providerul, iar POST-ul de selectie refuza orice id care nu a fost
+  returnat pentru acel cont si ignora numele controlat de browser.
 - **Credentiale criptate la repaus** (`app/core/crypto.py`, Fernet/AES cu cheie
   derivata din `SECRET_KEY` prin HKDF) -- parola contului client SI token-ul de
   acces cache-uit, niciodata in clar in baza de date. Redactate din loguri
@@ -1807,7 +1810,8 @@ si vedea telemetria statiei importata de acolo, read-only:
   doar `structlog` cu campuri safe: `connection_id`, tipul erorii).
   **Deconectabil din UI** (`disconnect`): sterge parola si token-ul stocate
   local, nedistructiv fata de telemetria deja importata (ramane ca istoric,
-  la fel ca arhivarea unei statii). Import/device/mapare explicita: fiecare
+  la fel ca arhivarea unei statii), si revoca device-ul sintetic ca sa nu mai
+  fie prezentat drept activ. Import/device/mapare explicita: fiecare
   statie Deye Cloud selectata creeaza un device SINTETIC (`Device.capabilities
   = {"deye_cloud": true, "read_only": true}`), FARA `DeviceCredential` -- nu
   poate niciodata autentifica pe protocolul web-device si deci nu poate
@@ -1819,8 +1823,10 @@ si vedea telemetria statiei importata de acolo, read-only:
   metadata simpla (`DeyeCloudDeviceLink`, doar afisare), NU genereaza telemetrie
   per-device.
 - **Polling in fundal, Celery** (`deye_cloud_poll_task`, la fiecare 5 minute,
-  `app/workers/tasks.py`+`celery_app.py`) -- nicio cerere web nu asteapta
-  vreun apel catre Deye. Backoff exponential per-conexiune dupa esecuri
+  `app/workers/tasks.py`+`celery_app.py`) -- dashboard-ul si pagina de stare
+  nu asteapta apeluri Deye. POST-ul explicit de conectare autentifica sincron
+  contul, cu timeout/retry si limita de 10 incercari pe ora per user/statie.
+  Backoff exponential per-conexiune dupa esecuri
   repetate (60s/120s/240s/... plafonat la 1h,
   `deye_cloud_service._backoff_seconds`), `last_sync_at`/`last_sync_status`/
   `last_sync_message`/`consecutive_failure_count` persistate si vizibile in UI.

@@ -128,7 +128,14 @@ def _post(path: str, *, params: dict | None = None, body: dict | None = None, ac
                 # (credentiale/parametri gresiti nu se rezolva prin retry).
                 if resp.status_code >= 500:
                     resp.raise_for_status()
-                data = resp.json()
+                try:
+                    data = resp.json()
+                except ValueError as exc:
+                    raise DeyeCloudApiError(None, "raspuns JSON invalid") from exc
+                if resp.status_code >= 400 and not (
+                    isinstance(data, dict) and data.get("success") is False
+                ):
+                    raise DeyeCloudApiError(str(resp.status_code), "raspuns HTTP invalid")
     except (httpx.TransportError, httpx.HTTPStatusError) as exc:
         logger.warning("deye_cloud.request_failed", path=path, error=str(exc))
         raise DeyeCloudUnavailableError(f"Deye Cloud indisponibil ({path}): {exc}") from exc
@@ -267,6 +274,13 @@ def start_connection(
         connection.last_sync_status = None
         connection.last_sync_message = None
         connection.consecutive_failure_count = 0
+        if connection.device_id is not None:
+            device = db.get(Device, connection.device_id)
+            if device is not None:
+                device.status = DeviceStatus.revoked.value
+                device.revoked_at = now
+                device.revoked_reason = "Reconectare Deye Cloud in asteptarea selectiei statiei."
+                db.add(device)
     else:
         connection = DeyeCloudConnection(
             station_id=station.id,
@@ -278,6 +292,7 @@ def start_connection(
     connection.encrypted_access_token = encrypt_secret(auth["access_token"])
     connection.access_token_expires_at = expires_at
     connection.region = settings.deye_cloud_region
+    connection.pending_remote_stations = _normalize_station_choices(stations)
     db.add(connection)
     db.flush()
     return connection, stations
@@ -288,19 +303,43 @@ def get_connection_for_station(db: Session, station_id: uuid.UUID) -> DeyeCloudC
 
 
 def list_pending_remote_stations(connection: DeyeCloudConnection) -> list[dict]:
-    """Re-interogheaza contul Deye Cloud pentru statiile disponibile, cat timp
-    conexiunea e in `pending_selection` -- nu pastram lista intre cereri HTTP,
-    ca sa nu tinem un raspuns extern in sesiune/cookie."""
-    access_token = _valid_access_token(connection)
-    return list_remote_stations(access_token)
+    """Lista minimala persistata la autentificare; GET-ul UI nu apeleaza
+    providerul extern si nu poate bloca randarea paginii."""
+    return list(connection.pending_remote_stations or [])
 
 
-def select_remote_station(db: Session, connection: DeyeCloudConnection, remote_station_id: int, remote_station_name: str) -> None:
+def _normalize_station_choices(stations: list[dict]) -> list[dict]:
+    choices: list[dict] = []
+    seen: set[int] = set()
+    for item in stations:
+        raw_id = item.get("id") or item.get("stationId") or item.get("station_id")
+        if isinstance(raw_id, bool):
+            continue
+        try:
+            station_id = int(raw_id)
+        except (TypeError, ValueError):
+            continue
+        if station_id in seen:
+            continue
+        raw_name = item.get("name") or item.get("stationName") or f"Statia {station_id}"
+        choices.append({"id": station_id, "name": str(raw_name)[:200]})
+        seen.add(station_id)
+    return choices
+
+
+def select_remote_station(db: Session, connection: DeyeCloudConnection, remote_station_id: int) -> None:
     """Al doilea pas, explicit, al consimtamantului: clientul a ales CE
     statie din contul lui Deye Cloud sa fie legata de statia platformei.
     Importa inventarul de dispozitive (doar metadata, vezi
     `DeyeCloudDeviceLink`) si creeaza device-ul sintetic care va detine
     telemetria ingerata la polling."""
+    choice = next(
+        (item for item in (connection.pending_remote_stations or []) if item.get("id") == remote_station_id),
+        None,
+    )
+    if choice is None:
+        raise DeyeCloudApiError(None, "Statia selectata nu apartine listei autorizate pentru acest cont.")
+    remote_station_name = str(choice.get("name") or f"Statia {remote_station_id}")[:200]
     access_token = _valid_access_token(connection)
 
     if connection.device_id is None:
@@ -313,6 +352,13 @@ def select_remote_station(db: Session, connection: DeyeCloudConnection, remote_s
         db.add(device)
         db.flush()
         connection.device_id = device.id
+    else:
+        device = db.get(Device, connection.device_id)
+        if device is not None:
+            device.status = DeviceStatus.active.value
+            device.revoked_at = None
+            device.revoked_reason = None
+            db.add(device)
 
     try:
         remote_devices = list_remote_station_devices(access_token, remote_station_id)
@@ -341,6 +387,7 @@ def select_remote_station(db: Session, connection: DeyeCloudConnection, remote_s
 
     connection.remote_station_id = remote_station_id
     connection.remote_station_name = remote_station_name
+    connection.pending_remote_stations = []
     connection.status = DeyeCloudConnectionStatus.connected.value
     connection.consecutive_failure_count = 0
     db.add(connection)
@@ -358,9 +405,17 @@ def disconnect(db: Session, connection: DeyeCloudConnection, user: User) -> None
     connection.encrypted_account_password = ""
     connection.encrypted_access_token = None
     connection.access_token_expires_at = None
+    connection.pending_remote_stations = []
     connection.disconnected_at = utcnow()
     connection.disconnected_by_user_id = user.id
     db.add(connection)
+    if connection.device_id is not None:
+        device = db.get(Device, connection.device_id)
+        if device is not None:
+            device.status = DeviceStatus.revoked.value
+            device.revoked_at = utcnow()
+            device.revoked_reason = "Conexiune Deye Cloud deconectata de utilizator."
+            db.add(device)
 
 
 def _valid_access_token(connection: DeyeCloudConnection) -> str:

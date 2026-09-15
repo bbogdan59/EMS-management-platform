@@ -5,10 +5,11 @@ are loc (autentificarea/listarea statiilor sunt monkeypatch-uite la nivelul
 functiilor de serviciu, ca in restul suitei -- vezi `test_opcom_import.py`)."""
 from __future__ import annotations
 
-from app.core.rate_limit import reset_key
+from app.core.rate_limit import RateLimitExceeded, reset_key
 from app.models.deye_integration import DeyeCloudConnection
 from app.models.enums import DeyeCloudConnectionStatus
 from app.services import deye_cloud_service as svc
+from app.web.routes import deye_integration as deye_routes
 from tests.factories import make_membership, make_org, make_station, make_user
 from tests.web_helpers import login
 
@@ -74,15 +75,24 @@ def test_organization_admin_can_connect_select_and_disconnect(client, db, monkey
     assert conn.status == DeyeCloudConnectionStatus.pending_selection.value
     assert conn.account_email == "client@example.com"
 
+    def _network_must_not_run(*args, **kwargs):
+        raise AssertionError("GET-ul paginii nu trebuie sa apeleze Deye Cloud")
+
+    monkeypatch.setattr(svc, "list_remote_stations", _network_must_not_run)
+    pending_page = client.get(f"/stations/{station.id}/integrations/deye")
+    assert pending_page.status_code == 200
+    assert b"Casa Test" in pending_page.content
+
     select_resp = client.post(
         f"/stations/{station.id}/integrations/deye/select",
-        data={"csrf_token": csrf, "remote_station_id": 322, "remote_station_name": "Casa Test"},
+        data={"csrf_token": csrf, "remote_station_id": 322, "remote_station_name": "Nume fals"},
         follow_redirects=False,
     )
     assert select_resp.status_code == 303
     db.refresh(conn)
     assert conn.status == DeyeCloudConnectionStatus.connected.value
     assert conn.remote_station_id == 322
+    assert conn.remote_station_name == "Casa Test"  # numele trimis de browser nu este folosit
     assert conn.device_id is not None
 
     page_resp = client.get(f"/stations/{station.id}/integrations/deye")
@@ -98,6 +108,34 @@ def test_organization_admin_can_connect_select_and_disconnect(client, db, monkey
     db.refresh(conn)
     assert conn.status == DeyeCloudConnectionStatus.disconnected.value
     assert conn.encrypted_access_token is None
+
+
+def test_station_selection_rejects_forged_remote_id(client, db, monkeypatch):
+    reset_key("login_attempts:testclient")
+    user = make_user(db, email="deyeforged@test.local", password="Password1234")
+    org = make_org(db, "Deye Org Forged")
+    station = make_station(db, org, user, name="Statie Deye Forged")
+    make_membership(db, user, org, role="organization_admin")
+    db.commit()
+    _stub_auth(monkeypatch, stations=[{"id": 322, "name": "Casa Test"}])
+    login(client, user.email, "Password1234")
+    csrf = client.cookies.get("ems_csrf")
+    client.post(
+        f"/stations/{station.id}/integrations/deye/connect",
+        data={"csrf_token": csrf, "email": "client@example.com", "password": "hunter2", "consent": "yes"},
+    )
+
+    response = client.post(
+        f"/stations/{station.id}/integrations/deye/select",
+        data={"csrf_token": csrf, "remote_station_id": 999},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert "error=" in response.headers["location"]
+    connection = db.query(DeyeCloudConnection).filter_by(station_id=station.id).one()
+    assert connection.status == DeyeCloudConnectionStatus.pending_selection.value
+    assert connection.device_id is None
 
 
 def test_connect_without_consent_is_rejected(client, db, monkeypatch):
@@ -119,6 +157,37 @@ def test_connect_without_consent_is_rejected(client, db, monkeypatch):
     assert resp.status_code == 303
     assert "consimtamant" in resp.headers["location"]
     assert db.query(DeyeCloudConnection).filter_by(station_id=station.id).count() == 0
+
+
+def test_connect_rate_limit_blocks_provider_call(client, db, monkeypatch):
+    reset_key("login_attempts:testclient")
+    user = make_user(db, email="deyeratelimit@test.local", password="Password1234")
+    org = make_org(db, "Deye Org Rate Limit")
+    station = make_station(db, org, user, name="Statie Deye Rate Limit")
+    make_membership(db, user, org, role="organization_admin")
+    db.commit()
+    login(client, user.email, "Password1234")
+    csrf = client.cookies.get("ems_csrf")
+
+    monkeypatch.setattr(
+        deye_routes,
+        "check_fixed_window",
+        lambda *args, **kwargs: (_ for _ in ()).throw(RateLimitExceeded(60)),
+    )
+    monkeypatch.setattr(
+        svc,
+        "authenticate",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("providerul nu trebuie apelat")),
+    )
+
+    response = client.post(
+        f"/stations/{station.id}/integrations/deye/connect",
+        data={"csrf_token": csrf, "email": "client@example.com", "password": "hunter2", "consent": "yes"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert "Prea+multe" in response.headers["location"]
 
 
 def test_connect_auth_failure_shows_generic_error_not_stack_trace(client, db, monkeypatch):

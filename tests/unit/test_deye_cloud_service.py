@@ -132,6 +132,16 @@ def test_business_error_is_not_retried():
 
 
 @respx.mock
+def test_non_json_success_response_fails_explicitly_without_retry():
+    route = respx.post(f"{BASE}/v1.0/account/token").mock(
+        return_value=httpx.Response(200, text="not-json")
+    )
+    with pytest.raises(svc.DeyeCloudApiError, match="JSON invalid"):
+        svc.authenticate("client@example.com", "hunter2")
+    assert route.call_count == 1
+
+
+@respx.mock
 def test_persistent_5xx_raises_unavailable_after_max_retries(monkeypatch):
     monkeypatch.setattr(svc.settings, "deye_cloud_max_retries", 2)  # limiteaza timpul real de asteptare al testului
     respx.post(f"{BASE}/v1.0/account/token").mock(return_value=httpx.Response(500))
@@ -348,13 +358,21 @@ def test_start_connection_creates_pending_selection(db, monkeypatch):
     assert conn.status == DeyeCloudConnectionStatus.pending_selection.value
     assert decrypt_secret(conn.encrypted_account_password) == "hunter2"
     assert stations == [{"id": 322, "name": "Casa Test"}]
+    assert conn.pending_remote_stations == [{"id": 322, "name": "Casa Test"}]
 
 
 def test_select_remote_station_creates_synthetic_device_and_links(db, monkeypatch):
     org = make_org(db, "Org Select")
     user = make_user(db, email="select@test.local")
     station = make_station(db, org, user, name="Statie Select")
-    conn = _connection(db, station, user, status=DeyeCloudConnectionStatus.pending_selection.value, device_id=None)
+    conn = _connection(
+        db,
+        station,
+        user,
+        status=DeyeCloudConnectionStatus.pending_selection.value,
+        device_id=None,
+        pending_remote_stations=[{"id": 322, "name": "Casa Test"}],
+    )
     db.flush()
 
     monkeypatch.setattr(svc, "_valid_access_token", lambda c: "token")
@@ -363,11 +381,33 @@ def test_select_remote_station_creates_synthetic_device_and_links(db, monkeypatc
         lambda token, remote_station_id: [{"deviceSn": "SN123", "deviceType": "INVERTER"}],
     )
 
-    svc.select_remote_station(db, conn, 322, "Casa Test")
+    svc.select_remote_station(db, conn, 322)
     assert conn.status == DeyeCloudConnectionStatus.connected.value
     assert conn.device_id is not None
     assert len(conn.device_links) == 1
     assert conn.device_links[0].remote_device_sn == "SN123"
+    assert conn.remote_station_name == "Casa Test"
+    assert conn.pending_remote_stations == []
+
+
+def test_select_remote_station_rejects_id_not_returned_for_account(db, monkeypatch):
+    org = make_org(db, "Org Select Reject")
+    user = make_user(db, email="select-reject@test.local")
+    station = make_station(db, org, user, name="Statie Select Reject")
+    conn = _connection(
+        db,
+        station,
+        user,
+        status=DeyeCloudConnectionStatus.pending_selection.value,
+        device_id=None,
+        pending_remote_stations=[{"id": 322, "name": "Casa Test"}],
+    )
+
+    monkeypatch.setattr(svc, "_valid_access_token", lambda c: "token")
+    with pytest.raises(svc.DeyeCloudApiError, match="nu apartine"):
+        svc.select_remote_station(db, conn, 999)
+
+    assert conn.device_id is None
 
 
 def test_disconnect_wipes_credentials_but_keeps_history(db):
@@ -388,6 +428,8 @@ def test_disconnect_wipes_credentials_but_keeps_history(db):
     assert conn.status == DeyeCloudConnectionStatus.disconnected.value
     assert conn.encrypted_access_token is None
     assert conn.encrypted_account_password == ""
+    assert cloud_device.status == "revoked"
+    assert cloud_device.revoked_at is not None
     row = db.scalar(select(TelemetryRaw).where(TelemetryRaw.device_id == cloud_device.id))
     assert row is not None  # istoricul ramane, nedistructiv
 

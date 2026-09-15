@@ -124,6 +124,7 @@ class Settings(BaseSettings):
     deye_cloud_base_url: str = "https://eu1-developer.deyecloud.com"
     deye_cloud_request_timeout_seconds: float = 20.0
     deye_cloud_max_retries: int = 3
+    deye_cloud_connect_attempts_per_hour: int = 10
     # Cat de recenta trebuie sa fie ultima telemetrie de la un dispozitiv EMS
     # local (RS485) ca sa fie considerat "activ" si sa aiba prioritate fata
     # de Deye Cloud pentru aceeasi statie -- acelasi prag ca detectia

@@ -33,8 +33,8 @@
     <div class="card">
       <h2 class="mb-2 font-medium">Conecteaza contul Deye Cloud</h2>
       <p class="mb-3 text-sm text-gray-500 dark:text-gray-400">
-        Parola contului este trimisa criptat catre Deye (hash SHA-256, conform documentatiei oficiale)
-        si stocata criptat pe platforma -- niciodata in clar, niciodata in loguri.
+        Conexiunea TLS protejeaza transportul, iar parola este transformata SHA-256 conform
+        documentatiei Deye si stocata criptat pe platforma -- niciodata in clar in baza de date sau loguri.
       </p>
       <form method="post" action="/stations/{{ station.id }}/integrations/deye/connect" class="space-y-3 max-w-md">
         <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}" />
@@ -59,16 +59,13 @@
         Contul <strong>{{ connection.account_email }}</strong> este autentificat. Alege ce statie
         din acest cont sa fie legata de <strong>{{ station.name }}</strong> -- import explicit, o singura data.
       </p>
-      {% if picker_error %}
-      <p class="badge-error rounded p-2">Nu am putut incarca lista de statii: {{ picker_error }}</p>
-      {% elif not remote_stations %}
+      {% if not remote_stations %}
       <p>Contul nu are nicio statie in Deye Cloud.</p>
       {% else %}
       {% for rs in remote_stations %}
       <form method="post" action="/stations/{{ station.id }}/integrations/deye/select" class="flex items-center justify-between border-t border-gray-100 py-2 dark:border-gray-800">
         <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}" />
         <input type="hidden" name="remote_station_id" value="{{ rs.id }}" />
-        <input type="hidden" name="remote_station_name" value="{{ rs.name or ('Statia ' ~ rs.id) }}" />
         <span>{{ rs.name or ("Statia " ~ rs.id) }} <span class="text-xs text-gray-500">(id {{ rs.id }})</span></span>
         {% if can_edit %}<button type="submit" class="btn-primary">Selecteaza</button>{% endif %}
       </form>

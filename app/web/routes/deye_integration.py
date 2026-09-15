@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import StationAccess, get_current_user
 from app.core.audit import record_audit
 from app.core.csrf import verify_csrf
+from app.core.rate_limit import RateLimitExceeded, check_fixed_window
 from app.database import get_db
 from app.models.user import User
 from app.services import deye_cloud_service
@@ -47,18 +48,13 @@ def page(
     station, role = access
     connection = deye_cloud_service.get_connection_for_station(db, station.id)
     remote_stations: list[dict] = []
-    picker_error: str | None = None
     if connection is not None and connection.status == "pending_selection":
-        try:
-            remote_stations = deye_cloud_service.list_pending_remote_stations(connection)
-        except deye_cloud_service.DeyeCloudError as exc:
-            picker_error = str(exc)
+        remote_stations = deye_cloud_service.list_pending_remote_stations(connection)
 
     context = {
         "station": station,
         "connection": connection,
         "remote_stations": remote_stations,
-        "picker_error": picker_error,
         "can_edit": role in ("organization_admin", "platform_admin"),
         **build_nav_context(db, user, station.id),
     }
@@ -77,6 +73,14 @@ def connect(
     station, _role = access
     if not consent:
         return _redirect(station.id, error="Trebuie sa confirmi consimtamantul explicit pentru import.")
+    try:
+        check_fixed_window(
+            f"deye_cloud_connect:{user.id}:{station.id}",
+            deye_cloud_service.settings.deye_cloud_connect_attempts_per_hour,
+            3600,
+        )
+    except RateLimitExceeded:
+        return _redirect(station.id, error="Prea multe incercari de conectare. Reincearca mai tarziu.")
     try:
         connection, _stations = deye_cloud_service.start_connection(db, station, user, email.strip(), password)
         db.commit()
@@ -102,7 +106,6 @@ def connect(
 @router.post("/stations/{station_id}/integrations/deye/select", dependencies=[Depends(verify_csrf)])
 def select_station(
     remote_station_id: int = Form(...),
-    remote_station_name: str = Form(""),
     db: Session = Depends(get_db),
     access=Depends(edit_access),
     user: User = Depends(get_current_user),
@@ -113,7 +116,7 @@ def select_station(
         return _redirect(station.id, error="Nicio conectare Deye Cloud in asteptare de selectie.")
 
     try:
-        deye_cloud_service.select_remote_station(db, connection, remote_station_id, remote_station_name or f"Statia {remote_station_id}")
+        deye_cloud_service.select_remote_station(db, connection, remote_station_id)
     except deye_cloud_service.DeyeCloudError:
         db.rollback()
         return _redirect(station.id, error="Nu am putut incarca statia selectata din Deye Cloud.")

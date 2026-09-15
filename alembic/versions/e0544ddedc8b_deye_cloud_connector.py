@@ -41,6 +41,7 @@ def upgrade() -> None:
         sa.Column("encrypted_account_password", sa.String(length=500), nullable=False),
         sa.Column("remote_station_id", sa.BigInteger(), nullable=True),
         sa.Column("remote_station_name", sa.String(length=200), nullable=True),
+        sa.Column("pending_remote_stations", sa.JSON(), server_default=sa.text("'[]'::json"), nullable=False),
         sa.Column("device_id", sa.Uuid(), nullable=True),
         sa.Column("consent_accepted_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("encrypted_access_token", sa.String(length=2000), nullable=True),
