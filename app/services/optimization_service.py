@@ -501,15 +501,9 @@ def _run_locked(db: Session, station_id: uuid.UUID, triggered_by: str, triggered
 
 
 def _resolve_price(tariff_version, market) -> float | None:
-    if tariff_version is None or tariff_version.economic_calculation_disabled:
-        return None
-    if tariff_version.fixed_price_lei_per_kwh is not None:
-        base = float(tariff_version.fixed_price_lei_per_kwh)
-    elif tariff_version.opcom_margin_lei_per_kwh is not None and market is not None:
-        base = float(market.price_lei_per_kwh) + float(tariff_version.opcom_margin_lei_per_kwh)
-    else:
-        return None
-    return base + float(tariff_version.variable_component_lei_per_kwh)
+    market_price = market.price_lei_per_kwh if market is not None else None
+    effective = tariff_service.compute_effective_price_lei_per_kwh(tariff_version, market_price)
+    return float(effective) if effective is not None else None
 
 
 def _solve(*, station, config, preference, horizon, interval_minutes, pv_series, load_series, price_buy, price_sell, current_soc_kwh, db):

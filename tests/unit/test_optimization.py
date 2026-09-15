@@ -3,6 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from types import SimpleNamespace
 
 from sqlalchemy import select
 
@@ -16,6 +17,7 @@ from app.models.telemetry import TelemetryAggregate, TelemetryRaw
 from app.services.optimization_service import (
     OptimizationLockedError,
     _fill_forecast_gaps,
+    _resolve_price,
     run_optimization_for_station,
 )
 from tests.factories import make_device, make_market_day, make_org, make_station, make_user
@@ -103,6 +105,36 @@ def _add_forecasts(db, station, hours=40):
         load = 0.5 if t.astimezone(UTC).hour < 6 else 1.2
         db.add(ConsumptionForecast(station_id=station.id, issued_at=issued, interval_start=t, interval_end=t + timedelta(minutes=15), source="test", base_load_kw=Decimal(str(load)), ev_component_kw=Decimal("0"), flexible_component_kw=Decimal("0"), is_cold_start=True))
     db.flush()
+
+
+def test_optimizer_price_resolution_uses_effective_tariff_components_and_vat():
+    tariff_version = TariffVersion(
+        fixed_price_lei_per_kwh=Decimal("0.50000"),
+        variable_component_lei_per_kwh=Decimal("0.10000"),
+        distribution_lei_per_kwh=Decimal("0.20000"),
+        transport_lei_per_kwh=Decimal("0.03000"),
+        other_regulated_lei_per_kwh=Decimal("0.02000"),
+        vat_rate_percent=Decimal("20.00"),
+    )
+
+    price = _resolve_price(tariff_version, market=None)
+
+    assert price == 1.02
+
+
+def test_optimizer_price_resolution_uses_indexed_tariff_even_with_negative_market_price():
+    tariff_version = TariffVersion(
+        opcom_margin_lei_per_kwh=Decimal("0.10000"),
+        variable_component_lei_per_kwh=Decimal("0.05000"),
+        distribution_lei_per_kwh=Decimal("0"),
+        transport_lei_per_kwh=Decimal("0"),
+        other_regulated_lei_per_kwh=Decimal("0"),
+    )
+    market = SimpleNamespace(price_lei_per_kwh=Decimal("-0.02000"))
+
+    price = _resolve_price(tariff_version, market)
+
+    assert price == 0.13
 
 
 def test_optimization_produces_balanced_feasible_plan(db):
