@@ -439,20 +439,41 @@ function emsInitDashboard(stationId) {
     }
   }
 
+  function updateForecastQuality(metric, points) {
+    const el = $(`forecast-${metric}-quality`);
+    if (!el) return;
+    const first = (points || []).find((point) => point.forecast_confidence || point.forecast_source || point.is_synthetic);
+    if (!first) {
+      el.hidden = true;
+      return;
+    }
+    const confidence = { nominal: "incredere nominala", low: "incredere scazuta", high: "incredere ridicata" }[first.forecast_confidence] || first.forecast_confidence || "incredere necunoscuta";
+    const source = first.forecast_source ? ` · sursa ${first.forecast_source}` : "";
+    const synthetic = first.is_synthetic ? " · date sintetice" : "";
+    el.textContent = `${confidence}${source}${synthetic}`;
+    el.hidden = false;
+  }
+
   async function loadForecastChart(metric) {
     const widget = widgetCard("chart-forecast-" + metric);
     if (!widget) return;
     wireRetry(widget, () => loadForecastChart(metric));
     try {
       const data = await fetchJson(`/stations/${stationId}/data/forecast-vs-actual?metric=${metric}&range=24h`);
-      if (!data.length) { showWidgetState(widget, "empty"); return; }
+      if (!data.length) {
+        updateForecastQuality(metric, []);
+        showWidgetState(widget, "empty");
+        return;
+      }
       showWidgetState(widget, "ok");
+      updateForecastQuality(metric, data);
       lineChart(widget.chartEl, [
         { name: "Prognoza", type: "line", showSymbol: false, data: data.map((d) => [d.t, d.forecast_kw]) },
         { name: "Realizat", type: "line", showSymbol: false, data: data.map((d) => [d.t, d.actual_kw]) },
       ], { yName: "kW" });
     } catch (e) {
       console.error(e);
+      updateForecastQuality(metric, []);
       showWidgetState(widget, "error");
     }
   }
