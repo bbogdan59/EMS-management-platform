@@ -162,3 +162,11 @@ def test_coverage_ignores_points_outside_requested_range():
     coverage = agg.compute_coverage(rows, timestamp_key="t", start=start, end=end, bucket_seconds=900)
 
     assert coverage == pytest.approx(0.5)
+
+
+def test_coverage_ignores_points_outside_requested_half_open_range():
+    start = _t(0)
+    end = datetime(2026, 1, 1, 10, 15, 0, tzinfo=UTC)
+    rows = [{"t": _t(15)}, {"t": _t(30)}]
+    coverage = agg.compute_coverage(rows, timestamp_key="t", start=start, end=end, bucket_seconds=900)
+    assert coverage == 0.0
