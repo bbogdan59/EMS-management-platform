@@ -11,6 +11,7 @@ recenta), documentata explicit ca atare in UI. Vezi docstring-ul functiei.
 """
 from __future__ import annotations
 
+import calendar
 import math
 from datetime import UTC, date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
@@ -34,6 +35,8 @@ BUCHAREST = ZoneInfo("Europe/Bucharest")
 # produce mii de puncte pentru o fereastra de un an (issue #33).
 TIMELINE_HOURLY_THRESHOLD_DAYS = 10
 TIMELINE_DAILY_THRESHOLD_DAYS = 60
+FIVE_DAY_OVERLAY_PAST_DAYS = 2
+FIVE_DAY_OVERLAY_FUTURE_DAYS = 2
 
 
 def _today_local() -> date:
@@ -122,6 +125,116 @@ def get_year_over_year_overlay(db: Session, years: list[int] | None = None, sour
             }
         )
     return by_year
+
+
+def get_five_day_overlay(
+    db: Session,
+    years: list[int] | None = None,
+    source: str = SOURCE,
+    include_synthetic: bool = False,
+    today: date | None = None,
+) -> dict:
+    """Returneaza fereastra PZU azi +/- doua zile, suprapusa pe ani.
+
+    Punctele raman la rezolutia existenta in baza de date pentru fiecare an:
+    anul curent poate avea 15 minute, iar istoric mai vechi poate ramane orar
+    daca asa a fost importat. `aligned_t` muta anii anteriori pe calendarul
+    anului curent pentru grafic; `t` ramane instantul real stocat.
+    """
+    today_local = today or _today_local()
+    current_year = today_local.year
+    window_dates = [
+        today_local + timedelta(days=offset)
+        for offset in range(-FIVE_DAY_OVERLAY_PAST_DAYS, FIVE_DAY_OVERLAY_FUTURE_DAYS + 1)
+    ]
+    requested_years = years or get_available_years(db, source=source)
+    selected_years = sorted({year for year in requested_years if year <= current_year})
+    if current_year not in selected_years:
+        selected_years.append(current_year)
+    selected_years = sorted(selected_years)
+
+    request_entries: list[tuple[int, date, date]] = []
+    for year in selected_years:
+        for current_date in window_dates:
+            source_date = current_date if year == current_year else _replace_year_or_none(current_date, year)
+            if source_date is None:
+                continue
+            request_entries.append((year, source_date, current_date))
+
+    all_dates = sorted({source_date for _, source_date, _ in request_entries})
+    if not all_dates:
+        return _empty_five_day_overlay_payload(today_local, current_year)
+
+    stmt = (
+        select(MarketPriceInterval, ImportRun.is_synthetic_fixture)
+        .join(ImportRun, ImportRun.id == MarketPriceInterval.import_run_id)
+        .where(
+            MarketPriceInterval.source == source,
+            MarketPriceInterval.is_current.is_(True),
+            MarketPriceInterval.delivery_date.in_(all_dates),
+        )
+        .order_by(MarketPriceInterval.delivery_date, MarketPriceInterval.interval_start)
+    )
+    if not include_synthetic:
+        stmt = stmt.where(ImportRun.is_synthetic_fixture.is_(False))
+
+    now = utcnow()
+    rows_by_date: dict[date, list[tuple[MarketPriceInterval, bool]]] = {}
+    for interval, is_synthetic in db.execute(stmt).all():
+        rows_by_date.setdefault(interval.delivery_date, []).append((interval, bool(is_synthetic)))
+
+    series: dict[int, list[dict]] = {year: [] for year in selected_years}
+    for year, source_date, aligned_date in request_entries:
+        for interval, is_synthetic in rows_by_date.get(source_date, []):
+            local_start = interval.interval_start.astimezone(BUCHAREST)
+            aligned_start = datetime.combine(aligned_date, local_start.time(), tzinfo=BUCHAREST).astimezone(UTC)
+            series[year].append(
+                {
+                    "t": interval.interval_start.isoformat(),
+                    "aligned_t": aligned_start.isoformat(),
+                    "delivery_date": interval.delivery_date.isoformat(),
+                    "price_lei_mwh": float(interval.price_lei_per_mwh),
+                    "price_lei_kwh": float(interval.price_lei_per_kwh),
+                    "is_negative": interval.is_negative,
+                    "is_future": interval.interval_start > now,
+                    "is_synthetic": is_synthetic,
+                }
+            )
+
+    series = {year: points for year, points in series.items() if points}
+    return {
+        "current_year": current_year,
+        "timezone": str(BUCHAREST),
+        "window": {
+            "start_date": window_dates[0].isoformat(),
+            "end_date": window_dates[-1].isoformat(),
+            "days_before": FIVE_DAY_OVERLAY_PAST_DAYS,
+            "days_after": FIVE_DAY_OVERLAY_FUTURE_DAYS,
+        },
+        "series": series,
+    }
+
+
+def _empty_five_day_overlay_payload(today_local: date, current_year: int) -> dict:
+    start_date = today_local - timedelta(days=FIVE_DAY_OVERLAY_PAST_DAYS)
+    end_date = today_local + timedelta(days=FIVE_DAY_OVERLAY_FUTURE_DAYS)
+    return {
+        "current_year": current_year,
+        "timezone": str(BUCHAREST),
+        "window": {
+            "start_date": start_date.isoformat(),
+            "end_date": end_date.isoformat(),
+            "days_before": FIVE_DAY_OVERLAY_PAST_DAYS,
+            "days_after": FIVE_DAY_OVERLAY_FUTURE_DAYS,
+        },
+        "series": {},
+    }
+
+
+def _replace_year_or_none(d: date, year: int) -> date | None:
+    if d.month == 2 and d.day == 29 and not calendar.isleap(year):
+        return None
+    return d.replace(year=year)
 
 
 def get_monthly_averages(db: Session, years: list[int] | None = None, source: str = SOURCE) -> dict[int, list[dict]]:
