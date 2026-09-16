@@ -14,6 +14,7 @@ from __future__ import annotations
 import calendar
 import math
 from datetime import UTC, date, datetime, time, timedelta
+from decimal import Decimal
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import func, select
@@ -266,7 +267,7 @@ def get_timeline_split(
     cum a fost publicata fiecare zi -- vezi `opcom_service.parse_csv`).
     Fereastra intre acest prag si `TIMELINE_DAILY_THRESHOLD_DAYS` zile (asta
     include fereastra implicita de 30 de zile din UI, neschimbata) e agregata
-    pe ORA (medie). Peste
+    pe ORA (medie + OHLC). Peste
     `TIMELINE_DAILY_THRESHOLD_DAYS` zile (ex. un an intreg de istoric),
     agregarea trece pe ZI, ca numarul de puncte sa ramana in sute, nu mii.
 
@@ -292,11 +293,11 @@ def describe_timeline_split(start: datetime, end: datetime, points: list[dict]) 
     if window > timedelta(days=TIMELINE_DAILY_THRESHOLD_DAYS):
         resolution = "1d"
         expected = max(1, (end.astimezone(BUCHAREST).date() - start.astimezone(BUCHAREST).date()).days)
-        aggregation = {"price_lei_mwh": "mean", "price_lei_kwh": "mean"}
+        aggregation = {"price_lei_mwh": "mean", "price_lei_kwh": "mean", "ohlc_lei_mwh": "open_close_min_max"}
     elif window > timedelta(days=TIMELINE_HOURLY_THRESHOLD_DAYS):
         resolution = "1h"
         expected = max(1, math.ceil(window.total_seconds() / 3600))
-        aggregation = {"price_lei_mwh": "mean", "price_lei_kwh": "mean"}
+        aggregation = {"price_lei_mwh": "mean", "price_lei_kwh": "mean", "ohlc_lei_mwh": "open_close_min_max"}
     else:
         resolution = "raw"
         expected = None
@@ -334,6 +335,11 @@ def _get_timeline_raw(
             "t": r.interval_start.isoformat(),
             "price_lei_mwh": float(r.price_lei_per_mwh),
             "price_lei_kwh": float(r.price_lei_per_kwh),
+            "open_price_lei_mwh": float(r.price_lei_per_mwh),
+            "close_price_lei_mwh": float(r.price_lei_per_mwh),
+            "min_price_lei_mwh": float(r.price_lei_per_mwh),
+            "max_price_lei_mwh": float(r.price_lei_per_mwh),
+            "sample_count": 1,
             "is_negative": r.is_negative,
             "is_future": r.interval_start > now,
             "is_synthetic": bool(is_synthetic),
@@ -345,30 +351,21 @@ def _get_timeline_raw(
 def _get_timeline_aggregated(
     db: Session, start: datetime, end: datetime, source: str, include_synthetic: bool, trunc_unit: str
 ) -> list[dict]:
-    """Agregare pe bucket-uri de `trunc_unit` ('hour' sau 'day'), o singura
-    interogare (AVG/BOOL_OR), impartita intre `_get_timeline_hourly` si
-    `_get_timeline_daily` -- vezi `get_timeline_split` pentru pragurile care
-    aleg intre ele."""
+    """Agregare pe bucket-uri de `trunc_unit` ('hour' sau 'day').
+
+    Candlestick-ul are nevoie de prima/ultima valoare din bucket, deci pastram
+    ordinea randurilor si agregam in Python, fara sa fabricam extreme din
+    medii SQL.
+    """
     now = utcnow()
-    if trunc_unit == "day":
-        # OPCOM delivery days follow the Europe/Bucharest market calendar.
-        # Grouping a timestamptz with date_trunc("day") would depend on the
-        # PostgreSQL session timezone and can split one delivery day across
-        # two UTC dates. delivery_date is the canonical market-day key.
-        bucket = MarketPriceInterval.delivery_date
-    elif trunc_unit == "hour":
-        # Hourly buckets are absolute UTC intervals, made independent of the
-        # database session timezone (including DST transition days).
-        bucket = func.date_trunc("hour", func.timezone("UTC", MarketPriceInterval.interval_start))
-    else:
-        raise ValueError(f"Unsupported timeline aggregation unit: {trunc_unit}")
     stmt = (
         select(
-            bucket.label("bucket_start"),
-            func.avg(MarketPriceInterval.price_lei_per_mwh).label("avg_mwh"),
-            func.avg(MarketPriceInterval.price_lei_per_kwh).label("avg_kwh"),
-            func.bool_or(MarketPriceInterval.is_negative).label("has_negative"),
-            func.bool_or(ImportRun.is_synthetic_fixture).label("has_synthetic"),
+            MarketPriceInterval.delivery_date,
+            MarketPriceInterval.interval_start,
+            MarketPriceInterval.price_lei_per_mwh,
+            MarketPriceInterval.price_lei_per_kwh,
+            MarketPriceInterval.is_negative,
+            ImportRun.is_synthetic_fixture,
         )
         .join(ImportRun, ImportRun.id == MarketPriceInterval.import_run_id)
         .where(
@@ -377,31 +374,67 @@ def _get_timeline_aggregated(
             MarketPriceInterval.interval_start >= start,
             MarketPriceInterval.interval_start < end,
         )
-        .group_by(bucket)
-        .order_by(bucket)
+        .order_by(MarketPriceInterval.delivery_date, MarketPriceInterval.interval_start)
     )
     if not include_synthetic:
         stmt = stmt.where(ImportRun.is_synthetic_fixture.is_(False))
-    rows = db.execute(stmt).all()
+    buckets: dict[date | datetime, dict] = {}
+    for row in db.execute(stmt).all():
+        bucket_key, bucket_start = _timeline_bucket(row.delivery_date, row.interval_start, trunc_unit)
+        bucket = buckets.setdefault(
+            bucket_key,
+            {
+                "bucket_start": bucket_start,
+                "open_mwh": row.price_lei_per_mwh,
+                "close_mwh": row.price_lei_per_mwh,
+                "min_mwh": row.price_lei_per_mwh,
+                "max_mwh": row.price_lei_per_mwh,
+                "sum_mwh": Decimal("0"),
+                "sum_kwh": Decimal("0"),
+                "count": 0,
+                "has_negative": False,
+                "has_synthetic": False,
+            },
+        )
+        bucket["close_mwh"] = row.price_lei_per_mwh
+        bucket["min_mwh"] = min(bucket["min_mwh"], row.price_lei_per_mwh)
+        bucket["max_mwh"] = max(bucket["max_mwh"], row.price_lei_per_mwh)
+        bucket["sum_mwh"] += row.price_lei_per_mwh
+        bucket["sum_kwh"] += row.price_lei_per_kwh
+        bucket["count"] += 1
+        bucket["has_negative"] = bucket["has_negative"] or row.is_negative
+        bucket["has_synthetic"] = bucket["has_synthetic"] or row.is_synthetic_fixture
+
     result = []
-    for row in rows:
-        if isinstance(row.bucket_start, datetime):
-            bucket_start = row.bucket_start
-            if bucket_start.tzinfo is None:
-                bucket_start = bucket_start.replace(tzinfo=UTC)
-        else:
-            bucket_start = datetime.combine(row.bucket_start, time.min, tzinfo=BUCHAREST).astimezone(UTC)
+    for bucket in buckets.values():
+        bucket_start = bucket["bucket_start"]
+        count = bucket["count"]
         result.append(
             {
                 "t": bucket_start.isoformat(),
-                "price_lei_mwh": float(row.avg_mwh),
-                "price_lei_kwh": float(row.avg_kwh),
-                "is_negative": bool(row.has_negative),
+                "price_lei_mwh": float(bucket["sum_mwh"] / count),
+                "price_lei_kwh": float(bucket["sum_kwh"] / count),
+                "open_price_lei_mwh": float(bucket["open_mwh"]),
+                "close_price_lei_mwh": float(bucket["close_mwh"]),
+                "min_price_lei_mwh": float(bucket["min_mwh"]),
+                "max_price_lei_mwh": float(bucket["max_mwh"]),
+                "sample_count": count,
+                "is_negative": bool(bucket["has_negative"]),
                 "is_future": bucket_start > now,
-                "is_synthetic": bool(row.has_synthetic),
+                "is_synthetic": bool(bucket["has_synthetic"]),
             }
         )
     return result
+
+
+def _timeline_bucket(delivery_date: date, interval_start: datetime, trunc_unit: str) -> tuple[date | datetime, datetime]:
+    if trunc_unit == "day":
+        bucket_start = datetime.combine(delivery_date, time.min, tzinfo=BUCHAREST).astimezone(UTC)
+        return delivery_date, bucket_start
+    if trunc_unit == "hour":
+        bucket_start = interval_start.astimezone(UTC).replace(minute=0, second=0, microsecond=0)
+        return bucket_start, bucket_start
+    raise ValueError(f"Unsupported timeline aggregation unit: {trunc_unit}")
 
 
 def _get_timeline_hourly(
