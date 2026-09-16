@@ -84,6 +84,9 @@ def test_tariffs_page_shows_invoice_preview_for_fixed_tariff(client, db):
     assert resp.status_code == 200
     assert "Exemplu pentru" in resp.text
     assert "total" in resp.text
+    assert "Preview factura-exemplu inainte de salvare" in resp.text
+    assert "Import fix: pret din contract + componente" in resp.text
+    assert "Custom: formula neimplementata, calcul dezactivat" in resp.text
 
 
 def test_tariffs_page_shows_reason_when_preview_unavailable_for_indexed_without_price(client, db):
