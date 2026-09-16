@@ -167,5 +167,10 @@ def test_price_and_benefit_kpi_cards_have_calculation_disclosure(client, db):
     assert page.text.count("Cum se calculeaza?") >= 6
     assert "Astazi" in page.text
     assert "Luna curenta" in page.text
+    assert "Pe scurt, ce se intampla acum" in page.text
+    assert "Flux energetic actual" in page.text
+    assert "Produce acum" in page.text
+    assert "Consuma acum" in page.text
+    assert "Analiza avansata: preturi, planuri si prognoze" in page.text
     assert "nu este inlocuita cu zero" in page.text
     assert f"/stations/{station.id}/tariffs" in page.text

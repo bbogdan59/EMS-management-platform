@@ -18,11 +18,13 @@ def test_energy_kpi_value_keeps_zero_distinct_from_missing():
         "value": 0.0,
         "coverage": 1.0,
         "quality": "measured",
+        "comparison": None,
     }
     assert _energy_kpi_value(row, "load_energy_kwh", "load") == {
         "value": None,
         "coverage": 0.0,
         "quality": "missing",
+        "comparison": None,
     }
 
 
@@ -37,4 +39,28 @@ def test_energy_kpi_value_marks_partial_coverage_without_dropping_value():
         "value": 12.5,
         "coverage": 0.5,
         "quality": "partial",
+        "comparison": None,
     }
+
+
+def test_energy_kpi_value_adds_context_only_with_comparable_coverage():
+    row = SimpleNamespace(
+        pv_energy_kwh=Decimal("15.0000"),
+        coverage={"pv": 1.0},
+        data_quality="measured",
+    )
+    previous = SimpleNamespace(
+        pv_energy_kwh=Decimal("10.0000"),
+        coverage={"pv": 1.0},
+        data_quality="measured",
+    )
+
+    assert _energy_kpi_value(row, "pv_energy_kwh", "pv", previous)["comparison"] == {
+        "previous_value": 10.0,
+        "delta": 5.0,
+        "delta_percent": 50.0,
+        "quality": "measured",
+    }
+
+    previous.coverage = {"pv": 0.2}
+    assert _energy_kpi_value(row, "pv_energy_kwh", "pv", previous)["comparison"] is None

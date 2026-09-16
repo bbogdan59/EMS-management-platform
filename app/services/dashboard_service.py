@@ -557,15 +557,48 @@ def _period_start_utc(station: Station, period: str, now: datetime) -> datetime:
     return start_local.astimezone(UTC)
 
 
-def _energy_kpi_value(row: TelemetryAggregate | None, field: str, coverage_key: str) -> dict:
+def _previous_period_start_utc(station: Station, period: str, now: datetime) -> datetime:
+    tz = _station_tz(station)
+    local_now = now.astimezone(tz)
+    if period == "today":
+        current = datetime(local_now.year, local_now.month, local_now.day, tzinfo=tz)
+        return (current - timedelta(days=1)).astimezone(UTC)
+    if period == "month":
+        year = local_now.year
+        month = local_now.month - 1
+        if month == 0:
+            year -= 1
+            month = 12
+        return datetime(year, month, 1, tzinfo=tz).astimezone(UTC)
+    raise ValueError(f"Unsupported dashboard KPI period: {period}")
+
+
+def _energy_kpi_value(
+    row: TelemetryAggregate | None,
+    field: str,
+    coverage_key: str,
+    previous_row: TelemetryAggregate | None = None,
+) -> dict:
     if row is None:
-        return {"value": None, "coverage": 0.0, "quality": "missing"}
+        return {"value": None, "coverage": 0.0, "quality": "missing", "comparison": None}
     value = getattr(row, field)
     coverage = float((row.coverage or {}).get(coverage_key, 0) or 0)
     if value is None:
-        return {"value": None, "coverage": coverage, "quality": "missing"}
+        return {"value": None, "coverage": coverage, "quality": "missing", "comparison": None}
     quality = "partial" if coverage < ENERGY_KPI_COVERAGE_PARTIAL_BELOW else row.data_quality
-    return {"value": float(value), "coverage": round(coverage, 4), "quality": quality}
+    comparison = None
+    if coverage >= ENERGY_KPI_COVERAGE_PARTIAL_BELOW and previous_row is not None:
+        previous_value = getattr(previous_row, field)
+        previous_coverage = float((previous_row.coverage or {}).get(coverage_key, 0) or 0)
+        if previous_value is not None and previous_coverage >= ENERGY_KPI_COVERAGE_PARTIAL_BELOW:
+            delta = value - previous_value
+            comparison = {
+                "previous_value": float(previous_value),
+                "delta": float(delta),
+                "delta_percent": float((delta / previous_value) * Decimal("100")) if previous_value != 0 else None,
+                "quality": previous_row.data_quality,
+            }
+    return {"value": float(value), "coverage": round(coverage, 4), "quality": quality, "comparison": comparison}
 
 
 def get_energy_period_kpis(db: Session, station: Station) -> dict:
@@ -590,6 +623,20 @@ def get_energy_period_kpis(db: Session, station: Station) -> dict:
         )
         for name, (period_type, period_start) in periods.items()
     }
+    previous_starts = {
+        "today": _previous_period_start_utc(station, "today", now),
+        "month": _previous_period_start_utc(station, "month", now),
+    }
+    previous_rows = {
+        name: db.scalar(
+            select(TelemetryAggregate).where(
+                TelemetryAggregate.station_id == station.id,
+                TelemetryAggregate.period_type == period_type,
+                TelemetryAggregate.period_start == previous_starts[name],
+            )
+        )
+        for name, (period_type, _period_start) in periods.items()
+    }
     metric_fields = {
         "pv": ("pv_energy_kwh", "pv"),
         "load": ("load_energy_kwh", "load"),
@@ -602,8 +649,9 @@ def get_energy_period_kpis(db: Session, station: Station) -> dict:
         name: {
             "period_start": period_start.isoformat(),
             "period_type": period_type,
+            "comparison_label": "ieri" if name == "today" else "luna anterioara",
             "metrics": {
-                metric: _energy_kpi_value(rows[name], field, coverage_key)
+                metric: _energy_kpi_value(rows[name], field, coverage_key, previous_rows[name])
                 for metric, (field, coverage_key) in metric_fields.items()
             },
         }

@@ -122,7 +122,7 @@ def test_energy_kpi_route_keeps_missing_separate_from_zero(client, db):
 
     assert resp.status_code == 200
     today = resp.json()["today"]["metrics"]
-    assert today["pv"] == {"value": 0.0, "coverage": 1.0, "quality": "measured"}
+    assert today["pv"] == {"value": 0.0, "coverage": 1.0, "quality": "measured", "comparison": None}
     assert today["load"]["value"] is None
     assert today["load"]["quality"] == "missing"
     assert today["grid_import"]["value"] == 2.5
@@ -149,8 +149,8 @@ def test_energy_kpi_route_marks_partial_coverage(client, db):
 
     assert resp.status_code == 200
     month = resp.json()["month"]["metrics"]
-    assert month["pv"] == {"value": 12.5, "coverage": 0.5, "quality": "partial"}
-    assert month["load"] == {"value": 20.0, "coverage": 1.0, "quality": "measured"}
+    assert month["pv"] == {"value": 12.5, "coverage": 0.5, "quality": "partial", "comparison": None}
+    assert month["load"] == {"value": 20.0, "coverage": 1.0, "quality": "measured", "comparison": None}
 
 
 def test_dashboard_chart_widgets_have_isolated_retry_errors(client, db):
