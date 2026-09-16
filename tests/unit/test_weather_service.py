@@ -25,6 +25,14 @@ class _MemoryRedis:
         self.ttls[key] = ttl
         self.values[key] = value
 
+    def incr(self, key: str) -> int:
+        value = int(self.values.get(key, "0")) + 1
+        self.values[key] = str(value)
+        return value
+
+    def expire(self, key: str, ttl: int) -> None:
+        self.ttls[key] = ttl
+
 
 class _Response:
     def __init__(self, payload: dict, error: httpx.HTTPError | None = None) -> None:
@@ -141,6 +149,7 @@ def test_fetch_forecast_raw_delegates_to_named_provider(monkeypatch):
     assert provider.requests[0].longitude == 25.0
     assert provider.requests[0].max_retries == weather_service.settings.weather_max_retries
     assert provider.requests[0].retry_backoff_seconds == weather_service.settings.weather_retry_backoff_seconds
+    assert provider.requests[0].rate_limit_per_minute == weather_service.settings.weather_rate_limit_per_minute
 
 
 def test_unknown_weather_provider_fails_without_silent_fallback():
@@ -200,6 +209,43 @@ def test_open_meteo_provider_retries_before_failing_and_caches_success(monkeypat
     assert provider.fetch_raw(request) == payload
     assert len(calls) == 2
     assert sleeps == [0.1]
+
+
+def test_open_meteo_provider_rate_limits_uncached_provider_calls(monkeypatch):
+    redis = _MemoryRedis()
+    calls: list[dict] = []
+    payload = {"hourly": {"time": ["2026-01-01T00:00"]}, "generationtime_ms": 1.1}
+
+    monkeypatch.setattr(weather_service, "get_redis", lambda: redis)
+    monkeypatch.setattr(weather_service.httpx, "Client", lambda timeout: _FakeClient(calls, payload))
+
+    provider = OpenMeteoWeatherProvider()
+    request = WeatherProviderRequest(
+        latitude=44.0,
+        longitude=26.0,
+        base_url="https://weather.example.test/forecast",
+        timeout_seconds=7,
+        cache_ttl_minutes=15,
+        rate_limit_per_minute=1,
+    )
+
+    assert provider.fetch_raw(request) == payload
+    with pytest.raises(WeatherUnavailableError, match="Limita locala de apeluri meteo"):
+        provider.fetch_raw(
+            WeatherProviderRequest(
+                latitude=45.0,
+                longitude=25.0,
+                base_url=request.base_url,
+                timeout_seconds=request.timeout_seconds,
+                cache_ttl_minutes=request.cache_ttl_minutes,
+                rate_limit_per_minute=request.rate_limit_per_minute,
+            )
+        )
+
+    assert len(calls) == 1
+    rate_keys = [key for key in redis.ttls if key.startswith("weather_rate:open-meteo:")]
+    assert len(rate_keys) == 1
+    assert redis.ttls[rate_keys[0]] == 90
 
 
 def test_store_weather_forecast_preserves_precipitation_and_unknowns():

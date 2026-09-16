@@ -81,7 +81,7 @@ def _add_raw(db, station, device, measured_at, *, pv=None, load=None, battery=No
     db.flush()
 
 
-def _add_chart_aggregate(db, station, period_type, start, end, *, pv_kwh, soc=50):
+def _add_chart_aggregate(db, station, period_type, start, end, *, pv_kwh, soc=50, data_quality="measured"):
     db.add(
         TelemetryAggregate(
             station_id=station.id,
@@ -96,7 +96,7 @@ def _add_chart_aggregate(db, station, period_type, start, end, *, pv_kwh, soc=50
             grid_export_energy_kwh=Decimal("0"),
             avg_battery_soc_percent=Decimal(str(soc)),
             sample_count=1,
-            data_quality="measured",
+            data_quality=data_quality,
             coverage={"pv": 1.0, "load": 1.0, "battery": 1.0, "grid": 1.0, "soc": 1.0},
         )
     )
@@ -194,6 +194,33 @@ def test_timeseries_chart_missing_data_is_not_a_zero_filled_series(db):
 
     assert result["points"] == []
     assert result["coverage"] == 0.0
+
+
+def test_timeseries_chart_exposes_bucket_quality_for_raw_telemetry(db):
+    station = _station(db, "ts-quality-raw")
+    device = make_device(db, station)
+    t0 = utcnow().replace(minute=0, second=0, microsecond=0) - timedelta(hours=1)
+    _add_raw(db, station, device, t0, pv=1.0, sequence=1, is_simulated=True)
+    _add_raw(db, station, device, t0 + timedelta(minutes=15), pv=2.0, sequence=2, is_late=True)
+    db.commit()
+
+    result = dashboard.get_timeseries_chart(db, station, t0, t0 + timedelta(minutes=30), "24h")
+
+    assert [point["data_quality"] for point in result["points"]] == ["simulated", "stale"]
+
+
+def test_timeseries_chart_exposes_bucket_quality_for_persisted_rollups(db):
+    station = _station(db, "ts-quality-rollup")
+    t0 = utcnow().replace(minute=0, second=0, microsecond=0) - timedelta(days=5)
+    _add_chart_aggregate(db, station, "interval_15m", t0, t0 + timedelta(minutes=15), pv_kwh=1, data_quality="estimated")
+    _add_chart_aggregate(
+        db, station, "interval_15m", t0 + timedelta(minutes=15), t0 + timedelta(minutes=30), pv_kwh=1, data_quality="simulated"
+    )
+    db.commit()
+
+    result = dashboard.get_timeseries_chart(db, station, t0, t0 + timedelta(minutes=30), "7d")
+
+    assert result["points"][0]["data_quality"] == "simulated"
 
 
 def test_timeseries_raw_export_still_returns_flat_list_unaggregated(db):
@@ -533,6 +560,60 @@ def test_forecast_vs_actual_picks_most_recent_valid_as_of_forecast(db):
     assert out[0]["forecast_source"] == "test"
     assert out[0]["forecast_source_version"] == "pv-test-v2"
     assert out[0]["forecast_issued_at"] == (t - timedelta(hours=1)).isoformat()
+
+
+def test_forecast_vs_actual_averages_actual_over_forecast_interval(db):
+    station = _station(db, "actual-hourly")
+    t = utcnow().replace(minute=0, second=0, microsecond=0) - timedelta(days=5)
+
+    db.add(PvForecast(
+        station_id=station.id, issued_at=t - timedelta(hours=1), interval_start=t, interval_end=t + timedelta(hours=1),
+        source="test", predicted_power_kw=Decimal("2.0"), scenario="expected",
+    ))
+    for offset, pv_kwh in enumerate(("1.0000", "0.0000", "0.0000", "0.0000")):
+        start = t + timedelta(minutes=15 * offset)
+        db.add(
+            TelemetryAggregate(
+                station_id=station.id,
+                period_type="interval_15m",
+                period_start=start,
+                period_end=start + timedelta(minutes=15),
+                pv_energy_kwh=Decimal(pv_kwh),
+                coverage={"pv": 1.0},
+            )
+        )
+    db.commit()
+
+    out = dashboard.get_forecast_vs_actual(db, station, "pv", t - timedelta(hours=1), t + timedelta(hours=1))
+
+    assert len(out) == 1
+    assert abs(out[0]["actual_kw"] - 1.0) < 0.001
+
+
+def test_forecast_vs_actual_keeps_actual_null_when_forecast_interval_coverage_is_low(db):
+    station = _station(db, "actual-missing")
+    t = utcnow().replace(minute=0, second=0, microsecond=0) - timedelta(days=5)
+
+    db.add(PvForecast(
+        station_id=station.id, issued_at=t - timedelta(hours=1), interval_start=t, interval_end=t + timedelta(hours=1),
+        source="test", predicted_power_kw=Decimal("2.0"), scenario="expected",
+    ))
+    db.add(
+        TelemetryAggregate(
+            station_id=station.id,
+            period_type="interval_15m",
+            period_start=t,
+            period_end=t + timedelta(minutes=15),
+            pv_energy_kwh=Decimal("1.0000"),
+            coverage={"pv": 1.0},
+        )
+    )
+    db.commit()
+
+    out = dashboard.get_forecast_vs_actual(db, station, "pv", t - timedelta(hours=1), t + timedelta(hours=1))
+
+    assert len(out) == 1
+    assert out[0]["actual_kw"] is None
 
 
 def test_forecast_vs_actual_load_metric_uses_consumption_forecast(db):

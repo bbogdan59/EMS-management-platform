@@ -16,6 +16,9 @@ from app.models.tariff import (
     TariffVersion,
 )
 
+DEFAULT_SETTLEMENT_METHOD = "net_metering_15min"
+SUPPORTED_SETTLEMENT_METHODS = frozenset({DEFAULT_SETTLEMENT_METHOD})
+
 
 def validate_tariff_kind(kind: str) -> None:
     """Blocheaza explicit un `kind` necunoscut (issue #46: tip de contract
@@ -138,6 +141,28 @@ def _validate_version_components(
         raise ValueError("settlement_interval_days: trebuie sa fie un numar pozitiv de zile.")
 
 
+def _validate_settlement_method(
+    settlement_method: str,
+    *,
+    economic_calculation_disabled: bool,
+    limitation_note: str | None,
+) -> None:
+    if economic_calculation_disabled and not (limitation_note or "").strip():
+        raise ValueError(
+            "limitation_note: obligatorie cand calculul economic este dezactivat; "
+            "documenteaza formula contractuala nesuportata sau limita cunoscuta."
+        )
+    if settlement_method not in SUPPORTED_SETTLEMENT_METHODS and not economic_calculation_disabled:
+        raise ValueError(
+            "settlement_method: metoda de decontare nu are formula economica implementata; "
+            "dezactiveaza calculul economic si adauga o nota de limitare in loc de un calcul tacit."
+        )
+
+
+def _settlement_method_or_default(tariff_version: TariffVersion) -> str:
+    return tariff_version.settlement_method or DEFAULT_SETTLEMENT_METHOD
+
+
 def add_tariff_version(
     db: Session,
     tariff: Tariff,
@@ -172,6 +197,11 @@ def add_tariff_version(
         other_regulated_lei_per_kwh=other_regulated_lei_per_kwh,
         vat_rate_percent=vat_rate_percent,
         settlement_interval_days=settlement_interval_days,
+    )
+    _validate_settlement_method(
+        settlement_method,
+        economic_calculation_disabled=economic_calculation_disabled,
+        limitation_note=limitation_note,
     )
 
     open_version = db.scalar(
@@ -245,7 +275,11 @@ def compute_effective_price_lei_per_kwh(
         tacit un alt pret.
       - `economic_calculation_disabled=True`: `None` necondiTionat (formula
         contractuala reala nu e implementata -- vezi `limitation_note`)."""
-    if tariff_version is None or tariff_version.economic_calculation_disabled:
+    if (
+        tariff_version is None
+        or tariff_version.economic_calculation_disabled
+        or _settlement_method_or_default(tariff_version) not in SUPPORTED_SETTLEMENT_METHODS
+    ):
         return None
     if tariff_version.fixed_price_lei_per_kwh is not None:
         energy = tariff_version.fixed_price_lei_per_kwh
@@ -280,6 +314,8 @@ def build_invoice_preview(
         reason = (
             "Calcul economic dezactivat pentru aceasta versiune."
             if tariff_version.economic_calculation_disabled
+            else "Metoda de decontare nu are formula economica implementata."
+            if _settlement_method_or_default(tariff_version) not in SUPPORTED_SETTLEMENT_METHODS
             else "Necesita un pret OPCOM de referinta (tarif indexat, dar niciun pret disponibil)."
         )
         return {"available": False, "reason": reason}

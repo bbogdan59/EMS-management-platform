@@ -33,7 +33,7 @@ from zoneinfo import ZoneInfo
 
 import httpx
 import structlog
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 from tenacity import Retrying, retry_if_exception_type, stop_after_attempt, wait_exponential
 
@@ -355,8 +355,20 @@ def _find_successful_import_by_hash(
     )
 
 
+def _lock_import_day(db: Session, source: str, delivery_date: date) -> None:
+    """Serializeaza importurile aceleiasi zile/surse in tranzactia curenta.
+
+    Fara acest lock, doua importuri manuale concurente pot citi acelasi
+    `existing_max`, pot incerca aceeasi revizie si pot ajunge la o coliziune
+    bruta de constrangere unica sau la doua seturi concurente de intervale
+    marcate curente.
+    """
+    db.execute(select(func.pg_advisory_xact_lock(func.hashtextextended(f"opcom-import:{source}:{delivery_date.isoformat()}", 0))))
+
+
 def import_opcom_day(db: Session, delivery_date: date, triggered_by_user_id=None) -> ImportRun:
     source = "opcom_pzu"
+    _lock_import_day(db, source, delivery_date)
     existing_max = db.scalar(
         select(ImportRun.revision)
         .where(ImportRun.source == source, ImportRun.delivery_date == delivery_date)
