@@ -63,28 +63,32 @@ function emsInitDashboard(stationId, initialSummary = null) {
     return v === null || v === undefined ? "-" : Number(v).toFixed(digits);
   }
 
+  function hasValue(v) {
+    return v !== null && v !== undefined;
+  }
+
   // Fiecare functie actualizeaza un SINGUR widget KPI, din starea live
   // completa (`s` = `liveMetrics`, mereu la zi). Extrase din fostul `setKpis`
   // monolitic (issue #50, addendum) ca sa poata fi apelate INDIVIDUAL la un
   // `delta` -- un update de `pv_power_kw` nu mai atinge DOM-ul celorlalte 10
   // widget-uri KPI neschimbate. `setKpis` (mai jos) ramane folosit doar la
   // `snapshot`/`replace`, cand chiar toate au nevoie de randare.
-  function updatePvKpi(s) { $("kpi-pv").textContent = s.pv_power_kw !== null ? fmt(s.pv_power_kw) + " kW" : "-"; }
-  function updateLoadKpi(s) { $("kpi-load").textContent = s.load_power_kw !== null ? fmt(s.load_power_kw) + " kW" : "-"; }
+  function updatePvKpi(s) { $("kpi-pv").textContent = hasValue(s.pv_power_kw) ? fmt(s.pv_power_kw) + " kW" : "fara date"; }
+  function updateLoadKpi(s) { $("kpi-load").textContent = hasValue(s.load_power_kw) ? fmt(s.load_power_kw) + " kW" : "fara date"; }
   function updateGridKpi(s) {
     const grid = s.grid_power_kw;
-    $("kpi-grid").textContent = grid === null || grid === undefined ? "-" : (grid >= 0 ? "Import " : "Export ") + fmt(Math.abs(grid)) + " kW";
+    $("kpi-grid").textContent = !hasValue(grid) ? "fara date" : (grid >= 0 ? "Import " : "Export ") + fmt(Math.abs(grid)) + " kW";
   }
-  function updateSocKpi(s) { $("kpi-soc").textContent = s.battery_soc_percent !== null ? fmt(s.battery_soc_percent, 1) + " %" : "-"; }
+  function updateSocKpi(s) { $("kpi-soc").textContent = hasValue(s.battery_soc_percent) ? fmt(s.battery_soc_percent, 1) + " %" : "fara date"; }
   function updateBatteryKpi(s) {
     const batt = s.battery_power_kw;
-    $("kpi-battery").textContent = batt === null || batt === undefined ? "-" : (batt >= 0 ? "Incarcare " : "Descarcare ") + fmt(Math.abs(batt)) + " kW";
+    $("kpi-battery").textContent = !hasValue(batt) ? "fara date" : (batt >= 0 ? "Incarcare " : "Descarcare ") + fmt(Math.abs(batt)) + " kW";
   }
   function updateEvKpi(s) {
     $("kpi-ev").textContent = s.ev_connected === null || s.ev_connected === undefined ? "necunoscut" : (s.ev_connected ? ("conectat" + (s.ev_power_kw ? ", " + fmt(s.ev_power_kw) + " kW" : "")) : "neconectat");
   }
-  function updatePriceBuyKpi(s) { $("kpi-price-buy").textContent = s.price_buy_lei_kwh !== null ? fmt(s.price_buy_lei_kwh, 4) + " lei/kWh" : "indisponibil"; }
-  function updatePriceSellKpi(s) { $("kpi-price-sell").textContent = s.price_sell_lei_kwh !== null ? fmt(s.price_sell_lei_kwh, 4) + " lei/kWh" : "indisponibil"; }
+  function updatePriceBuyKpi(s) { $("kpi-price-buy").textContent = hasValue(s.price_buy_lei_kwh) ? fmt(s.price_buy_lei_kwh, 4) + " lei/kWh" : "indisponibil"; }
+  function updatePriceSellKpi(s) { $("kpi-price-sell").textContent = hasValue(s.price_sell_lei_kwh) ? fmt(s.price_sell_lei_kwh, 4) + " lei/kWh" : "indisponibil"; }
   function updateAutomationKpi(s) {
     $("kpi-automation").textContent = s.execution_mode === "shadow" ? "Mod shadow (informativ)" : (s.has_active_plan ? "Activa" : "Fara plan activ");
   }
@@ -539,16 +543,32 @@ function emsInitDashboard(stationId, initialSummary = null) {
     return "badge-" + ({ measured: "ok", partial: "warn", estimated: "warn", simulated: "warn", stale: "error", missing: "muted" }[quality] || "muted");
   }
 
-  function updatePeriodEnergyMetric(period, metric, item) {
+  function comparisonText(item, label) {
+    if (!item || !item.comparison) return `comparatie cu ${label}: indisponibila`;
+    const delta = item.comparison.delta;
+    const abs = Math.abs(delta);
+    if (abs < 0.005) return `aproape la fel ca ${label}`;
+    const direction = delta > 0 ? "mai mult" : "mai putin";
+    const percent = item.comparison.delta_percent !== null && item.comparison.delta_percent !== undefined
+      ? ` (${fmt(Math.abs(item.comparison.delta_percent), 0)}%)`
+      : "";
+    return `${fmt(abs, 2)} kWh ${direction} decat ${label}${percent}`;
+  }
+
+  function updatePeriodEnergyMetric(period, metric, item, comparisonLabel) {
     const domKey = metric.replaceAll("_", "-");
     const valueEl = $(`kpi-${period}-${domKey}`);
     const coverageEl = $(`kpi-${period}-${domKey}-coverage`);
+    const contextEl = $(`kpi-${period}-${domKey}-context`);
     if (!valueEl) return;
     if (!item || item.value === null || item.value === undefined) {
       valueEl.textContent = "fara date";
     } else {
       valueEl.textContent = `${fmt(item.value, 2)} kWh`;
     }
+    if (contextEl) contextEl.textContent = item && item.value !== null && item.value !== undefined
+      ? comparisonText(item, comparisonLabel)
+      : `comparatie cu ${comparisonLabel}: indisponibila`;
     if (coverageEl) {
       const coverage = item && item.coverage !== null && item.coverage !== undefined ? Math.round(item.coverage * 100) : 0;
       coverageEl.textContent = `acoperire ${coverage}%`;
@@ -574,8 +594,9 @@ function emsInitDashboard(stationId, initialSummary = null) {
       const data = await fetchJson(`/stations/${stationId}/data/energy-kpis`);
       for (const period of ["today", "month"]) {
         const metrics = data[period] ? data[period].metrics : {};
+        const comparisonLabel = data[period] ? data[period].comparison_label : "perioada comparabila";
         for (const metric of ["pv", "load", "grid_import", "grid_export", "battery_charge", "battery_discharge"]) {
-          updatePeriodEnergyMetric(period, metric, metrics[metric]);
+          updatePeriodEnergyMetric(period, metric, metrics[metric], comparisonLabel);
         }
         updatePeriodQuality(period, metrics);
       }

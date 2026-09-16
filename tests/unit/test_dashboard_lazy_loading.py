@@ -22,3 +22,12 @@ def test_dashboard_charts_are_registered_for_lazy_visibility_loading():
         "chart-energy-monthly",
     ]:
         assert f'lazyLoadWidget("{chart_id}"' in dashboard_js
+
+
+def test_technical_dashboard_charts_are_progressively_disclosed():
+    template = Path("app/web/templates/dashboard/station.html").read_text()
+
+    assert 'id="advanced-dashboard-details"' in template
+    assert "Plan incarcare/descarcare" in template
+    assert "Prognoza vs. realizat - PV" in template
+    assert template.index('id="advanced-dashboard-details"') < template.index("Plan incarcare/descarcare")
