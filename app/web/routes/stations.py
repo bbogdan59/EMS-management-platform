@@ -621,6 +621,7 @@ def tariffs_page(
         "tariffs": tariffs,
         "previews": previews,
         "preview_sample_kwh": _INVOICE_PREVIEW_SAMPLE_KWH,
+        "latest_market_price": latest_market_price,
         "can_edit": can_manage_station_config(role),
         "errors": request.query_params.getlist("error"),
         **build_nav_context(db, user, station.id),

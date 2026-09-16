@@ -66,17 +66,40 @@
   {% if can_edit %}
   <div class="card">
     <h2 class="mb-3 font-medium">Adauga / actualizeaza tarif</h2>
-    <form method="post" action="/stations/{{ station.id }}/tariffs" class="space-y-4">
+    <form id="tariff-form" method="post" action="/stations/{{ station.id }}/tariffs" class="space-y-4" data-preview-kwh="{{ preview_sample_kwh }}" data-market-price="{{ latest_market_price if latest_market_price is not none else '' }}">
       <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}" />
       {% if wizard_step %}<input type="hidden" name="wizard" value="1" />{% endif %}
+      <div class="grid gap-4 md:grid-cols-[minmax(0,1fr)_minmax(280px,360px)]">
+        <div>
+          <label class="label">Preset explicabil</label>
+          <select class="input" id="tariff-preset">
+            <option value="fixed_import">Import fix: pret din contract + componente</option>
+            <option value="indexed_import">Import dinamic: OPCOM + marja + componente</option>
+            <option value="fixed_export">Export fix: pret propriu, separat de import</option>
+            <option value="custom">Custom: formula neimplementata, calcul dezactivat</option>
+          </select>
+          <p id="tariff-preset-note" class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+            Preseturile sunt doar sabloane de introducere. Verifica cifrele fata de contractul sau factura furnizorului.
+          </p>
+        </div>
+        <div class="rounded border border-gray-200 bg-gray-50 p-3 text-sm dark:border-gray-800 dark:bg-gray-900">
+          <p class="font-medium">Preview factura-exemplu inainte de salvare</p>
+          <p id="tariff-live-preview" class="mt-1 text-gray-600 dark:text-gray-300" aria-live="polite">
+            Completeaza pretul de energie pentru a vedea estimarea.
+          </p>
+          <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+            Exemplu pentru {{ preview_sample_kwh }} kWh/luna. Nu este factura reala si nu include reguli comerciale neverificate.
+          </p>
+        </div>
+      </div>
       <div class="grid gap-4 sm:grid-cols-2">
         <div>
           <label class="label">Directie</label>
-          <select class="input" name="direction"><option value="import">import</option><option value="export">export</option></select>
+          <select class="input" name="direction" id="tariff-direction"><option value="import">import</option><option value="export">export</option></select>
         </div>
         <div>
           <label class="label">Tip</label>
-          <select class="input" name="kind" id="kind-select" onchange="document.getElementById('fixed-price-field').classList.toggle('hidden', this.value!=='fixed'); document.getElementById('margin-field').classList.toggle('hidden', this.value!=='indexed_opcom');">
+          <select class="input" name="kind" id="kind-select">
             <option value="fixed">fix</option>
             <option value="indexed_opcom">indexat OPCOM</option>
           </select>
@@ -127,16 +150,106 @@
         </div>
       </div>
       <label class="flex items-center gap-2 text-sm">
-        <input type="checkbox" name="economic_calculation_disabled" value="true" />
+        <input id="economic-calculation-disabled" type="checkbox" name="economic_calculation_disabled" value="true" />
         Dezactiveaza calculul economic (formula contractuala neimplementata)
       </label>
       <div>
         <label class="label">Nota limitare (afisata utilizatorilor)</label>
-        <input class="input" name="limitation_note" />
+        <input class="input" name="limitation_note" id="limitation-note" />
       </div>
       <button type="submit" class="btn-primary">Salveaza</button>
     </form>
   </div>
   {% endif %}
 </div>
+{% if can_edit %}
+<script>
+  (function () {
+    const form = document.getElementById("tariff-form");
+    if (!form) return;
+    const $ = (selector) => form.querySelector(selector);
+    const preset = $("#tariff-preset");
+    const note = $("#tariff-preset-note");
+    const preview = $("#tariff-live-preview");
+    const direction = $("#tariff-direction");
+    const kind = $("#kind-select");
+    const fixedField = document.getElementById("fixed-price-field");
+    const marginField = document.getElementById("margin-field");
+    const fixedPrice = form.elements.fixed_price_lei_per_kwh;
+    const margin = form.elements.opcom_margin_lei_per_kwh;
+    const monthlyFee = form.elements.fixed_monthly_fee_lei;
+    const variable = form.elements.variable_component_lei_per_kwh;
+    const distribution = form.elements.distribution_lei_per_kwh;
+    const transport = form.elements.transport_lei_per_kwh;
+    const other = form.elements.other_regulated_lei_per_kwh;
+    const vat = form.elements.vat_rate_percent;
+    const disabled = document.getElementById("economic-calculation-disabled");
+    const limitation = document.getElementById("limitation-note");
+    const sampleKwh = Number(form.dataset.previewKwh || "300");
+    const marketPrice = form.dataset.marketPrice === "" ? null : Number(form.dataset.marketPrice);
+    const presetNotes = {
+      fixed_import: "Cost marginal constant: pret fix din contract + componentele pe kWh. Abonamentul ramane cost fix separat.",
+      indexed_import: "Cost dinamic: pret OPCOM disponibil + marja + componentele pe kWh. Daca lipseste OPCOM, calculul exact ramane indisponibil.",
+      fixed_export: "Venit export introdus separat. Nu scade automat distributia sau taxele de import.",
+      custom: "Pastreaza contractul pentru audit, dar dezactiveaza calculul numeric pana cand formula reala este implementata.",
+    };
+
+    function num(input, fallback = 0) {
+      if (!input || input.value.trim() === "") return fallback;
+      const value = Number(input.value);
+      return Number.isFinite(value) ? value : fallback;
+    }
+
+    function syncKindFields() {
+      fixedField.classList.toggle("hidden", kind.value !== "fixed");
+      marginField.classList.toggle("hidden", kind.value !== "indexed_opcom");
+    }
+
+    function applyPreset() {
+      const value = preset.value;
+      direction.value = value === "fixed_export" ? "export" : "import";
+      kind.value = value === "indexed_import" ? "indexed_opcom" : "fixed";
+      disabled.checked = value === "custom";
+      if (value === "custom" && !limitation.value) {
+        limitation.value = "Formula contractuala necesita verificare manuala inainte de calcul automat.";
+      }
+      note.textContent = presetNotes[value] || presetNotes.fixed_import;
+      syncKindFields();
+      updatePreview();
+    }
+
+    function updatePreview() {
+      if (disabled.checked) {
+        preview.textContent = "Calcul dezactivat: se salveaza nota de limitare si nu se afiseaza un cost numeric.";
+        return;
+      }
+      let energy = null;
+      if (kind.value === "fixed") {
+        energy = fixedPrice.value.trim() === "" ? null : num(fixedPrice);
+      } else if (marketPrice !== null && margin.value.trim() !== "") {
+        energy = marketPrice + num(margin);
+      }
+      if (energy === null) {
+        preview.textContent = kind.value === "indexed_opcom"
+          ? "Preview indisponibil pana exista pret OPCOM si marja completata."
+          : "Completeaza pretul fix pentru a vedea estimarea.";
+        return;
+      }
+      let effective = energy + num(variable) + num(distribution) + num(transport) + num(other);
+      const vatRate = vat.value.trim() === "" ? null : num(vat);
+      if (vatRate !== null) effective *= 1 + vatRate / 100;
+      const energyCost = effective * sampleKwh;
+      let fee = num(monthlyFee);
+      if (vatRate !== null) fee *= 1 + vatRate / 100;
+      const total = energyCost + fee;
+      preview.textContent = `pret efectiv ${effective.toFixed(4)} lei/kWh; energie ${energyCost.toFixed(2)} lei + abonament ${fee.toFixed(2)} lei = ${total.toFixed(2)} lei total`;
+    }
+
+    preset.addEventListener("change", applyPreset);
+    kind.addEventListener("change", () => { syncKindFields(); updatePreview(); });
+    form.addEventListener("input", updatePreview);
+    applyPreset();
+  })();
+</script>
+{% endif %}
 {% endblock %}
