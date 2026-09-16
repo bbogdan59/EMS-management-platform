@@ -84,7 +84,11 @@ def test_market_data_timeline_stays_bounded_for_large_windows(client, db):
     assert resp.status_code == 200
     body = resp.json()
     assert body["resolution"] == "1d"
-    assert body["aggregation"] == {"price_lei_mwh": "mean", "price_lei_kwh": "mean"}
+    assert body["aggregation"] == {
+        "price_lei_mwh": "mean",
+        "price_lei_kwh": "mean",
+        "ohlc_lei_mwh": "open_close_min_max",
+    }
     assert body["timezone"] == "Europe/Bucharest"
     assert 0 < body["coverage"] <= 1
     points = body["points"]

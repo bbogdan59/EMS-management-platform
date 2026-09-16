@@ -3,12 +3,18 @@
 const EMS_YEAR_COLORS = ["#2f9354", "#4a86e8", "#f5a524", "#a479e2", "#f691b2", "#43d692"];
 const TIMELINE_RANGE_OPTIONS = [30, 90, 180, 365];
 const TIMELINE_DEFAULT_DAYS = 30;
+const TIMELINE_CHART_TYPES = [
+  { value: "line", label: "Linie" },
+  { value: "candles", label: "Candles" },
+];
 const YEARLY_OVERLAY_DEFAULT_YEARS = [2024, 2025, 2026];
 
 function emsInitMarket(availableYears) {
   const $ = (id) => document.getElementById(id);
   let selectedYears = new Set(defaultYearlyOverlayYears(availableYears));
   let selectedTimelineDays = TIMELINE_DEFAULT_DAYS;
+  let selectedTimelineChartType = "line";
+  let lastTimelinePayload = null;
   let timelineController = null;
   let fiveDayOverlayController = null;
   let yearlyOverlayController = null;
@@ -118,6 +124,99 @@ function emsInitMarket(availableYears) {
     });
   }
 
+  function renderTimelineChartTypeToggles() {
+    const container = $("timeline-chart-type-toggles");
+    if (!container) return;
+    container.innerHTML = "";
+    TIMELINE_CHART_TYPES.forEach((option) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.textContent = option.label;
+      btn.className = option.value === selectedTimelineChartType ? "btn-primary !px-2 !py-1 text-xs" : "btn-secondary !px-2 !py-1 text-xs";
+      btn.addEventListener("click", () => {
+        if (option.value === selectedTimelineChartType) return;
+        selectedTimelineChartType = option.value;
+        renderTimelineChartTypeToggles();
+        if (lastTimelinePayload) renderTimeline(lastTimelinePayload);
+      });
+      container.appendChild(btn);
+    });
+  }
+
+  function formatMarketPrice(value) {
+    return value == null ? "-" : `${Number(value).toFixed(2)} lei/MWh`;
+  }
+
+  function renderTimeline(payload) {
+    const el = $("chart-timeline");
+    if (!el) return;
+    const data = payload.points || [];
+    showChartState(el, data.length === 0 ? "empty" : "ok");
+    if (!data.length) return;
+
+    const chart = initChart(el);
+    if (selectedTimelineChartType === "candles") {
+      const labels = data.map((d) => d.t);
+      const candleData = data.map((d) => ({
+        value: [d.open_price_lei_mwh, d.close_price_lei_mwh, d.min_price_lei_mwh, d.max_price_lei_mwh],
+        is_future: d.is_future,
+        is_synthetic: d.is_synthetic,
+        sample_count: d.sample_count,
+      }));
+      chart.setOption({
+        grid: { left: 56, right: 16, top: 24, bottom: 52 },
+        tooltip: {
+          trigger: "axis",
+          formatter: (params) => {
+            const item = params[0];
+            if (!item) return "";
+            const point = item.data || {};
+            const values = point.value || [];
+            const flags = [point.is_future ? "viitor" : null, point.is_synthetic ? "sintetic" : null].filter(Boolean);
+            return [
+              new Date(item.axisValue).toLocaleString("ro-RO", { dateStyle: "short", timeStyle: "short" }),
+              `Open: ${formatMarketPrice(values[0])}`,
+              `Close: ${formatMarketPrice(values[1])}`,
+              `Min: ${formatMarketPrice(values[2])}`,
+              `Max: ${formatMarketPrice(values[3])}`,
+              `Intervale: ${point.sample_count || 1}${flags.length ? " (" + flags.join(", ") + ")" : ""}`,
+            ].join("<br>");
+          },
+        },
+        legend: { data: ["OHLC"] },
+        xAxis: { type: "category", data: labels, axisLabel: { formatter: (value) => new Date(value).toLocaleDateString("ro-RO", { day: "2-digit", month: "2-digit" }) } },
+        yAxis: { type: "value", name: "lei/MWh", scale: true },
+        series: [
+          {
+            name: "OHLC",
+            type: "candlestick",
+            data: candleData,
+            itemStyle: { color: "#2f9354", color0: "#d64545", borderColor: "#2f9354", borderColor0: "#d64545" },
+          },
+        ],
+      }, true);
+      return;
+    }
+
+    const firstFutureIdx = data.findIndex((d) => d.is_future);
+    const boundaryIdx = firstFutureIdx === -1 ? data.length : firstFutureIdx;
+
+    const historical = data.map((d, i) => [d.t, i < boundaryIdx ? d.price_lei_mwh : null]);
+    const forecast = data.map((d, i) => [d.t, i >= boundaryIdx - 1 && i >= 0 ? d.price_lei_mwh : null]);
+
+    chart.setOption({
+      grid: { left: 56, right: 16, top: 24, bottom: 32 },
+      tooltip: { trigger: "axis", valueFormatter: formatMarketPrice },
+      legend: { data: ["Realizat", "Maine (punctat)"] },
+      xAxis: { type: "time" },
+      yAxis: { type: "value", name: "lei/MWh" },
+      series: [
+        { name: "Realizat", type: "line", showSymbol: false, data: historical },
+        { name: "Maine (punctat)", type: "line", showSymbol: false, lineStyle: { type: "dashed" }, data: forecast },
+      ],
+    }, true);
+  }
+
   async function loadTimeline() {
     const el = $("chart-timeline");
     if (!el) return;
@@ -131,28 +230,8 @@ function emsInitMarket(availableYears) {
       // initiala, indiferent cat de mare e intervalul selectat (issue #33).
       const payload = await fetchJson("/market/data/timeline?days=" + selectedTimelineDays, { signal: controller.signal });
       if (controller !== timelineController) return;
-      const data = payload.points || [];
-      showChartState(el, data.length === 0 ? "empty" : "ok");
-      if (!data.length) return;
-
-      const firstFutureIdx = data.findIndex((d) => d.is_future);
-      const boundaryIdx = firstFutureIdx === -1 ? data.length : firstFutureIdx;
-
-      const historical = data.map((d, i) => [d.t, i < boundaryIdx ? d.price_lei_mwh : null]);
-      const forecast = data.map((d, i) => [d.t, i >= boundaryIdx - 1 && i >= 0 ? d.price_lei_mwh : null]);
-
-      const chart = initChart(el);
-      chart.setOption({
-        grid: { left: 56, right: 16, top: 24, bottom: 32 },
-        tooltip: { trigger: "axis" },
-        legend: { data: ["Realizat", "Maine (punctat)"] },
-        xAxis: { type: "time" },
-        yAxis: { type: "value", name: "lei/MWh" },
-        series: [
-          { name: "Realizat", type: "line", showSymbol: false, data: historical },
-          { name: "Maine (punctat)", type: "line", showSymbol: false, lineStyle: { type: "dashed" }, data: forecast },
-        ],
-      });
+      lastTimelinePayload = payload;
+      renderTimeline(payload);
     } catch (e) {
       if (controller !== timelineController) return;
       console.error(e);
@@ -368,6 +447,7 @@ function emsInitMarket(availableYears) {
   }
 
   renderYearToggles();
+  renderTimelineChartTypeToggles();
   renderTimelineRangeToggles();
   loadFiveDayOverlay();
   loadTimeline();

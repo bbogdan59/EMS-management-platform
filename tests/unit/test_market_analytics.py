@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, date, datetime, time, timedelta
+from decimal import Decimal
 
 import pytest
 
@@ -264,6 +265,11 @@ def test_timeline_split_stays_raw_resolution_for_short_windows(db):
     series = market.get_timeline_split(db, now - timedelta(days=9), now + timedelta(days=1))  # fereastra = 10 zile exact
 
     assert len(series) == 4  # nicio agregare -- un punct per rand stocat
+    assert series[0]["open_price_lei_mwh"] == 100.0
+    assert series[0]["close_price_lei_mwh"] == 100.0
+    assert series[0]["min_price_lei_mwh"] == 100.0
+    assert series[0]["max_price_lei_mwh"] == 100.0
+    assert series[0]["sample_count"] == 1
 
 
 def test_timeline_split_aggregates_hourly_for_long_windows(db):
@@ -296,6 +302,39 @@ def test_timeline_split_hourly_aggregation_averages_within_bucket(db):
     assert series  # agregarea ramane in interval, chiar daca fereastra e lunga
     prices = {p["price_lei_mwh"] for p in series}
     assert prices == {100.0, 300.0, 500.0, 700.0}  # fara suprapunere intre bucket-ele orare distincte
+
+
+def test_timeline_split_hourly_aggregation_exposes_ohlc_for_candles(db):
+    now = utcnow()
+    hour_start = (now - timedelta(days=20)).replace(minute=0, second=0, microsecond=0)
+    make_market_day(db, hour_start.date(), [100.0] * 4)
+    from sqlalchemy import select
+
+    from app.models.market import MarketPriceInterval
+
+    rows = db.scalars(
+        select(MarketPriceInterval)
+        .where(MarketPriceInterval.delivery_date == hour_start.date())
+        .order_by(MarketPriceInterval.interval_index)
+        .limit(4)
+    ).all()
+    for idx, (row, price) in enumerate(zip(rows, [Decimal("100.0"), Decimal("300.0"), Decimal("50.0"), Decimal("250.0")], strict=True)):
+        row.interval_start = hour_start + timedelta(minutes=idx * 15)
+        row.interval_end = row.interval_start + timedelta(minutes=15)
+        row.price_lei_per_mwh = price
+        row.price_lei_per_kwh = price / Decimal("1000")
+    db.flush()
+
+    series = market.get_timeline_split(db, now - timedelta(days=40), now)
+
+    matching = [point for point in series if point["sample_count"] == 4]
+    assert matching
+    candle = matching[0]
+    assert candle["price_lei_mwh"] == 175.0
+    assert candle["open_price_lei_mwh"] == 100.0
+    assert candle["close_price_lei_mwh"] == 250.0
+    assert candle["min_price_lei_mwh"] == 50.0
+    assert candle["max_price_lei_mwh"] == 300.0
 
 
 def test_timeline_split_hourly_aggregation_excludes_synthetic_by_default(db):
@@ -376,7 +415,11 @@ def test_timeline_description_declares_contract_for_year_window():
     payload = market.describe_timeline_split(start, end, points)
 
     assert payload["resolution"] == "1d"
-    assert payload["aggregation"] == {"price_lei_mwh": "mean", "price_lei_kwh": "mean"}
+    assert payload["aggregation"] == {
+        "price_lei_mwh": "mean",
+        "price_lei_kwh": "mean",
+        "ohlc_lei_mwh": "open_close_min_max",
+    }
     assert payload["timezone"] == "Europe/Bucharest"
     assert payload["coverage"] == 0.5014
     assert payload["points"] == points
