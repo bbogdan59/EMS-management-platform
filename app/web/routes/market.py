@@ -61,6 +61,17 @@ def market_yearly_overlay(
     return JSONResponse({str(year): points for year, points in overlay.items()})
 
 
+@router.get("/market/data/five-day-overlay")
+def market_five_day_overlay(
+    years: str | None = Query(default=None),
+    db: Session = Depends(get_db),
+    _user: User = Depends(get_current_user),
+):
+    payload = market.get_five_day_overlay(db, years=_parse_years(years))
+    payload["series"] = {str(year): points for year, points in payload["series"].items()}
+    return JSONResponse(payload)
+
+
 @router.get("/market/data/monthly")
 def market_monthly(
     years: str | None = Query(default=None),

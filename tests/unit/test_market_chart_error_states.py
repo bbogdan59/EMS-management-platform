@@ -7,12 +7,12 @@ def test_market_charts_have_isolated_error_retry_states():
     template = Path("app/web/templates/market/prices.html").read_text()
     script = Path("app/web/static/js/market.js").read_text()
 
-    assert template.count("error-state") >= 4
-    assert template.count("retry-btn") >= 4
+    assert template.count("error-state") >= 5
+    assert template.count("retry-btn") >= 5
     assert "function showChartState(el, state)" in script
     assert "function wireRetry(el, loadFn)" in script
-    assert script.count('showChartState(el, "error")') == 4
-    for load_fn in ["loadTimeline", "loadYearlyOverlay", "loadForecast", "loadMonthly"]:
+    assert script.count('showChartState(el, "error")') == 5
+    for load_fn in ["loadTimeline", "loadFiveDayOverlay", "loadYearlyOverlay", "loadForecast", "loadMonthly"]:
         assert f"wireRetry(el, {load_fn});" in script
 
 
@@ -23,6 +23,7 @@ def test_market_chart_fetches_have_timeout_and_stale_request_cancellation():
     assert "setTimeout(() => timeoutController.abort(), timeoutMs)" in script
     for controller in [
         "timelineController",
+        "fiveDayOverlayController",
         "yearlyOverlayController",
         "forecastController",
         "monthlyController",

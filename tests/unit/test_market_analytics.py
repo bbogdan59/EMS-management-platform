@@ -56,6 +56,39 @@ def test_get_year_over_year_overlay_groups_by_year(db):
     assert overlay[2025][0]["avg_price_lei_mwh"] == 250.0
 
 
+def test_five_day_overlay_preserves_raw_resolution_and_aligns_history(db):
+    today = date(2026, 9, 10)
+    make_market_day(db, today, [300.0] * 96)
+    make_market_day(db, today.replace(year=2025), [200.0] * 24)
+
+    overlay = market.get_five_day_overlay(db, years=[2025, 2026], today=today)
+
+    assert overlay["current_year"] == 2026
+    assert overlay["window"] == {
+        "start_date": "2026-09-08",
+        "end_date": "2026-09-12",
+        "days_before": 2,
+        "days_after": 2,
+    }
+    assert len(overlay["series"][2026]) == 96
+    assert len(overlay["series"][2025]) == 24
+    first_historical = overlay["series"][2025][0]
+    assert first_historical["delivery_date"] == "2025-09-10"
+    assert datetime.fromisoformat(first_historical["t"]).date() == date(2025, 9, 10)
+    assert datetime.fromisoformat(first_historical["aligned_t"]).astimezone(BUCHAREST).date() == today
+
+
+def test_five_day_overlay_excludes_synthetic_history_by_default(db):
+    today = date(2026, 9, 10)
+    make_market_day(db, today, [300.0])
+    make_market_day(db, today.replace(year=2025), [900.0], is_synthetic=True)
+
+    overlay = market.get_five_day_overlay(db, years=[2025, 2026], today=today)
+
+    assert set(overlay["series"].keys()) == {2026}
+    assert overlay["series"][2026][0]["is_synthetic"] is False
+
+
 def test_get_monthly_averages(db):
     make_market_day(db, date(2025, 1, 5), [100.0])
     make_market_day(db, date(2025, 1, 15), [300.0])

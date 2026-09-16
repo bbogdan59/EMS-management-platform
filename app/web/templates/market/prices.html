@@ -50,6 +50,23 @@
     </div>
   </div>
 
+  <!-- Fereastra scurta cu istoric suprapus -->
+  <div class="card">
+    <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
+      <h2 class="font-medium">Pret PZU: 2 zile trecute, azi, 2 zile viitoare</h2>
+      <span class="text-xs text-gray-500 dark:text-gray-400">Anul curent este evidentiat; anii anteriori sunt estompati.</span>
+    </div>
+    <p class="mb-2 text-xs text-gray-500 dark:text-gray-400">
+      Foloseste rezolutia importata pentru fiecare an: 15 minute cand exista, orar pentru istoricul mai vechi.
+    </p>
+    <div class="empty-state text-sm text-gray-500" hidden>Fara date pentru aceasta fereastra.</div>
+    <div class="error-state text-sm text-red-600" hidden>
+      Graficul nu a putut fi incarcat.
+      <button type="button" class="btn-secondary retry-btn">Reincearca</button>
+    </div>
+    <div id="chart-five-day-overlay" style="height:360px"></div>
+  </div>
+
   <!-- Timeline cu linie punctata pentru viitor -->
   <div class="card">
     <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
