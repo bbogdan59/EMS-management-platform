@@ -60,6 +60,33 @@ formei JSON documentate. Erorile de retea sunt gestionate explicit
 (`WeatherUnavailableError`), propagate curat pana in UI/optimizator (fara
 valori inventate).
 
+Decizia de provider pentru aceasta versiune:
+- **Provider:** Open-Meteo Weather Forecast API (`https://api.open-meteo.com/v1/forecast`),
+  pentru ca are acoperire globala, include Romania, ofera variabilele minime
+  cerute pentru PV (`shortwave_radiation`, `direct_normal_irradiance`,
+  `diffuse_radiation`, `cloud_cover`, `temperature_2m`, `precipitation`,
+  `wind_speed_10m`) si raspunde cu serii orare normalizate. Platforma cere
+  explicit `timezone=UTC`; afisarea locala foloseste fusul statiei.
+- **Licenta/SLA:** endpoint-ul public gratuit este potrivit doar pentru
+  evaluare/prototip sau uz necomercial si nu are garantie de uptime. Pentru uz
+  comercial sau SLA se configureaza un plan platit Open-Meteo/customer endpoint;
+  documentatia Open-Meteo listeaza tinta de 99.9% uptime pentru planurile
+  platite si rate-limiturile publice ale free tier-ului.
+- **Rezolutie/acoperire:** API-ul generic combina modele meteo globale si
+  regionale; pentru Romania, fara selectarea explicita a unui model local
+  licentiat, platforma trateaza prognoza ca o estimare orara provider-level, nu
+  ca masuratoare locala. `source_version` pastreaza modelul/as-of cand
+  providerul il furnizeaza.
+- **Limite locale:** aplicatia are cache Redis (`weather_cache_ttl_minutes`),
+  retry/backoff (`weather_max_retries`, `weather_retry_backoff_seconds`) si un
+  throttle local configurabil (`weather_rate_limit_per_minute`, implicit 300)
+  aplicat doar pe cache miss. Depasirea limitei produce `WeatherUnavailableError`
+  si nu genereaza prognoze sintetice.
+- **Fallback controlat:** nu exista provider secundar automat. Alegerea este
+  intentionata: fara o licenta si o regula de calitate/cost pentru al doilea
+  provider, sistemul prefera lipsa explicita a prognozei in locul amestecarii
+  tacute de surse.
+
 ## 3. Model PV simplificat (nu e un model de modul/invertor certificat)
 
 `pv_forecast_service.py` foloseste pvlib pentru pozitia solara si
@@ -948,6 +975,13 @@ tentativa esuata/metadata de audit. Politica de retentie noua
 revizii reusite; tentativele esuate/unchanged sunt ignorate complet (nu
 conteaza la prag, nu sunt niciodata arhivate).
 
+Importul OPCOM este serializat si la nivel de zi/sursa prin lock advisory
+PostgreSQL (`opcom-import:{source}:{delivery_date}`), nu doar prin lock-ul
+Celery al jobului planificat. Astfel, un import manual pornit in paralel cu
+alt import al aceleiasi zile nu poate calcula aceeasi revizie si nu poate lasa
+doua revizii curente; a doua tranzactie vede starea commituita de prima si,
+daca hash-ul este identic, se incheie ca `unchanged`.
+
 **Arhivare STRICT NEDISTRUCTIVA, nu stergere.** Peste
 `DEFAULT_MAX_ACTIVE_REVISIONS` (5) revizii reusite pastrate active per zi de
 livrare, cele mai vechi capata `ImportRun.is_archived=True` +
@@ -1605,6 +1639,16 @@ mai apuca sa deseneze peste graficul curent. Un cache scurt (30s, cheie =
 URL exacta cu tot cu interval) evita fetch-uri redundante cand ambele
 grafice (putere si SOC) cer aceeasi fereastra aproape simultan.
 
+**Calitatea datelor este propagata pana in graficul principal.**
+`get_timeseries_chart` include acum `data_quality` pe fiecare punct/bucket:
+raw recent (`measured`/`simulated`/`stale` pe baza telemetriei brute) si
+rollup-uri persistate (`measured`/`estimated`/`simulated`/etc. din
+`TelemetryAggregate.data_quality`). Pentru bucket-uri agregate la rezolutie
+mai mare se pastreaza cea mai severa calitate din bucket, fara a schimba
+valorile numerice. `dashboard.js` transforma aceste segmente in `markArea`
+ECharts pentru graficele de putere si SOC, astfel incat intervalele estimate,
+simulate, invechite sau lipsa sa nu arate identic cu datele masurate.
+
 **Teste:** `tests/unit/test_chart_aggregation.py` (rezolutie per range_key;
 putere mediata NU insumata; energie poate fi insumata; SOC si orice alta
 metrica "procentuala" REFUZA explicit suma -- parametrizat pe mai multe nume
@@ -1613,9 +1657,13 @@ nu devine 0; acoperire calculata corect, inclusiv cazul fara date si cazul
 cu esantioane foarte dese intr-un singur bucket). `tests/unit/
 test_dashboard_service.py` adauga teste pentru `get_timeseries_chart`
 (metadate complete, mediere corecta pe bucket pentru putere si SOC, rezolutie
-diferita per interval, `points: []` + `coverage: 0.0` fara nicio telemetrie)
-si un test explicit ca `get_timeseries_raw` (exportul CSV) a ramas
-neagregat. `tests/integration/test_dashboard_timeseries_route.py` verifica
+diferita per interval, calitate per bucket din raw/rollup-uri, `points: []` +
+`coverage: 0.0` fara nicio telemetrie) si un test explicit ca
+`get_timeseries_raw` (exportul CSV) a ramas neagregat. `tests/unit/
+test_dashboard_lazy_loading.py` fixeaza prezenta marcarii `markArea` pe
+calitatea timeseries si pragul explicit pentru `showSymbol` (marker-ele apar
+doar pentru serii scurte; seriile dense raman fara puncte individuale).
+`tests/integration/test_dashboard_timeseries_route.py` verifica
 direct raspunsul HTTP al rutei (metadate, rezolutie zilnica pentru `range=1y`,
 empty-state fara date, izolare RBAC intre organizatii).
 
@@ -1635,14 +1683,10 @@ completa a issue-ului #33):**
   interogarii este acum marginita de rollup-uri pentru ferestrele lungi, iar
   testul DST verifica numeric o zi locala de 23h, dar nu s-a rulat inca un
   EXPLAIN/buget de timp pe volumul real al unei instalatii.
-- **Fara reprezentare vizuala distincta pentru stale/estimat/sintetic/gaps**
-  -- `is_simulated`/`is_late` sunt calculate per bucket (OR logic) si trimise
-  in raspuns, dar `dashboard.js` nu le foloseste inca pentru un stil vizual
-  distinct in chart (doar KPI-ul `data_quality` de mai sus, deja existent,
-  le reflecta la nivel de statie).
-- **Fara eliminare de point-symbols peste un prag configurabil** -- liniile
-  foloseau deja `showSymbol: false` dinainte de acest PR; un prag explicit
-  configurabil (marker doar sub un numar de puncte) nu a fost adaugat.
+- **Pragul de point-symbols este aplicat doar charturilor migrate prin
+  `lineChart`** -- pentru graficele de putere si SOC, `showSymbol` se activeaza
+  doar la serii scurte (<=48 puncte). Widgeturile inca nemigrate complet isi
+  pastreaza configuratia curenta pana la migrarea lor incrementala.
 
 ## 20. Tabel explicabil si reexecutare controlata a optimizarii (issue #47)
 
@@ -2264,6 +2308,11 @@ inainte de a scrie cod nou, ca sa nu se reconstruiasca ce functioneaza):
   task-ului raporteaza acum contoare separate pentru etapele `weather`, `pv`
   si `consumption`, plus erori etichetate pe etapa, ca un esec de provider sa
   nu fie confundat cu un esec de model PV sau consum.
+- **Retry/backoff/cache/rate-limit local pentru provider.**
+  `OpenMeteoWeatherProvider` nu blocheaza paginile web; dupa cache miss,
+  aplica limita locala pe minut, apoi retry cu backoff exponential. Depasirea
+  limitei, eroarea HTTP sau un provider necunoscut sunt toate erori explicite,
+  nu fallback-uri sintetice.
 
 **Adaugat de acest PR (gap real, nu acoperit inainte):**
 - **Date meteo minime extinse cu precipitatii.**
@@ -2316,11 +2365,10 @@ inainte de a scrie cod nou, ca sa nu se reconstruiasca ce functioneaza):
   Comutarea automata catre un provider secundar ramane neimplementata pana
   exista un provider licentiat si o regula explicita de calitate/cost; sistemul
   prefera acum esec explicit in loc de fallback tacut.
-- **Worker retry/backoff si metrici operationale dedicate.**
-  `weather_and_forecast_task` raporteaza acum succes/esec pe etapa per rulare,
-  dar nu are inca retry cu backoff exponential per provider, rate-limiting
-  explicit catre Open-Meteo, sau metrici persistente de latenta/rata de succes
-  expuse separat in admin/monitoring.
+- **Metrici operationale persistente dedicate.**
+  `weather_and_forecast_task` raporteaza succes/esec pe etapa per rulare, iar
+  providerul are retry/backoff/cache/rate-limit local, dar nu exista inca un
+  panou admin sau o serie persistenta de latenta/rata de succes meteo.
 - **Backtesting complet (dashboard, segmentare pe conditii meteo, pret).**
   `forecast_backtest_service.py` e strict minimal -- MAE/bias pe puterea PV,
   fara UI, fara segmentare senin/inorat, fara metrici pe prognoza de consum
@@ -2377,6 +2425,15 @@ crearea unuia nou, fara pierderea istoricului.
 proprie implementata (nu exista o formula "de provider" verificata de
 adaugat fara sa fie inventata, vezi sectiunea de mai jos).
 
+**`settlement_method` blocheaza calculul si la citire, nu doar la scriere.**
+`add_tariff_version` refuza in continuare metodele de decontare nesuportate
+fara `economic_calculation_disabled=True` + `limitation_note`, dar
+`compute_effective_price_lei_per_kwh` este defensiv si returneaza `None`
+daca primeste o versiune cu `settlement_method` in afara setului suportat
+(`net_metering_15min`). Astfel, chiar si un rand introdus direct in baza,
+ocolind serviciul, nu produce un pret numeric tacit; preview-ul raporteaza
+explicit ca metoda de decontare nu are formula economica implementata.
+
 **Independenta import/export, verificata explicit cu test, nu doar presupusa
 din arhitectura.** Directia (`import`/`export`) era deja un `Tariff` separat
 inainte de acest PR (nicio schimbare de schema aici), deci exportul avea deja
@@ -2407,7 +2464,8 @@ nu introduce drift binar-float (ex. suma nu devine `0.30000999...`).
 
 **Teste:** `tests/unit/test_tariff_service.py` include validarea `kind`
 necunoscut, blocarea reclasificarii istoricului, 4 combinatii fix/dinamic cu camp
-lipsa/strain, o regresie ca versiunile corect formate tot trec, independenta
+lipsa/strain, blocarea calculului pentru `settlement_method` nesuportat chiar
+daca randul exista, o regresie ca versiunile corect formate tot trec, independenta
 export/import, 2 teste DST, 1 test de rotunjire). `tests/integration/
 test_tariffs_routes.py` are acum 6 (4 preexistente + 2 noi: contract fix cu
 marja straina si contract dinamic fara marja sunt respinse cu eroare
@@ -2431,10 +2489,11 @@ iteratie -- vezi si sectiunea de mai sus):**
   deliberat NEINVENTATE, neschimbat fata de prima iteratie: operatorul
   introduce valorile reale din contractul/factura lui.
 - **Constrangere la nivel de baza de date (CHECK constraint)** pentru
-  consistenta `kind`/campuri -- validarea noua e doar la nivel de serviciu
-  (`tariff_service`), singurul punct de scriere folosit de aplicatie; un
-  `INSERT` SQL direct in `tariff_versions`, ocolind `add_tariff_version`,
-  tot ar putea crea o versiune inconsistenta. Nu exista alt cod in acest
-  repo care sa scrie in acest tabel altfel decat prin acest serviciu.
+  consistenta `kind`/campuri -- validarea principala ramane la nivel de
+  serviciu (`tariff_service`), singurul punct de scriere folosit de
+  aplicatie; un `INSERT` SQL direct in `tariff_versions`, ocolind
+  `add_tariff_version`, tot ar putea crea o versiune inconsistenta. Calculul
+  este totusi defensiv pentru `settlement_method` nesuportat si returneaza
+  necunoscut (`None`), nu un pret numeric tacit.
 - **Decontare neta ora-cu-ora in preview, formula "provider"/"custom"
   distincta** -- neschimbate fata de prima iteratie (vezi mai sus).

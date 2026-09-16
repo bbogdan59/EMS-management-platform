@@ -2,10 +2,11 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
+from sqlalchemy.orm import Session
 
 from app.models.enums import ImportRunStatus
-from app.models.market import MarketPriceInterval
+from app.models.market import ImportRun, MarketPriceInterval
 from app.services import opcom_service
 from app.services.opcom_fixtures import generate_synthetic_csv
 from app.services.opcom_service import (
@@ -114,3 +115,53 @@ def test_get_real_imported_dates_used_by_backfill_skip_logic(db):
 
     done = get_real_imported_dates(db, d1, d3)
     assert done == {d1}
+
+
+def test_concurrent_same_day_imports_serialize_without_revision_collision(engine, monkeypatch):
+    """Doua importuri simultane pentru aceeasi zi trebuie sa fie serializate
+    in baza de date: una creeaza revizia curenta, cealalta observa hash-ul
+    deja importat si ramane `unchanged`, fara coliziune de unique constraint
+    si fara doua revizii curente."""
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    d = date(2026, 9, 9)
+    csv_text = generate_synthetic_csv(d)
+    barrier = Barrier(2)
+
+    def _same_content(url):
+        return csv_text.encode("utf-8")
+
+    monkeypatch.setattr(opcom_service, "_fetch_raw", _same_content)
+
+    def attempt():
+        with Session(engine) as session:
+            barrier.wait(timeout=5)
+            run = import_opcom_day(session, d)
+            session.commit()
+            return run.status
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            outcomes = [future.result(timeout=15) for future in [pool.submit(attempt), pool.submit(attempt)]]
+
+        assert sorted(outcomes) == [ImportRunStatus.succeeded.value, ImportRunStatus.unchanged.value]
+
+        with Session(engine) as verify:
+            runs = verify.scalars(
+                select(ImportRun).where(ImportRun.delivery_date == d).order_by(ImportRun.revision)
+            ).all()
+            current_intervals = verify.scalars(
+                select(MarketPriceInterval).where(
+                    MarketPriceInterval.delivery_date == d,
+                    MarketPriceInterval.is_current.is_(True),
+                )
+            ).all()
+
+        assert [run.status for run in runs] == [ImportRunStatus.succeeded.value, ImportRunStatus.unchanged.value]
+        assert {interval.revision for interval in current_intervals} == {runs[0].revision}
+    finally:
+        with Session(engine) as cleanup:
+            cleanup.execute(delete(MarketPriceInterval).where(MarketPriceInterval.delivery_date == d))
+            cleanup.execute(delete(ImportRun).where(ImportRun.delivery_date == d))
+            cleanup.commit()

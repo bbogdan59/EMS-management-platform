@@ -31,3 +31,20 @@ def test_technical_dashboard_charts_are_progressively_disclosed():
     assert "Plan incarcare/descarcare" in template
     assert "Prognoza vs. realizat - PV" in template
     assert template.index('id="advanced-dashboard-details"') < template.index("Plan incarcare/descarcare")
+
+
+def test_dashboard_timeseries_charts_mark_quality_intervals():
+    dashboard_js = Path("app/web/static/js/dashboard.js").read_text()
+
+    assert "function qualityMarkAreas(points)" in dashboard_js
+    assert "data_quality" in dashboard_js
+    assert "markArea" in dashboard_js
+    assert "markAreas: qualityMarkAreas(points)" in dashboard_js
+
+
+def test_dashboard_timeseries_line_symbols_are_threshold_based():
+    dashboard_js = Path("app/web/static/js/dashboard.js").read_text()
+
+    assert "const EMS_CHART_SYMBOL_THRESHOLD = 48" in dashboard_js
+    assert "item.data.length <= EMS_CHART_SYMBOL_THRESHOLD" in dashboard_js
+    assert 'const mk = (key, name) => ({ name, type: "line", data:' in dashboard_js

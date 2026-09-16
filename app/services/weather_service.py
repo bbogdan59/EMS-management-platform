@@ -45,6 +45,7 @@ class WeatherProviderRequest:
     cache_ttl_minutes: int
     max_retries: int = 3
     retry_backoff_seconds: float = 0.2
+    rate_limit_per_minute: int | None = None
 
 
 class WeatherProvider(Protocol):
@@ -63,6 +64,7 @@ class OpenMeteoWeatherProvider:
         cached = cache.get(key)
         if cached:
             return json.loads(cached)
+        _check_provider_rate_limit(cache, self.name, request.rate_limit_per_minute)
 
         params = {
             "latitude": request.latitude,
@@ -102,6 +104,18 @@ def _cache_key(provider: str, lat: float, lon: float) -> str:
     return f"weather_forecast:{provider}:{round(lat, 3)}:{round(lon, 3)}"
 
 
+def _check_provider_rate_limit(cache, provider: str, limit_per_minute: int | None) -> None:
+    if limit_per_minute is None or limit_per_minute <= 0:
+        return
+    bucket = utcnow().strftime("%Y%m%d%H%M")
+    key = f"weather_rate:{provider}:{bucket}"
+    count = cache.incr(key)
+    if count == 1:
+        cache.expire(key, 90)
+    if count > limit_per_minute:
+        raise WeatherUnavailableError(f"Limita locala de apeluri meteo depasita pentru {provider}: {limit_per_minute}/minut.")
+
+
 def get_weather_provider(name: str | None = None) -> WeatherProvider:
     provider_name = name or settings.weather_provider
     provider = PROVIDERS.get(provider_name)
@@ -120,6 +134,7 @@ def fetch_forecast_raw(latitude: float, longitude: float, provider_name: str | N
         cache_ttl_minutes=settings.weather_cache_ttl_minutes,
         max_retries=settings.weather_max_retries,
         retry_backoff_seconds=settings.weather_retry_backoff_seconds,
+        rate_limit_per_minute=settings.weather_rate_limit_per_minute,
     )
     return provider.fetch_raw(request)
 

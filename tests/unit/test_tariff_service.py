@@ -13,6 +13,7 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -382,6 +383,46 @@ def test_add_tariff_version_closes_previous_open_version_without_overlap(db):
 
     assert first.valid_to == second_start
     assert second.valid_to is None
+
+
+def test_unsupported_settlement_method_requires_disabled_calculation():
+    tariff = SimpleNamespace(id=uuid.uuid4(), kind="fixed")
+
+    with pytest.raises(ValueError, match="metoda de decontare"):
+        svc.add_tariff_version(
+            None, tariff, valid_from=datetime.now(UTC),
+            fixed_price_lei_per_kwh=Decimal("0.80"), opcom_margin_lei_per_kwh=None,
+            fixed_monthly_fee_lei=Decimal("0"), variable_component_lei_per_kwh=Decimal("0"),
+            settlement_method="monthly_netting_custom", settlement_interval_days=30,
+        )
+
+
+def test_unsupported_settlement_method_blocks_compute_even_if_row_exists():
+    """Protectie la citire/calcul: chiar daca un rand invalid ajunge in DB
+    ocolind `add_tariff_version`, metoda de decontare nesuportata nu produce
+    un pret numeric tacit."""
+    v = _version(
+        fixed_price_lei_per_kwh=Decimal("0.80"),
+        settlement_method="monthly_netting_custom",
+    )
+
+    assert svc.compute_effective_price_lei_per_kwh(v, None) is None
+    preview = svc.build_invoice_preview(v, None, Decimal("100"))
+    assert preview["available"] is False
+    assert "decontare" in preview["reason"]
+
+
+def test_disabled_economic_calculation_requires_limitation_note():
+    tariff = SimpleNamespace(id=uuid.uuid4(), kind="fixed")
+
+    with pytest.raises(ValueError, match="limitation_note"):
+        svc.add_tariff_version(
+            None, tariff, valid_from=datetime.now(UTC),
+            fixed_price_lei_per_kwh=None, opcom_margin_lei_per_kwh=None,
+            fixed_monthly_fee_lei=Decimal("0"), variable_component_lei_per_kwh=Decimal("0"),
+            settlement_method="monthly_netting_custom", settlement_interval_days=30,
+            economic_calculation_disabled=True, limitation_note=" ",
+        )
 
 
 # --- Export are formula proprie, nu derivata din import (issue #46) -------

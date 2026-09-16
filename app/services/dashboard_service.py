@@ -326,6 +326,7 @@ def _query_telemetry_rows(db: Session, station: Station, start: datetime, end: d
             "battery_kw": _w_to_kw(r.battery_power_w),
             "grid_kw": _w_to_kw(r.grid_power_w),
             "soc_pct": float(r.battery_soc_percent) if r.battery_soc_percent is not None else None,
+            "data_quality": "simulated" if r.is_simulated else ("stale" if r.is_late else "measured"),
             "is_simulated": r.is_simulated,
             "is_late": r.is_late,
         }
@@ -383,6 +384,7 @@ def _query_aggregate_chart_rows(
                 "battery_kw": battery_kw,
                 "grid_kw": grid_kw,
                 "soc_pct": float(row.avg_battery_soc_percent) if row.avg_battery_soc_percent is not None else None,
+                "data_quality": row.data_quality,
                 "is_simulated": row.data_quality == "simulated",
                 "is_late": False,
             }
@@ -399,6 +401,13 @@ _TIMESERIES_METRICS: dict[str, str] = {
     # `chart_aggregation.aggregate_series`, care ar refuza oricum "sum" aici.
     "soc_pct": "mean",
 }
+
+_QUALITY_RANK = {"measured": 0, "estimated": 1, "simulated": 2, "stale": 3, "missing": 4}
+
+
+def _worse_quality(current: str, candidate: str | None) -> str:
+    candidate = candidate or "missing"
+    return candidate if _QUALITY_RANK.get(candidate, 4) > _QUALITY_RANK.get(current, 4) else current
 
 
 def get_timeseries_chart(db: Session, station: Station, start: datetime, end: datetime, range_key: str) -> dict:
@@ -436,21 +445,22 @@ def get_timeseries_chart(db: Session, station: Station, start: datetime, end: da
 
     # Steaguri de calitate: "orice punct brut din bucket e simulat/intarziat"
     # -- pastrate separat de metricile numerice (nu au sens mediate).
-    quality_by_bucket: dict[datetime, dict[str, bool]] = {}
+    quality_by_bucket: dict[datetime, dict[str, bool | str]] = {}
     for row in rows:
         bucket_ts = (
             row["t"]
             if range_key in ("30d", "1y")
             else chart_aggregation.bucket_start(row["t"], bucket_seconds)
         )
-        q = quality_by_bucket.setdefault(bucket_ts, {"is_simulated": False, "is_late": False})
+        q = quality_by_bucket.setdefault(bucket_ts, {"is_simulated": False, "is_late": False, "data_quality": "measured"})
         q["is_simulated"] = q["is_simulated"] or bool(row["is_simulated"])
         q["is_late"] = q["is_late"] or bool(row["is_late"])
+        q["data_quality"] = _worse_quality(str(q["data_quality"]), row.get("data_quality"))
 
     points = []
     for point in aggregated:
         bucket_ts = point["t"]
-        q = quality_by_bucket.get(bucket_ts, {"is_simulated": False, "is_late": False})
+        q = quality_by_bucket.get(bucket_ts, {"is_simulated": False, "is_late": False, "data_quality": "missing"})
         points.append({**point, "t": bucket_ts.isoformat(), **q})
 
     return {
@@ -713,11 +723,35 @@ def get_forecast_vs_actual(db: Session, station: Station, metric: str, start: da
         select(TelemetryAggregate).where(
             TelemetryAggregate.station_id == station.id,
             TelemetryAggregate.period_type == "interval_15m",
-            TelemetryAggregate.period_start >= start,
             TelemetryAggregate.period_start < end,
+            TelemetryAggregate.period_end > start,
         )
     ).all()
-    actual_by_start = {a.period_start: a for a in aggregates}
+
+    def actual_average_kw(interval_start: datetime, interval_end: datetime) -> float | None:
+        total_seconds = (interval_end - interval_start).total_seconds()
+        if total_seconds <= 0:
+            return None
+        energy_total = Decimal("0")
+        covered_seconds = 0.0
+        for actual in aggregates:
+            overlap_start = max(actual.period_start, interval_start)
+            overlap_end = min(actual.period_end, interval_end)
+            overlap_seconds = (overlap_end - overlap_start).total_seconds()
+            if overlap_seconds <= 0:
+                continue
+            energy = actual.pv_energy_kwh if metric == "pv" else actual.load_energy_kwh
+            metric_coverage = float((actual.coverage or {}).get(metric, 0) or 0)
+            if energy is None or metric_coverage <= 0:
+                continue
+            aggregate_seconds = (actual.period_end - actual.period_start).total_seconds()
+            if aggregate_seconds <= 0:
+                continue
+            energy_total += energy * Decimal(str(overlap_seconds / aggregate_seconds))
+            covered_seconds += overlap_seconds * metric_coverage
+        if covered_seconds / total_seconds < 0.9:
+            return None
+        return float(energy_total) / (total_seconds / 3600)
 
     if metric == "pv":
         rows = db.scalars(
@@ -748,11 +782,7 @@ def get_forecast_vs_actual(db: Session, station: Station, metric: str, start: da
 
     out = []
     for f in forecasts:
-        actual = actual_by_start.get(f.interval_start)
-        actual_kw = None
-        if actual is not None:
-            energy = actual.pv_energy_kwh if metric == "pv" else actual.load_energy_kwh
-            actual_kw = float(energy) * 4 if energy is not None and (actual.coverage or {}).get(metric, 0) >= 0.9 else None  # kWh pe interval de 15 min -> kW mediu
+        actual_kw = actual_average_kw(f.interval_start, f.interval_end)
         forecast_kw = float(f.predicted_power_kw) if metric == "pv" else float(f.base_load_kw + f.ev_component_kw + f.flexible_component_kw)
         out.append(
             {

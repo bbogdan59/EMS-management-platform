@@ -286,17 +286,75 @@ function emsInitDashboard(stationId, initialSummary = null) {
     }
   }
 
+  const EMS_CHART_SYMBOL_THRESHOLD = 48;
+
   function lineChart(el, series, opts = {}) {
     const chart = echarts.init(el, emsChartTheme());
+    const configuredSeries = series.map((item) => ({
+      showSymbol: Array.isArray(item.data) && item.data.length <= EMS_CHART_SYMBOL_THRESHOLD,
+      ...item,
+    }));
+    if (opts.markAreas && opts.markAreas.length && configuredSeries.length) {
+      configuredSeries[0] = {
+        ...configuredSeries[0],
+        markArea: {
+          silent: true,
+          itemStyle: { opacity: 0.14 },
+          data: opts.markAreas,
+        },
+      };
+    }
     chart.setOption({
       grid: { left: 48, right: 16, top: 24, bottom: 32 },
       tooltip: { trigger: "axis" },
       legend: opts.legend !== false ? {} : undefined,
       xAxis: { type: "time" },
       yAxis: { type: "value", name: opts.yName || "" },
-      series: series,
+      series: configuredSeries,
     });
     return chart;
+  }
+
+  const chartQualityColors = {
+    estimated: "rgba(245, 158, 11, 0.18)",
+    simulated: "rgba(168, 85, 247, 0.16)",
+    stale: "rgba(239, 68, 68, 0.14)",
+    missing: "rgba(107, 114, 128, 0.12)",
+  };
+
+  function qualityLabel(quality) {
+    return { estimated: "estimat", simulated: "simulat", stale: "invechit", missing: "lipsa" }[quality] || quality;
+  }
+
+  function qualityMarkAreas(points) {
+    const areas = [];
+    const special = (quality) => quality && quality !== "measured" && chartQualityColors[quality];
+    let active = null;
+    for (let i = 0; i < points.length; i += 1) {
+      const point = points[i];
+      const quality = point.data_quality || "missing";
+      const start = point.t;
+      if (!special(quality)) {
+        if (active) {
+          areas.push([{ xAxis: active.start, name: qualityLabel(active.quality), itemStyle: { color: chartQualityColors[active.quality] } }, { xAxis: start }]);
+          active = null;
+        }
+        continue;
+      }
+      if (!active) active = { quality, start };
+      else if (active.quality !== quality) {
+        areas.push([{ xAxis: active.start, name: qualityLabel(active.quality), itemStyle: { color: chartQualityColors[active.quality] } }, { xAxis: start }]);
+        active = { quality, start };
+      }
+    }
+    if (active && points.length) {
+      const last = points[points.length - 1];
+      const prev = points.length > 1 ? points[points.length - 2] : null;
+      const lastMs = new Date(last.t).getTime();
+      const stepMs = prev ? Math.max(1, lastMs - new Date(prev.t).getTime()) : 15 * 60 * 1000;
+      areas.push([{ xAxis: active.start, name: qualityLabel(active.quality), itemStyle: { color: chartQualityColors[active.quality] } }, { xAxis: new Date(lastMs + stepMs).toISOString() }]);
+    }
+    return areas;
   }
 
   // Cache scurt pe URL exacta (interval inclus) -- evita re-fetch-uri
@@ -338,8 +396,8 @@ function emsInitDashboard(stationId, initialSummary = null) {
       if (resEl) resEl.textContent = describeResolution(data);
       if (!points.length) { showWidgetState(widget, "empty"); return; }
       showWidgetState(widget, "ok");
-      const mk = (key, name) => ({ name, type: "line", showSymbol: false, data: points.map((d) => [d.t, d[key]]) });
-      lineChart(widget.chartEl, [mk("pv_kw", "PV"), mk("load_kw", "Consum"), mk("battery_kw", "Baterie"), mk("grid_kw", "Retea")], { yName: "kW" });
+      const mk = (key, name) => ({ name, type: "line", data: points.map((d) => [d.t, d[key]]) });
+      lineChart(widget.chartEl, [mk("pv_kw", "PV"), mk("load_kw", "Consum"), mk("battery_kw", "Baterie"), mk("grid_kw", "Retea")], { yName: "kW", markAreas: qualityMarkAreas(points) });
     } catch (e) {
       if (controller !== powerChartController) return; // inlocuita/anulata intre timp, nu e o eroare de afisat
       console.error(e);
@@ -362,7 +420,7 @@ function emsInitDashboard(stationId, initialSummary = null) {
       if (resEl) resEl.textContent = describeResolution(data);
       if (!points.length) { showWidgetState(widget, "empty"); return; }
       showWidgetState(widget, "ok");
-      lineChart(widget.chartEl, [{ name: "SOC", type: "line", showSymbol: false, areaStyle: {}, data: points.map((d) => [d.t, d.soc_pct]) }], { yName: "%", legend: false });
+      lineChart(widget.chartEl, [{ name: "SOC", type: "line", areaStyle: {}, data: points.map((d) => [d.t, d.soc_pct]) }], { yName: "%", legend: false, markAreas: qualityMarkAreas(points) });
     } catch (e) {
       if (controller !== socChartController) return;
       console.error(e);

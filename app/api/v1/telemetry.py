@@ -93,6 +93,17 @@ TELEMETRY_CONTRACT_V1 = {
         "type": "object",
         "purpose": "diagnostic flags reported by the device; flags do not create numeric values.",
     },
+    "provenance": {
+        "numeric_values_default": "measured",
+        "categories": ["measured", "derived", "simulated", "stale"],
+        "simulation_flag": "raw_payload.simulated == true",
+        "derived_flag": "quality_flags.derived == true",
+        "stale_flag": "server derives stale/late from measured_at vs received_at",
+        "rule": (
+            "Synthetic, simulated, derived or stale provenance must be declared explicitly; "
+            "unsupported raw_payload fields are never promoted to measured telemetry."
+        ),
+    },
     "raw_payload": {
         "type": "object",
         "purpose": "diagnostic/source payload only; unsupported extended metrics are not treated as canonical telemetry in schema v1.",

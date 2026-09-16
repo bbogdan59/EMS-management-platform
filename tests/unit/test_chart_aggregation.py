@@ -147,3 +147,18 @@ def test_coverage_never_exceeds_one_even_with_dense_raw_data():
     rows = [{"t": _t(0, s)} for s in range(0, 60, 5)]  # multe puncte in ACELASI bucket
     coverage = agg.compute_coverage(rows, timestamp_key="t", start=start, end=end, bucket_seconds=900)
     assert coverage == 1.0
+
+
+def test_coverage_ignores_points_outside_requested_range():
+    start = _t(0)
+    end = datetime(2026, 1, 1, 10, 30, 0, tzinfo=UTC)  # 2 bucket-uri asteptate
+    rows = [
+        {"t": datetime(2026, 1, 1, 9, 45, tzinfo=UTC)},
+        {"t": _t(0)},
+        {"t": datetime(2026, 1, 1, 10, 30, tzinfo=UTC)},
+        {"t": datetime(2026, 1, 1, 11, 0, tzinfo=UTC)},
+    ]
+
+    coverage = agg.compute_coverage(rows, timestamp_key="t", start=start, end=end, bucket_seconds=900)
+
+    assert coverage == pytest.approx(0.5)

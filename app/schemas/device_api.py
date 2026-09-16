@@ -118,6 +118,7 @@ class TelemetryContractResponse(BaseModel):
     time: dict
     metrics: list[TelemetryMetricSpec]
     quality_flags: dict
+    provenance: dict
     raw_payload: dict
     ack: dict
 

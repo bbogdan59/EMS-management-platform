@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import contextlib
+from datetime import datetime, timedelta
 
+from app.models.enums import ImportRunStatus
 from app.services.consumption_forecast_service import ConsumptionForecastError
 from app.workers import tasks
 
@@ -87,3 +89,32 @@ def test_weather_and_forecast_task_reports_skipped_lock(monkeypatch):
     monkeypatch.setattr(tasks, "_task_lock", lambda name: _lock(False))
 
     assert tasks.weather_and_forecast_task() == {"skipped": "already_running"}
+
+
+def test_opcom_import_daily_task_revalidates_current_window_even_after_success(monkeypatch):
+    class _Run:
+        status = ImportRunStatus.unchanged.value
+
+    calls = []
+    monkeypatch.setattr(tasks, "_task_lock", lambda name: _lock(True))
+    monkeypatch.setattr(tasks, "session_scope", lambda: _session(object()))
+
+    def _old_skip_guard(*args, **kwargs):
+        raise AssertionError("current/tomorrow imports must be revalidated, not skipped")
+
+    monkeypatch.setattr(tasks.opcom_service, "has_successful_real_import", _old_skip_guard)
+
+    def _import_opcom_day(db, delivery_date):
+        calls.append(delivery_date)
+        return _Run()
+
+    monkeypatch.setattr(tasks.opcom_service, "import_opcom_day", _import_opcom_day)
+
+    result = tasks.opcom_import_daily_task()
+
+    today = datetime.now(tasks.opcom_service.BUCHAREST).date()
+    assert calls == [today, today + timedelta(days=1)]
+    assert result == {
+        today.isoformat(): ImportRunStatus.unchanged.value,
+        (today + timedelta(days=1)).isoformat(): ImportRunStatus.unchanged.value,
+    }

@@ -92,3 +92,16 @@ def test_generate_pv_forecast_propagates_weather_quality_and_synthetic_flag(db):
 
     assert created[0].confidence == "low"
     assert created[0].is_synthetic is True
+
+
+def test_pv_source_version_exposes_weather_forecast_version():
+    weather = WeatherForecast(
+        source="open-meteo",
+        source_version="gfs-romania;asof=20260915T0600Z",
+    )
+
+    source_version = pv_forecast_service._pv_source_version(weather)
+
+    assert source_version.startswith("pvlib=")
+    assert ";weather=gfs-romania;asof=20260915T0600Z" in source_version
+    assert len(source_version) <= pv_forecast_service.SOURCE_VERSION_LIMIT

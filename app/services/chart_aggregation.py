@@ -136,5 +136,7 @@ def compute_coverage(
     expected_buckets = max(1, math.ceil((end - start).total_seconds() / bucket_seconds))
     present: set[datetime] = set()
     for row in rows:
-        present.add(bucket_start(row[timestamp_key], bucket_seconds))
+        ts = row[timestamp_key]
+        if start <= ts < end:
+            present.add(bucket_start(ts, bucket_seconds))
     return min(1.0, len(present) / expected_buckets)

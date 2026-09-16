@@ -88,9 +88,6 @@ def opcom_import_daily_task() -> dict:
         with session_scope() as db:
             for offset in (0, 1):
                 d = datetime.now(opcom_service.BUCHAREST).date() + timedelta(days=offset)
-                if opcom_service.has_successful_real_import(db, d):
-                    results[d.isoformat()] = "already_succeeded"
-                    continue
                 run = opcom_service.import_opcom_day(db, d)
                 results[d.isoformat()] = run.status
         return results

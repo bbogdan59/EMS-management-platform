@@ -40,6 +40,7 @@ from app.models.station import PanelGroup, Station, StationConfigVersion
 from app.services.solar_geometry_service import sun_window_for_local_date
 
 SYSTEM_DERATE = 0.85
+SOURCE_VERSION_LIMIT = 64
 
 
 def _latest_config(db: Session, station_id) -> StationConfigVersion | None:
@@ -49,6 +50,11 @@ def _latest_config(db: Session, station_id) -> StationConfigVersion | None:
         .order_by(StationConfigVersion.version.desc())
         .limit(1)
     )
+
+
+def _pv_source_version(weather: WeatherForecast) -> str:
+    weather_version = weather.source_version or weather.source
+    return f"pvlib={pvlib.__version__};weather={weather_version}"[:SOURCE_VERSION_LIMIT]
 
 
 def generate_pv_forecast(db: Session, station: Station) -> list[PvForecast]:
@@ -134,7 +140,7 @@ def generate_pv_forecast(db: Session, station: Station) -> list[PvForecast]:
             interval_start=w.interval_start,
             interval_end=w.interval_end,
             source="pvlib",
-            source_version=pvlib.__version__,
+            source_version=_pv_source_version(w),
             based_on_weather_forecast_id=w.id,
             predicted_power_kw=round(power_kw, 4),
             scenario="expected",
