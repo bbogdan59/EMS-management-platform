@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 
 from app.core.rate_limit import reset_key
+from app.services.market_analytics_service import BUCHAREST
 from tests.factories import make_market_day, make_user
 from tests.web_helpers import login
 
@@ -42,6 +43,18 @@ def test_market_data_endpoints_return_json(client, db):
     body = overlay.json()
     assert "2025" in body and "2026" in body
 
+    today = datetime.now(BUCHAREST).date()
+    make_market_day(db, today, [300.0] * 96)
+    make_market_day(db, today.replace(year=2025), [200.0] * 24)
+    db.commit()
+
+    five_day_overlay = client.get("/market/data/five-day-overlay?years=2025,2026")
+    assert five_day_overlay.status_code == 200
+    five_day_body = five_day_overlay.json()
+    assert five_day_body["current_year"] == today.year
+    assert len(five_day_body["series"][str(today.year)]) == 96
+    assert len(five_day_body["series"]["2025"]) == 24
+
     monthly = client.get("/market/data/monthly?years=2025,2026")
     assert monthly.status_code == 200
 
@@ -71,7 +84,11 @@ def test_market_data_timeline_stays_bounded_for_large_windows(client, db):
     assert resp.status_code == 200
     body = resp.json()
     assert body["resolution"] == "1d"
-    assert body["aggregation"] == {"price_lei_mwh": "mean", "price_lei_kwh": "mean"}
+    assert body["aggregation"] == {
+        "price_lei_mwh": "mean",
+        "price_lei_kwh": "mean",
+        "ohlc_lei_mwh": "open_close_min_max",
+    }
     assert body["timezone"] == "Europe/Bucharest"
     assert 0 < body["coverage"] <= 1
     points = body["points"]
