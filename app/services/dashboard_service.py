@@ -315,7 +315,7 @@ def _query_telemetry_rows(db: Session, station: Station, start: datetime, end: d
     agregarea pentru chart (issue #33), ca sa nu se duplice interogarea."""
     rows = db.scalars(
         select(TelemetryRaw)
-        .where(TelemetryRaw.station_id == station.id, TelemetryRaw.measured_at >= start, TelemetryRaw.measured_at <= end)
+        .where(TelemetryRaw.station_id == station.id, TelemetryRaw.measured_at >= start, TelemetryRaw.measured_at < end)
         .order_by(TelemetryRaw.measured_at)
     ).all()
     return [
