@@ -20,7 +20,7 @@
 
   {% if station.setup_completed_at %}
   <div class="rounded-lg bg-brand-50 p-3 text-sm text-brand-800 dark:bg-brand-900/20 dark:text-brand-200">
-    Configurarea ghidata a fost deja finalizata pe {{ station.setup_completed_at.strftime("%d.%m.%Y %H:%M") }}.
+    Configurarea ghidata a fost deja finalizata pe {{ station.setup_completed_at | local_dt(station.timezone) }}.
   </div>
   {% endif %}
 

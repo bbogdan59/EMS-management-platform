@@ -18,7 +18,7 @@
   <p class="text-sm text-gray-500 dark:text-gray-400">Versiune curenta: v{{ preference.version }}</p>
   {% if automation_suspended_until_local %}
   <div class="rounded-lg bg-amber-50 p-3 text-sm text-amber-800 dark:bg-amber-900/30 dark:text-amber-200">
-    Automatizarea live e suspendata pana la {{ automation_suspended_until_local.strftime("%d.%m.%Y %H:%M") }} (ora locala statiei, {{ station.timezone }}).
+    Automatizarea live e suspendata pana la {{ automation_suspended_until_local | local_dt(station.timezone) }}.
   </div>
   {% endif %}
   {% if preference.conflict_warnings %}

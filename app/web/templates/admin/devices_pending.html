@@ -35,12 +35,12 @@
         <tr class="border-t border-gray-100 dark:border-gray-800">
           <td class="py-1 font-mono text-xs">{{ d.installation_uuid }}</td>
           <td class="text-xs">{{ d.capabilities | tojson }}</td>
-          <td>{{ d.enrolled_at.strftime("%d.%m.%Y %H:%M") if d.enrolled_at else "-" }}</td>
+          <td>{{ d.enrolled_at | local_dt(None) if d.enrolled_at else "-" }}</td>
           <td>
             {% if d.enrollment_expires_at and d.enrollment_expires_at < now %}
               <span class="badge-error">expirat</span>
             {% else %}
-              {{ d.enrollment_expires_at.strftime("%d.%m.%Y %H:%M") if d.enrollment_expires_at else "-" }}
+              {{ d.enrollment_expires_at | local_dt(None) if d.enrollment_expires_at else "-" }}
             {% endif %}
           </td>
           <td>

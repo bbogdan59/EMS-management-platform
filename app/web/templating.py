@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -45,8 +45,11 @@ def fmt_local_dt(value, tz_name: str | None) -> str:
             value = datetime.fromisoformat(value)
         except ValueError:
             return value
-    tz = ZoneInfo(tz_name) if tz_name else ZoneInfo("UTC")
-    return value.astimezone(tz).strftime("%d.%m %H:%M")
+    if value.tzinfo is None or value.utcoffset() is None:
+        value = value.replace(tzinfo=UTC)
+    tz_label = tz_name or "UTC"
+    tz = ZoneInfo(tz_label)
+    return f"{value.astimezone(tz).strftime('%d.%m.%Y %H:%M')} {tz_label}"
 
 
 templates.env.filters["lei"] = fmt_lei

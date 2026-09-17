@@ -27,8 +27,8 @@
       <tbody>
         {% for v in t.versions %}
         <tr class="border-t border-gray-100 dark:border-gray-800">
-          <td class="py-1">{{ v.valid_from.strftime("%d.%m.%Y %H:%M") }}</td>
-          <td>{{ v.valid_to.strftime("%d.%m.%Y %H:%M") if v.valid_to else "-" }}</td>
+          <td class="py-1">{{ v.valid_from | local_dt(station.timezone) }}</td>
+          <td>{{ v.valid_to | local_dt(station.timezone) if v.valid_to else "-" }}</td>
           <td>{{ v.fixed_price_lei_per_kwh | lei_per_kwh }}</td>
           <td>{{ v.opcom_margin_lei_per_kwh | lei_per_kwh }}</td>
           <td>{{ v.distribution_lei_per_kwh | lei_per_kwh }}</td>

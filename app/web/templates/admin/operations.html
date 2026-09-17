@@ -53,7 +53,7 @@
               <span class="text-red-600" title="{{ j.error_message }}">{{ j.error_message | truncate(60) }}</span>
             {% else %}-{% endif %}
           </td>
-          <td>{{ j.created_at.strftime("%d.%m %H:%M") }}</td>
+          <td>{{ j.created_at | local_dt(None) }}</td>
         </tr>
         {% else %}
         <tr><td colspan="5" class="py-2 text-gray-500">Niciun job admin inca.</td></tr>
@@ -136,7 +136,7 @@
         <tbody>
           {% for r in optimization_runs %}
           <tr class="border-t border-gray-100 dark:border-gray-800">
-            <td class="py-1">{{ r.created_at.strftime("%d.%m %H:%M") }}</td>
+            <td class="py-1">{{ r.created_at | local_dt(None) }}</td>
             <td>
               {% if r.status == "succeeded" %}<span class="badge-ok">succes</span>
               {% elif r.status in ("infeasible", "failed") %}<span class="badge-error">{{ r.status }}</span>
@@ -160,7 +160,7 @@
           <tr class="border-t border-gray-100 dark:border-gray-800">
             <td class="py-1">{{ d.name }}</td>
             <td>{{ d.status }}</td>
-            <td>{{ d.last_heartbeat_at.strftime("%d.%m %H:%M") if d.last_heartbeat_at else "-" }}</td>
+            <td>{{ d.last_heartbeat_at | local_dt(None) if d.last_heartbeat_at else "-" }}</td>
           </tr>
           {% endfor %}
         </tbody>
@@ -177,7 +177,7 @@
             <td class="py-1">{{ c.type }}</td>
             <td>{{ c.status }}</td>
             <td>{{ c.author }}</td>
-            <td>{{ c.created_at.strftime("%d.%m %H:%M") }}</td>
+            <td>{{ c.created_at | local_dt(None) }}</td>
           </tr>
           {% else %}
           <tr><td colspan="4" class="py-2 text-gray-500">Nicio comanda inca.</td></tr>

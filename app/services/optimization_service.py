@@ -488,9 +488,12 @@ def _run_locked(db: Session, station_id: uuid.UUID, triggered_by: str, triggered
             f"{shadow_downgrade_reason} {forecast_reason}" if shadow_downgrade_reason else forecast_reason
         )
 
+    display_tz = ZoneInfo(station.timezone)
     run.explanation_summary = (
         f"Cost net estimat pe orizont: {result['objective']:.2f} lei. "
-        f"Prioritate: {preference.priority}. Interval optimizat: {start:%d.%m %H:%M} - {end:%d.%m %H:%M}."
+        f"Prioritate: {preference.priority}. "
+        f"Interval optimizat: {start.astimezone(display_tz):%d.%m %H:%M} - "
+        f"{end.astimezone(display_tz):%d.%m %H:%M} {station.timezone}."
         + (f" {shadow_downgrade_reason}" if shadow_downgrade_reason else "")
     )
     db.add(run)

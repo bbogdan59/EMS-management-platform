@@ -16,7 +16,7 @@
           <td>
             {% for m in row.memberships %}<span class="badge-muted">{{ m.org }}: {{ m.role }}</span>{% endfor %}
           </td>
-          <td>{{ row.user.last_login_at.strftime("%d.%m.%Y %H:%M") if row.user.last_login_at else "niciodata" }}</td>
+          <td>{{ row.user.last_login_at | local_dt(None) if row.user.last_login_at else "niciodata" }}</td>
         </tr>
         {% endfor %}
       </tbody>

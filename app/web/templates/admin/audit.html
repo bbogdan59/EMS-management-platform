@@ -23,7 +23,7 @@
       <tbody>
         {% for e in entries %}
         <tr class="border-t border-gray-100 dark:border-gray-800">
-          <td class="py-1 whitespace-nowrap">{{ e.occurred_at.strftime("%d.%m.%Y %H:%M:%S") }}</td>
+          <td class="py-1 whitespace-nowrap">{{ e.occurred_at | local_dt(None) }}</td>
           <td>{{ e.actor_label }}</td>
           <td>{{ e.action }}</td>
           <td>{{ e.resource_type }}{% if e.resource_id %} #{{ e.resource_id[:8] }}{% endif %}</td>

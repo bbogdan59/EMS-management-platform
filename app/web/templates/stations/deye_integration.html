@@ -86,7 +86,7 @@
       <p>Statie Deye Cloud legata: <strong>{{ connection.remote_station_name }}</strong> (id {{ connection.remote_station_id }})</p>
       <p>
         Ultima sincronizare:
-        {% if connection.last_sync_at %}{{ connection.last_sync_at.strftime("%d.%m.%Y %H:%M") }} UTC --
+        {% if connection.last_sync_at %}{{ connection.last_sync_at | local_dt(station.timezone) }} --
           {% if connection.last_sync_status == "succeeded" %}<span class="badge-ok">reusita</span>
           {% elif connection.last_sync_status == "skipped" %}<span class="badge-muted">omisa ({{ connection.last_sync_message }})</span>
           {% else %}<span class="badge-error">esuata</span>{% endif %}
