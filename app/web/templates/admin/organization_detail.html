@@ -148,6 +148,11 @@
 
     {% if pending_invitations %}
     <h3 class="mb-2 mt-4 text-sm font-medium text-gray-600 dark:text-gray-300">Invitatii in asteptare</h3>
+    {% if invitation_delivery_mode == "manual_link" %}
+    <p class="mb-2 text-xs text-gray-500 dark:text-gray-400">
+      Regenerarea unui link invalideaza imediat linkul anterior -- acesta nu va mai putea fi folosit.
+    </p>
+    {% endif %}
     <table class="w-full text-sm">
       <thead class="text-left text-gray-500"><tr><th class="py-1">E-mail</th><th>Rol</th><th></th><th></th></tr></thead>
       <tbody>
@@ -156,16 +161,75 @@
           <td class="py-1">{{ inv.email }}</td>
           <td>{{ inv.role }}</td>
           <td>{% if inv.expires_at < now %}<span class="badge-warn">expirata</span>{% endif %}</td>
-          <td>
+          <td class="flex flex-wrap gap-2 text-xs">
+            <form method="post" action="/admin/organizations/{{ organization.id }}/invitations/{{ inv.id }}/resend" class="inline">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}" />
+              <button type="submit" class="text-brand-700 hover:underline dark:text-brand-300">
+                {% if invitation_delivery_mode == "manual_link" %}genereaza link nou{% else %}retrimite email{% endif %}
+              </button>
+            </form>
             <form method="post" action="/admin/organizations/{{ organization.id }}/invitations/{{ inv.id }}/cancel" class="inline">
               <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}" />
-              <button type="submit" class="text-xs text-red-600 hover:underline">anuleaza</button>
+              <button type="submit" class="text-red-600 hover:underline">anuleaza</button>
             </form>
           </td>
         </tr>
         {% endfor %}
       </tbody>
     </table>
+    {% endif %}
+
+    <details class="mt-4">
+      <summary class="cursor-pointer text-sm font-medium text-brand-700 dark:text-brand-300">+ Invita membru</summary>
+      <form method="post" action="/admin/organizations/{{ organization.id }}/invitations" class="mt-3 space-y-3">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}" />
+        <div>
+          <label class="label">Email</label>
+          <input class="input" type="email" name="email" required />
+        </div>
+        <div>
+          <label class="label">Rol</label>
+          <select class="input" name="role">
+            {% for r in organization_roles %}
+            <option value="{{ r }}">{{ r }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <button type="submit" class="btn-primary">
+          {% if invitation_delivery_mode == "manual_link" %}Creeaza invitatie{% else %}Trimite invitatie{% endif %}
+        </button>
+        <p class="text-xs text-gray-500 dark:text-gray-400">
+          Invitatia este creata direct ca platform_admin, fara impersonare de organizatie -- ramane inregistrata
+          in audit sub contul tau.
+          {% if invitation_delivery_mode == "manual_link" %}
+          Mod curent: link copiabil, fara email.
+          {% else %}
+          Mod curent: trimitere prin email.
+          {% endif %}
+        </p>
+      </form>
+    </details>
+    {% if invitation_error %}
+    <p class="mt-3 rounded-lg bg-red-50 p-3 text-xs text-red-700 dark:bg-red-900/30 dark:text-red-300">{{ invitation_error }}</p>
+    {% endif %}
+    {% if invitation_reveal %}
+    <div class="mt-3 rounded-lg bg-brand-50 p-3 text-xs text-brand-900 dark:bg-brand-900/30 dark:text-brand-100">
+      <p class="mb-2 font-medium">Link de invitatie generat -- afisat o singura data</p>
+      <div class="flex flex-wrap items-center gap-2">
+        <code id="admin-invite-url-reveal" class="break-all rounded bg-white/70 px-2 py-1 font-mono dark:bg-black/20">{{ invitation_reveal.url }}</code>
+        <button type="button" class="btn-secondary !px-2 !py-1" data-copy-target="admin-invite-url-reveal" onclick="emsCopyToClipboard(this)">
+          Copiaza linkul
+        </button>
+      </div>
+      <p class="mt-2">
+        Pentru <strong>{{ invitation_reveal.email }}</strong>, rol <strong>{{ invitation_reveal.role }}</strong> --
+        expira la {{ invitation_reveal.expires_at.strftime("%d.%m.%Y %H:%M") }} UTC.
+      </p>
+      <p class="mt-2 text-amber-700 dark:text-amber-300">
+        Oricine detine acest link poate accepta invitatia pentru acest email -- trimite-l printr-un canal de
+        incredere. Dupa ce parasesti sau reincarci aceasta pagina, linkul nu mai poate fi reafisat.
+      </p>
+    </div>
     {% endif %}
   </div>
 

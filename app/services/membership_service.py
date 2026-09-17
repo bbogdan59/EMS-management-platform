@@ -211,7 +211,12 @@ def remove_member(db: Session, organization: Organization, membership: Membershi
 def resend_invitation(db: Session, organization: Organization, invitation: Invitation, actor: User) -> str:
     """Regenereaza token-ul si prospetimea unei invitatii existente (in loc
     sa creeze una noua) -- pastreaza acelasi `Invitation.id`, deci acelasi
-    istoric de audit. Retrimite emailul cu noul link."""
+    istoric de audit. In modul 'email' retrimite mesajul cu noul link; in
+    modul 'manual_link' (issue #149) nu atinge deloc adaptorul de email --
+    apelantul (ruta HTTP) afiseaza URL-ul complet returnat aici o singura
+    data. In ambele moduri, rotatia INVALIDEAZA imediat linkul anterior:
+    hash-ul vechi nu mai exista in DB dupa acest apel, deci `accept_invitation`
+    cu tokenul vechi va esua."""
     if invitation.organization_id != organization.id:
         raise MembershipError("Invitatia nu apartine acestei organizatii.")
     if invitation.accepted_at is not None:
@@ -220,7 +225,6 @@ def resend_invitation(db: Session, organization: Organization, invitation: Invit
         raise MembershipError("Invitatia a fost anulata.")
 
     from app.config import get_settings
-    from app.core.email import get_email_adapter
 
     settings = get_settings()
     raw_token = generate_opaque_token()
@@ -229,21 +233,28 @@ def resend_invitation(db: Session, organization: Organization, invitation: Invit
     db.add(invitation)
     db.flush()
 
-    accept_url = f"{settings.base_url}/accept-invitation?token={raw_token}"
-    get_email_adapter().send(
-        to=invitation.email,
-        subject=f"Invitatie EMS Platform - {organization.name}",
-        body=(
-            f"Ai fost invitat sa te alaturi organizatiei '{organization.name}' cu rolul '{invitation.role}'.\n"
-            f"Acceseaza acest link pentru a-ti crea contul (valabil {settings.invite_token_ttl_hours}h):\n"
-            f"{accept_url}"
-        ),
-    )
+    if settings.invitation_delivery_mode == "email":
+        from app.core.email import get_email_adapter
+
+        accept_url = f"{settings.base_url}/accept-invitation?token={raw_token}"
+        get_email_adapter().send(
+            to=invitation.email,
+            subject=f"Invitatie EMS Platform - {organization.name}",
+            body=(
+                f"Ai fost invitat sa te alaturi organizatiei '{organization.name}' cu rolul '{invitation.role}'.\n"
+                f"Acceseaza acest link pentru a-ti crea contul (valabil {settings.invite_token_ttl_hours}h):\n"
+                f"{accept_url}"
+            ),
+        )
 
     record_audit(
         db, action="invitation_resent", resource_type="invitation", resource_id=str(invitation.id),
         actor_user_id=actor.id, actor_label=_actor_label(actor), organization_id=organization.id,
-        metadata={"invited_email": invitation.email, "role": invitation.role},
+        metadata={
+            "invited_email": invitation.email,
+            "role": invitation.role,
+            "delivery_mode": settings.invitation_delivery_mode,
+        },
     )
     return raw_token
 

@@ -9,6 +9,7 @@ from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from app.api.deps import OrganizationAccess, get_current_user
+from app.config import get_settings
 from app.core.audit import record_audit
 from app.core.csrf import verify_csrf
 from app.core.rbac import can_manage_organization
@@ -19,13 +20,17 @@ from app.models.user import Invitation, User
 from app.schemas.station_forms import StationCreateInput
 from app.services import auth_service, membership_service, station_service
 from app.web.context import build_nav_context
+from app.web.invitation_ui import invitation_reveal as _invitation_reveal
+from app.web.invitation_ui import should_reveal_invitation_link as _should_reveal_invitation_link
+from app.web.response_headers import apply_no_store_headers
 from app.web.templating import templates
 from app.web.wizard import wizard_chrome_context
 
 router = APIRouter()
 
 
-def _organization_context(db: Session, organization, role: str, user: User, *, invitation_token=None):
+def _organization_context(db: Session, organization, role: str, user: User, *, invitation_reveal=None):
+    settings = get_settings()
     return {
         "organization": organization,
         "stations": organization.stations,
@@ -36,7 +41,8 @@ def _organization_context(db: Session, organization, role: str, user: User, *, i
         "my_role": role,
         "can_manage": can_manage_organization(role),
         "organization_roles": sorted(auth_service.ORGANIZATION_ROLES),
-        "invitation_token": invitation_token,
+        "invitation_reveal": invitation_reveal,
+        "invitation_delivery_mode": settings.invitation_delivery_mode,
         **build_nav_context(db, user),
     }
 
@@ -184,6 +190,7 @@ def invite_member(
     user: User = Depends(get_current_user),
 ):
     organization, current_role = org_role
+    settings = get_settings()
     try:
         invitation, raw_token = auth_service.create_invitation(db, organization, email, role, user.id)
     except auth_service.AuthError as exc:
@@ -194,22 +201,17 @@ def invite_member(
     record_audit(
         db, action="invitation_created", resource_type="invitation", resource_id=str(invitation.id),
         actor_user_id=user.id, actor_label=user.email, organization_id=organization.id,
-        metadata={"invited_email": email, "role": role},
+        metadata={"invited_email": email, "role": role, "delivery_mode": settings.invitation_delivery_mode},
     )
     db.commit()
 
-    from app.config import get_settings
-
-    settings = get_settings()
-    token = raw_token if settings.environment != "production" else None
+    reveal = _invitation_reveal(invitation, raw_token) if _should_reveal_invitation_link(settings) else None
     response = templates.TemplateResponse(
         request,
         "organizations/detail.html",
-        _organization_context(db, organization, current_role, user, invitation_token=token),
+        _organization_context(db, organization, current_role, user, invitation_reveal=reveal),
     )
-    response.headers["Cache-Control"] = "no-store"
-    response.headers["Referrer-Policy"] = "no-referrer"
-    return response
+    return apply_no_store_headers(response)
 
 
 def _get_membership_in_org(db: Session, organization_id: uuid.UUID, membership_id: uuid.UUID) -> Membership | None:
@@ -321,6 +323,7 @@ def resend_invitation(
     user: User = Depends(get_current_user),
 ):
     organization, current_role = org_role
+    settings = get_settings()
     invitation = _get_invitation_in_org(db, organization.id, invitation_id)
     if invitation is None:
         return _redirect_with_error(organization_id, "Invitatie inexistenta in aceasta organizatie.")
@@ -331,18 +334,13 @@ def resend_invitation(
         return _redirect_with_error(organization_id, str(exc))
     db.commit()
 
-    from app.config import get_settings
-
-    settings = get_settings()
-    token = raw_token if settings.environment != "production" else None
+    reveal = _invitation_reveal(invitation, raw_token) if _should_reveal_invitation_link(settings) else None
     response = templates.TemplateResponse(
         request,
         "organizations/detail.html",
-        _organization_context(db, organization, current_role, user, invitation_token=token),
+        _organization_context(db, organization, current_role, user, invitation_reveal=reveal),
     )
-    response.headers["Cache-Control"] = "no-store"
-    response.headers["Referrer-Policy"] = "no-referrer"
-    return response
+    return apply_no_store_headers(response)
 
 
 @router.post("/organizations/{organization_id}/invitations/{invitation_id}/cancel", dependencies=[Depends(verify_csrf)])

@@ -2497,3 +2497,65 @@ iteratie -- vezi si sectiunea de mai sus):**
   necunoscut (`None`), nu un pret numeric tacit.
 - **Decontare neta ora-cu-ora in preview, formula "provider"/"custom"
   distincta** -- neschimbate fata de prima iteratie (vezi mai sus).
+
+## Addendum: Invitatii cu link copiabil, fara SMTP (issue #149)
+
+**Ce s-a implementat.** O noua setare `INVITATION_DELIVERY_MODE` (`"email"` --
+implicit, comportament neschimbat -- sau `"manual_link"`) decupleaza "poate
+platforma sa livreze invitatii prin SMTP" de "e SMTP configurat deloc". In
+modul `manual_link`, nici `auth_service.create_invitation`, nici
+`membership_service.resend_invitation` nu mai apeleaza deloc adaptorul de
+email pentru invitatii -- ruta HTTP (autoservire `/organizations/{id}` PENTRU
+organization_admin+, sau backoffice `/admin/organizations/{id}` pentru
+platform_admin, ruta noua `admin_invite_member`) afiseaza URL-ul complet o
+singura data, direct in pagina (nu redirect), cu un buton de copiere in
+clipboard (`emsCopyToClipboard`, `app.js`) si fara ca linkul sa apara vreodata
+in URL-ul cererii. `model_post_init` din `config.py` respinge in continuare
+`EMAIL_BACKEND=console` in productie, dar DOAR cand
+`INVITATION_DELIVERY_MODE=email` -- `manual_link` e exact escape hatch-ul
+pentru un deploy fara SMTP configurat.
+
+**Idempotenta la dublu submit/reinvitare.** `create_invitation` cauta acum o
+invitatie pending existenta pentru acelasi `(organization_id, email)` si, daca
+exista, ii ROTESTE tokenul/rolul/expirarea in loc sa insereze un al doilea
+rand -- garanteaza cel mult o invitatie pending per organizatie+email, cu un
+singur link valid la orice moment (acelasi tipar ca resend-ul explicit,
+verificat cu `test_double_submit_reuses_pending_invitation_instead_of_duplicating`
+si `test_create_invitation_is_idempotent_for_same_org_and_email`).
+
+**Reset de parola: mesaj onest, nu enumerare de conturi.** Ruta
+`/request-password-reset` crea deja tokenul in DB indiferent de backend, dar
+UI-ul pretindea intotdeauna "am trimis un email" chiar si cu
+`EMAIL_BACKEND=console`. Mesajul afisat dupa submit depinde acum doar de
+`settings.email_deliverable` (capacitate globala a mediului), niciodata de
+existenta reala a contului -- ambele cazuri (cont existent/inexistent) produc
+raspuns identic pentru un mediu dat.
+
+**Raspunsurile care poarta secretul (link de invitatie, cod de revendicare
+existent) primesc acum `Cache-Control: no-store`, `Referrer-Policy:
+no-referrer` SI `X-Robots-Tag: noindex, nofollow`** (`apply_no_store_headers`,
+generalizare a fostului `_sensitive_template` din `auth.py`, partajata acum si
+de `organizations.py`/`admin.py`).
+
+**Recuperarea administrativa a parolei (un flux separat, prin care un
+platform_admin ar putea declansa o resetare in numele altui utilizator) e
+EXPLICIT in afara scopului acestui PR** -- issue-ul cere doar ca mesajul
+afisat sa nu mai minta despre livrare, nu un flux administrativ nou de
+resetare. Ramane un follow-up separat daca e cerut explicit.
+
+**Nu acopera:** rotatia/afisarea linkului pentru invitatii deja acceptate sau
+revocate (raman needisponibile pentru resend, ca si inainte); niciun canal de
+livrare in afara de email/link copiabil (ex. SMS) nu a fost adaugat.
+
+**Teste.** Configurare (`tests/unit/test_review_config.py`): modul implicit
+`email` respinge in continuare `EMAIL_BACKEND=console` in productie,
+`manual_link` il permite explicit. Servicii
+(`tests/unit/test_auth_and_rbac.py`, `tests/unit/test_membership_service.py`):
+gating pe modul de livrare (adaptorul de email NU e atins deloc in
+`manual_link`), idempotenta prin rotatie, invalidarea imediata a tokenului
+vechi la regenerare. Rute (`tests/integration/test_invitation_manual_link.py`,
+extinderi in `tests/integration/test_web_security.py`): reveal in
+`manual_link` (inclusiv in productie), absenta reveal-ului in productie pentru
+modul `email`, headerele no-store/no-referrer/noindex, RBAC (platform_admin
+pentru ruta de backoffice), CSRF, respingerea rolului global
+`platform_admin` printr-o invitatie, si mesajul neutru de reset de parola.

@@ -6,6 +6,7 @@ from datetime import timedelta
 import pytest
 from sqlalchemy import select
 
+from app.config import get_settings
 from app.core.security import expires_in, generate_opaque_token, hash_token, utcnow
 from app.models.audit import AuditLog
 from app.models.organization import Membership
@@ -281,6 +282,61 @@ def test_resend_invitation_rejects_already_accepted(db):
 
     with pytest.raises(svc.MembershipError):
         svc.resend_invitation(db, org, inv, admin)
+
+
+def test_resend_invitation_sends_email_in_email_mode(db, monkeypatch):
+    sent = {}
+    monkeypatch.setattr(
+        "app.core.email.get_email_adapter",
+        lambda: type("A", (), {"send": staticmethod(lambda **kw: sent.update(kw))})(),
+    )
+    org = make_org(db, "Resend Email Org")
+    admin = make_user(db, email="resend-email-admin@test.local", is_platform_admin=True)
+    inv = _invitation(db, org, email="resend-email-target@test.local")
+    db.commit()
+
+    raw_token = svc.resend_invitation(db, org, inv, admin)
+    db.commit()
+
+    assert sent
+    assert sent["to"] == "resend-email-target@test.local"
+    assert raw_token in sent["body"]
+
+
+def test_resend_invitation_does_not_touch_email_adapter_in_manual_link_mode(db, monkeypatch):
+    settings = get_settings()
+    monkeypatch.setattr(settings, "invitation_delivery_mode", "manual_link")
+    monkeypatch.setattr(
+        "app.core.email.get_email_adapter",
+        lambda: (_ for _ in ()).throw(AssertionError("email adapter should not be used in manual_link mode")),
+    )
+    org = make_org(db, "Resend Manual Org")
+    admin = make_user(db, email="resend-manual-admin@test.local", is_platform_admin=True)
+    inv = _invitation(db, org, email="resend-manual-target@test.local")
+    old_hash = inv.token_hash
+    db.commit()
+
+    raw_token = svc.resend_invitation(db, org, inv, admin)
+    db.commit()
+
+    assert inv.token_hash != old_hash
+    assert inv.token_hash == hash_token(raw_token)
+
+
+def test_resend_invitation_rotation_invalidates_old_token(db):
+    org = make_org(db, "Rotation Org")
+    admin = make_user(db, email="rotation-admin@test.local", is_platform_admin=True)
+    inv = _invitation(db, org, email="rotation-target@test.local")
+    old_raw = generate_opaque_token()
+    inv.token_hash = hash_token(old_raw)
+    db.commit()
+
+    new_raw = svc.resend_invitation(db, org, inv, admin)
+    db.commit()
+
+    assert new_raw != old_raw
+    assert inv.token_hash == hash_token(new_raw)
+    assert inv.token_hash != hash_token(old_raw)
 
 
 def test_cancel_invitation_sets_revoked_and_audits(db):

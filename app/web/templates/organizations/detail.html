@@ -143,6 +143,11 @@
 
       {% if can_manage and pending_invitations %}
       <h3 class="mb-2 mt-4 text-sm font-medium text-gray-600 dark:text-gray-300">Invitatii in asteptare</h3>
+      {% if invitation_delivery_mode == "manual_link" %}
+      <p class="mb-2 text-xs text-gray-500 dark:text-gray-400">
+        Regenerarea unui link invalideaza imediat linkul anterior -- acesta nu va mai putea fi folosit.
+      </p>
+      {% endif %}
       <ul class="divide-y divide-gray-100 dark:divide-gray-800">
         {% for inv in pending_invitations %}
         <li class="flex flex-wrap items-center justify-between gap-2 py-2 text-sm">
@@ -153,7 +158,9 @@
           <span class="flex gap-2 text-xs">
             <form method="post" action="/organizations/{{ organization.id }}/invitations/{{ inv.id }}/resend">
               <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}" />
-              <button type="submit" class="btn-secondary !px-2 !py-1">Retrimite</button>
+              <button type="submit" class="btn-secondary !px-2 !py-1">
+                {% if invitation_delivery_mode == "manual_link" %}Genereaza link nou{% else %}Retrimite email{% endif %}
+              </button>
             </form>
             <form method="post" action="/organizations/{{ organization.id }}/invitations/{{ inv.id }}/cancel">
               <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}" />
@@ -182,14 +189,38 @@
               {% endfor %}
             </select>
           </div>
-          <button type="submit" class="btn-primary">Trimite invitatie</button>
+          <button type="submit" class="btn-primary">
+            {% if invitation_delivery_mode == "manual_link" %}Creeaza invitatie{% else %}Trimite invitatie{% endif %}
+          </button>
+          <p class="text-xs text-gray-500 dark:text-gray-400">
+            {% if invitation_delivery_mode == "manual_link" %}
+            Mod curent: link copiabil, fara email -- dupa creare, copiaza linkul afisat mai jos si trimite-l tu
+            persoanei invitate.
+            {% else %}
+            Mod curent: trimitere prin email.
+            {% endif %}
+          </p>
         </form>
       </details>
-      {% if invitation_token %}
-      <p class="mt-3 rounded-lg bg-brand-50 p-3 text-xs text-brand-800 dark:bg-brand-900/30 dark:text-brand-200">
-        Invitatie creata. Token afisat o singura data in mod non-productie: <br />
-        <code class="break-all">{{ invitation_token }}</code>
-      </p>
+      {% if invitation_reveal %}
+      <div class="mt-3 rounded-lg bg-brand-50 p-3 text-xs text-brand-900 dark:bg-brand-900/30 dark:text-brand-100">
+        <p class="mb-2 font-medium">Link de invitatie generat -- afisat o singura data</p>
+        <div class="flex flex-wrap items-center gap-2">
+          <code id="invite-url-reveal" class="break-all rounded bg-white/70 px-2 py-1 font-mono dark:bg-black/20">{{ invitation_reveal.url }}</code>
+          <button type="button" class="btn-secondary !px-2 !py-1" data-copy-target="invite-url-reveal" onclick="emsCopyToClipboard(this)">
+            Copiaza linkul
+          </button>
+        </div>
+        <p class="mt-2">
+          Pentru <strong>{{ invitation_reveal.email }}</strong>, rol <strong>{{ invitation_reveal.role }}</strong> --
+          expira la {{ invitation_reveal.expires_at.strftime("%d.%m.%Y %H:%M") }} UTC.
+        </p>
+        <p class="mt-2 text-amber-700 dark:text-amber-300">
+          Oricine detine acest link poate accepta invitatia pentru acest email -- trimite-l printr-un canal de
+          incredere. Dupa ce parasesti sau reincarci aceasta pagina, linkul nu mai poate fi reafisat; foloseste
+          butonul de mai sus (Genereaza link nou / Retrimite email) daca il pierzi.
+        </p>
+      </div>
       {% endif %}
       {% endif %}
     </div>

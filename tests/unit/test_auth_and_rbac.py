@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import pytest
+from sqlalchemy import select
 
+from app.config import get_settings
 from app.core.rbac import can_manage_station_config, can_modify_operational_settings, role_at_least
+from app.models.user import Invitation
 from app.services import auth_service
-from tests.factories import make_user
+from tests.factories import make_org, make_user
 
 
 def test_authenticate_success(db):
@@ -73,3 +76,65 @@ def test_password_reset_flow(db):
 
     with pytest.raises(auth_service.AuthError):
         auth_service.reset_password(db, raw, "AnotherPassword123")
+
+
+def test_create_invitation_sends_email_in_email_mode(db, monkeypatch):
+    sent = {}
+    monkeypatch.setattr(
+        "app.services.auth_service.get_email_adapter",
+        lambda: type("A", (), {"send": staticmethod(lambda **kw: sent.update(kw))})(),
+    )
+    org = make_org(db, "Invite Email Org")
+    inviter = make_user(db, email="inviter-email@test.local")
+    db.commit()
+
+    invitation, raw_token = auth_service.create_invitation(db, org, "new-member@test.local", "viewer", inviter.id)
+    db.commit()
+
+    assert sent  # adaptorul de email a fost apelat
+    assert sent["to"] == "new-member@test.local"
+    assert raw_token in sent["body"]
+    assert invitation.email == "new-member@test.local"
+
+
+def test_create_invitation_does_not_touch_email_adapter_in_manual_link_mode(db, monkeypatch):
+    settings = get_settings()
+    monkeypatch.setattr(settings, "invitation_delivery_mode", "manual_link")
+
+    called = []
+    monkeypatch.setattr(
+        "app.services.auth_service.get_email_adapter",
+        lambda: (_ for _ in ()).throw(AssertionError("email adapter should not be used in manual_link mode")),
+    )
+    org = make_org(db, "Invite Manual Org")
+    inviter = make_user(db, email="inviter-manual@test.local")
+    db.commit()
+
+    invitation, raw_token = auth_service.create_invitation(db, org, "manual-member@test.local", "viewer", inviter.id)
+    db.commit()
+
+    assert not called
+    assert invitation.email == "manual-member@test.local"
+    assert raw_token
+
+
+def test_create_invitation_is_idempotent_for_same_org_and_email(db, monkeypatch):
+    monkeypatch.setattr(
+        "app.services.auth_service.get_email_adapter",
+        lambda: type("A", (), {"send": staticmethod(lambda **kw: None)})(),
+    )
+    org = make_org(db, "Idempotent Invite Org")
+    inviter = make_user(db, email="inviter-idem@test.local")
+    db.commit()
+
+    first, first_token = auth_service.create_invitation(db, org, "dup@test.local", "viewer", inviter.id)
+    db.commit()
+    second, second_token = auth_service.create_invitation(db, org, "DUP@test.local", "operator", inviter.id)
+    db.commit()
+
+    assert first.id == second.id  # rotit, nu duplicat
+    assert first_token != second_token
+    assert second.role == "operator"
+
+    rows = db.scalars(select(Invitation).where(Invitation.organization_id == org.id)).all()
+    assert len(rows) == 1
