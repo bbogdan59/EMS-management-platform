@@ -2045,11 +2045,15 @@ si vedea telemetria statiei importata de acolo, read-only:
   ca restul platformei; afisarea foloseste fusul statiei ca peste tot altundeva
   (nicio conversie speciala adaugata, cea existenta se aplica neschimbat).
 - **Unitati (WATI, confirmate live -- vezi addendumul issue #118 mai jos) si
-  conventii de semn documentate explicit**: `chargePower`/`dischargePower`
-  (ambele >= 0) combinate in `battery_power_w` cu conventia platformei
-  (pozitiv=incarcare); `purchasePower`/`wirePower` combinate similar in
-  `grid_power_w` (pozitiv=import). O cheie lipsa produce `None` (necunoscut),
-  NICIODATA 0 -- consecvent cu `docs/CODE_STANDARDS.md` regula 2.
+  conventii de semn documentate explicit**: `generationPower`/
+  `consumptionPower`/`chargePower`/`dischargePower`/`purchasePower`/
+  `wirePower` sunt tratate ca W si stocate canonic in coloanele `*_power_w`;
+  dashboard-ul converteste explicit W -> kW la afisare. `chargePower`/
+  `dischargePower` (ambele >= 0) sunt combinate in `battery_power_w` cu
+  conventia platformei (pozitiv=incarcare); `purchasePower`/`wirePower` sunt
+  combinate similar in `grid_power_w` (pozitiv=import). O cheie lipsa produce
+  `None` (necunoscut), NICIODATA 0 -- consecvent cu `docs/CODE_STANDARDS.md`
+  regula 2.
 - **Niciun endpoint de scriere/comanda** -- `device/register`, `order*`,
   `strategy*` din API-ul oficial Deye Cloud raman complet neatinse. Explicit
   in afara scopului acestui PR (controlul prin cloud necesita un review
