@@ -33,15 +33,15 @@
 <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
 <input type="hidden" name="request_id" value="{{ request_id }}">
 <input type="hidden" name="expected_version" value="{{ state.desired.version if state.desired else 0 }}">
-<label>Profil aprobat <select name="profile_id">{% for profile in profiles %}<option value="{{ profile.id }}" {% if state.desired and state.desired.profile_id == profile.id|string %}selected{% endif %}>{{ profile.definition.model }} — {{ profile.definition.protocol_revision }} — {{ profile.digest[:12] }}</option>{% endfor %}</select></label>
-<label>Port serial stabil <input name="port" required value="{{ connection.get('port', '') }}" placeholder="/dev/serial/by-id/..." /></label>
-<label>Adresa Modbus <input name="slave" type="number" min="1" max="247" value="{{ connection.get('device_id', 1) }}"></label>
-<label>Baudrate <input name="baudrate" type="number" value="{{ connection.get('baudrate', 9600) }}"></label>
-<label>Paritate <input name="parity" value="{{ connection.get('parity', 'N') }}"></label>
-<label>Stop bits <input name="stopbits" type="number" value="{{ connection.get('stopbits', 1) }}"></label>
-<label>Citire la secunde <input name="sample_seconds" type="number" min="5" max="3600" value="{{ connection.get('sample_seconds', 10) }}"></label>
-<label>Setari numerice din profil (JSON; {} pentru prima conectare)<textarea name="settings_json" rows="5">{{ (state.desired.settings if state.desired else {})|tojson }}</textarea></label>
-<label>Motiv <input name="reason" required maxlength="500"></label>
+<label>Profil aprobat <select class="input w-full" name="profile_id">{% for profile in profiles %}<option value="{{ profile.id }}" {% if state.desired and state.desired.profile_id == profile.id|string %}selected{% endif %}>{{ profile.definition.model }} — {{ profile.definition.protocol_revision }} — {{ profile.digest[:12] }}</option>{% endfor %}</select></label>
+<label>Port serial stabil <input class="input w-full" name="port" required maxlength="250" pattern="/dev/serial/by-id/[A-Za-z0-9_.:+-]+" value="{{ connection.get('port', '') }}" placeholder="/dev/serial/by-id/..." /></label>
+<label>Adresa Modbus <input class="input" name="slave" type="number" min="1" max="247" value="{{ connection.get('device_id', 1) }}"></label>
+<label>Baudrate <select class="input" name="baudrate">{% for baudrate in [1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200] %}<option value="{{ baudrate }}" {% if connection.get('baudrate', 9600) == baudrate %}selected{% endif %}>{{ baudrate }}</option>{% endfor %}</select></label>
+<label>Paritate <select class="input" name="parity">{% for parity in ["N", "E", "O"] %}<option value="{{ parity }}" {% if connection.get('parity', 'N') == parity %}selected{% endif %}>{{ parity }}</option>{% endfor %}</select></label>
+<label>Stop bits <select class="input" name="stopbits">{% for stopbits in [1, 2] %}<option value="{{ stopbits }}" {% if connection.get('stopbits', 1) == stopbits %}selected{% endif %}>{{ stopbits }}</option>{% endfor %}</select></label>
+<label>Citire la secunde <input class="input" name="sample_seconds" type="number" min="5" max="3600" value="{{ connection.get('sample_seconds', 10) }}"></label>
+<label>Setari numerice din profil (JSON; {} pentru prima conectare)<textarea class="input w-full font-mono" name="settings_json" rows="5">{{ (state.desired.settings if state.desired else {})|tojson }}</textarea></label>
+<label>Motiv <textarea class="input w-full" name="reason" required maxlength="500" rows="4"></textarea></label>
 <button class="btn-primary" type="submit">Publica o versiune noua</button>
 </form>
 {% endif %}

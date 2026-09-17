@@ -43,3 +43,41 @@ def test_destructive_device_confirm_accepts_serial_or_installation_uuid_visibly(
     assert template.count("min-w-[24rem]") == 2
     assert 'style="width: 12rem"' not in template
     assert 'placeholder="confirma serialul"' not in template
+
+
+def test_inverter_config_form_uses_design_system_for_all_fields():
+    template = Path("app/web/templates/stations/inverter_config.html").read_text()
+
+    for field_name in [
+        "profile_id",
+        "port",
+        "slave",
+        "baudrate",
+        "parity",
+        "stopbits",
+        "sample_seconds",
+        "settings_json",
+        "reason",
+    ]:
+        assert f'name="{field_name}"' in template
+
+    assert '<select class="input w-full" name="profile_id">' in template
+    assert '<input class="input w-full" name="port" required maxlength="250"' in template
+    assert '<input class="input" name="slave" type="number" min="1" max="247"' in template
+    assert '<input class="input" name="sample_seconds" type="number" min="5" max="3600"' in template
+    assert '<textarea class="input w-full font-mono" name="settings_json" rows="5">' in template
+    assert '<textarea class="input w-full" name="reason" required maxlength="500" rows="4"></textarea>' in template
+
+
+def test_inverter_config_connection_enums_are_selects_not_free_text_inputs():
+    template = Path("app/web/templates/stations/inverter_config.html").read_text()
+
+    assert '<select class="input" name="baudrate">' in template
+    assert '[1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200]' in template
+    assert '<select class="input" name="parity">' in template
+    assert '["N", "E", "O"]' in template
+    assert '<select class="input" name="stopbits">' in template
+    assert '[1, 2]' in template
+    assert 'name="baudrate" type="number"' not in template
+    assert 'name="parity" value=' not in template
+    assert 'name="stopbits" type="number"' not in template
