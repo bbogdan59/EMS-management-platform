@@ -307,27 +307,33 @@ def test_timeline_split_hourly_aggregation_averages_within_bucket(db):
 def test_timeline_split_hourly_aggregation_exposes_ohlc_for_candles(db):
     now = utcnow()
     hour_start = (now - timedelta(days=20)).replace(minute=0, second=0, microsecond=0)
-    make_market_day(db, hour_start.date(), [100.0] * 4)
+    make_market_day(db, hour_start.date(), [100.0] * 96)
     from sqlalchemy import select
 
     from app.models.market import MarketPriceInterval
 
     rows = db.scalars(
         select(MarketPriceInterval)
-        .where(MarketPriceInterval.delivery_date == hour_start.date())
+        .where(
+            MarketPriceInterval.delivery_date == hour_start.date(),
+            MarketPriceInterval.interval_start >= hour_start,
+            MarketPriceInterval.interval_start < hour_start + timedelta(hours=1),
+        )
         .order_by(MarketPriceInterval.interval_index)
-        .limit(4)
     ).all()
-    for idx, (row, price) in enumerate(zip(rows, [Decimal("100.0"), Decimal("300.0"), Decimal("50.0"), Decimal("250.0")], strict=True)):
-        row.interval_start = hour_start + timedelta(minutes=idx * 15)
-        row.interval_end = row.interval_start + timedelta(minutes=15)
+    assert len(rows) == 4
+    for row, price in zip(rows, [Decimal("100.0"), Decimal("300.0"), Decimal("50.0"), Decimal("250.0")], strict=True):
         row.price_lei_per_mwh = price
         row.price_lei_per_kwh = price / Decimal("1000")
     db.flush()
 
     series = market.get_timeline_split(db, now - timedelta(days=40), now)
 
-    matching = [point for point in series if point["sample_count"] == 4]
+    matching = [
+        point
+        for point in series
+        if point["sample_count"] == 4 and datetime.fromisoformat(point["t"]) == hour_start
+    ]
     assert matching
     candle = matching[0]
     assert candle["price_lei_mwh"] == 175.0
