@@ -142,11 +142,13 @@
         </div>
         <div>
           <label class="label">Metoda decontare</label>
-          <input class="input" name="settlement_method" value="net_metering_15min" />
+          <select class="input" name="settlement_method">
+            <option value="net_metering_15min">net_metering_15min</option>
+          </select>
         </div>
         <div>
           <label class="label">Interval decontare (zile)</label>
-          <input class="input" type="number" name="settlement_interval_days" value="30" />
+          <input class="input" type="number" name="settlement_interval_days" value="30" min="1" />
         </div>
       </div>
       <label class="flex items-center gap-2 text-sm">

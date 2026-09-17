@@ -56,7 +56,7 @@
       </div>
       <div class="sm:col-span-2">
         <label class="label">Specificatii (JSON, optional)</label>
-        <textarea class="input" name="specs_json" rows="2" placeholder='{"power_kw": 10, "mppt_count": 2}'>{}</textarea>
+        <textarea class="input" name="specs_json" rows="5" placeholder='{"power_kw": 10, "mppt_count": 2}'>{}</textarea>
       </div>
       <div class="sm:col-span-2">
         <button type="submit" class="btn-primary">Adauga model</button>
@@ -107,7 +107,7 @@
                 </div>
                 <div class="flex-1">
                   <label class="label">Specificatii (JSON)</label>
-                  <textarea class="input" name="specs_json" rows="2">{{ model.specs | tojson }}</textarea>
+                  <textarea class="input" name="specs_json" rows="5">{{ model.specs | tojson }}</textarea>
                 </div>
                 <button type="submit" class="btn-primary">Publica revizie noua</button>
               </form>

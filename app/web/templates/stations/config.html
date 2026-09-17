@@ -29,8 +29,8 @@
     {% if wizard_step %}<input type="hidden" name="wizard" value="1" />{% endif %}
 
     {% call field_group("Sistem PV / invertor") %}
-    {{ numeric_field("pv_installed_power_kw", "Putere PV instalata", value=config.pv_installed_power_kw if config, unit="kW", min=0.001, required=True) }}
-    {{ numeric_field("inverter_power_kw", "Putere invertor", value=config.inverter_power_kw if config, unit="kW", min=0.001, required=True) }}
+    {{ numeric_field("pv_installed_power_kw", "Putere PV instalata", value=config.pv_installed_power_kw if config, unit="kW", step="0.01", min=0.01, required=True) }}
+    {{ numeric_field("inverter_power_kw", "Putere invertor", value=config.inverter_power_kw if config, unit="kW", step="0.01", min=0.01, required=True) }}
     {% endcall %}
 
     {% call field_group("Capacitate baterie") %}
