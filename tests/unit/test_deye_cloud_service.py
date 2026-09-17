@@ -181,8 +181,11 @@ def test_persistent_5xx_raises_unavailable_after_max_retries(monkeypatch):
 
 
 def test_map_station_latest_combines_charge_discharge_into_signed_battery_power():
+    """Campurile Deye/Solarman sunt in WATI (issue #118, confirmat de un
+    raport real de utilizator -- valori de ordinul miilor pe un grafic
+    etichetat kW), nu kW -- maparea NU mai inmulteste cu 1000."""
     mapped = svc.map_station_latest_to_telemetry(
-        {"chargePower": 1.5, "dischargePower": 0, "generationPower": 2, "consumptionPower": 1, "purchasePower": 0, "wirePower": 0.5, "batterySOC": 80}
+        {"chargePower": 1500, "dischargePower": 0, "generationPower": 2000, "consumptionPower": 1000, "purchasePower": 0, "wirePower": 500, "batterySOC": 80}
     )
     assert mapped["battery_power_w"] == 1500  # incarcare -> pozitiv, conventia platformei
     assert mapped["grid_power_w"] == -500  # export net -> negativ
@@ -192,7 +195,7 @@ def test_map_station_latest_combines_charge_discharge_into_signed_battery_power(
 
 
 def test_map_station_latest_discharge_is_negative_battery_power():
-    mapped = svc.map_station_latest_to_telemetry({"chargePower": 0, "dischargePower": 2.0})
+    mapped = svc.map_station_latest_to_telemetry({"chargePower": 0, "dischargePower": 2000})
     assert mapped["battery_power_w"] == -2000
 
 
@@ -306,7 +309,7 @@ def test_poll_connection_success_creates_telemetry_row_with_cloud_source(db, mon
     conn = _connection(db, station, user, device_id=cloud_device.id)
     db.flush()
 
-    raw = {"generationPower": 3.2, "consumptionPower": 1.1, "chargePower": 0.5, "dischargePower": 0, "purchasePower": 0, "wirePower": 2.1, "batterySOC": 76, "lastUpdateTime": 1757721600}
+    raw = {"generationPower": 3200, "consumptionPower": 1100, "chargePower": 500, "dischargePower": 0, "purchasePower": 0, "wirePower": 2100, "batterySOC": 76, "lastUpdateTime": 1757721600}
     monkeypatch.setattr(svc, "_valid_access_token", lambda c: "token")
     monkeypatch.setattr(svc, "fetch_station_latest", lambda token, station_id: raw)
 
@@ -403,17 +406,18 @@ def test_power_plausibility_ceiling_falls_back_when_station_has_no_config(db):
 
 
 def test_poll_connection_flags_implausible_power_as_warning_but_still_persists(db, monkeypatch):
-    """Simuleaza exact riscul semnalat de issue #118: API-ul raporteaza
-    watts, nu kW -- o statie de 5 kW ar aparea ca "5000 kW". Citirea tot
-    trebuie scrisa (ar putea fi corecta pentru o instalatie mare), dar
-    conexiunea trece in starea de avertisment, vizibila operatorului."""
+    """Plafonul de plauzibilitate ramane un filet de siguranta general (ex.
+    un raspuns API genuin aberant), distinct de bug-ul de unitate al issue
+    #118 (rezolvat acum in `map_station_latest_to_telemetry` insasi, care nu
+    mai inmulteste cu 1000). Citirea tot trebuie scrisa (ar putea fi corecta
+    pentru o instalatie mare), dar conexiunea trece in starea de
+    avertisment, vizibila operatorului."""
     _, user, station, cloud_device = _setup_station(db, "implausible")
     conn = _connection(db, station, user, device_id=cloud_device.id)
     db.flush()
 
-    # Statia are 5 kW (implicit make_station) -> plafon 15000 W; simuleaza
-    # un raspuns deja in W interpretat gresit ca kW (5000 * 1000 = 5,000,000 W).
-    raw = {"generationPower": 5000, "lastUpdateTime": 1757721600}
+    # Statia are 5 kW (implicit make_station) -> plafon 15000 W.
+    raw = {"generationPower": 5_000_000, "lastUpdateTime": 1757721600}
     monkeypatch.setattr(svc, "_valid_access_token", lambda c: "token")
     monkeypatch.setattr(svc, "fetch_station_latest", lambda token, station_id: raw)
 
@@ -434,7 +438,7 @@ def test_poll_connection_plausible_power_keeps_succeeded_status_without_message(
     conn = _connection(db, station, user, device_id=cloud_device.id)
     db.flush()
 
-    raw = {"generationPower": 3.2, "lastUpdateTime": 1757721600}
+    raw = {"generationPower": 3200, "lastUpdateTime": 1757721600}
     monkeypatch.setattr(svc, "_valid_access_token", lambda c: "token")
     monkeypatch.setattr(svc, "fetch_station_latest", lambda token, station_id: raw)
 

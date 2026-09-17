@@ -70,18 +70,17 @@ CLOUD_BOOT_ID = "deye_cloud"
 # (regula de prioritate ceruta de issue #43, vezi docstring `poll_connection`).
 LOCAL_DEVICE_ACTIVE_WINDOW = timedelta(minutes=settings.deye_cloud_local_device_active_minutes)
 
-# Issue #118: conventia reala de unitate a campurilor de putere raportate de
-# Deye/Solarman (`generationPower`/`chargePower`/etc.) nu a putut fi
-# verificata impotriva unui cont/statie reale (fetch HTTP live blocat in
-# acest mediu de dezvoltare) -- `map_station_latest_to_telemetry` PRESUPUNE
-# ca API-ul raporteaza kW, nu W. Daca presupunerea e gresita, fiecare citire
-# ar fi 1000x prea mare. In lipsa unei verificari live, nu inlocuim tacit
-# presupunerea cu alta la fel de neverificata -- in schimb, un plafon de
-# plauzibilitate (capacitatea invertorului statiei, cu marja generoasa
-# pentru varfuri tranzitorii; un plafon fix generos daca statia nu are inca
-# o configuratie) transforma o presupunere gresita intr-un avertisment
-# vizibil (`last_sync_status="warning"`, log structurat), in
-# loc sa umfle tacit 1000x consumul/economiile afisate.
+# Issue #118: `map_station_latest_to_telemetry` initial PRESUPUNEA ca API-ul
+# Deye/Solarman raporteaza kW (neverificat, fetch HTTP live blocat in acest
+# mediu de dezvoltare) si inmultea cu 1000 la stocare -- gresit, confirmat de
+# un raport real de utilizator (statii afisand valori de ordinul miilor pe
+# un grafic etichetat kW). Maparea a fost corectata sa trateze campurile ca
+# WATI direct (fara inmultire). Plafonul de plauzibilitate de mai jos ramane
+# ca un filet de siguranta general -- pentru orice viitoare discrepanta de
+# unitate/raspuns API aberant, nu doar pentru acest bug specific acum
+# corectat -- si transforma o citire suspecta intr-un avertisment vizibil
+# (`last_sync_status="warning"`, log structurat), in loc sa umfle tacit
+# consumul/economiile afisate.
 _PLAUSIBILITY_MARGIN = Decimal(3)
 _FALLBACK_POWER_CEILING_W = Decimal(50_000)  # 50 kW: generos pentru rezidential/comercial mic
 
@@ -228,12 +227,14 @@ def fetch_station_latest(access_token: str, remote_station_id: int) -> dict:
 # Cheile de mai jos (`generationPower`, `consumptionPower`, `purchasePower`,
 # `wirePower`, `chargePower`, `dischargePower`, `batterySOC`) reflecta
 # conventia publica documentata a familiei de API-uri Deye/Solarman pentru
-# datele in timp real ale statiei -- NU au putut fi verificate impotriva unui
-# raspuns real (cont Deye Cloud platitor, cu statie reala), pentru ca fetch-ul
-# HTTP live e blocat in acest mediu de dezvoltare (vezi docs/LIMITATIONS.md).
-# Maparea e deliberat DEFENSIVA: o cheie lipsa/necunoscuta produce `None`
-# (necunoscut), niciodata 0 -- consecvent cu restul platformei (vezi
-# docs/CODE_STANDARDS.md, regula 2).
+# datele in timp real ale statiei. Unitatea a fost initial presupusa kW
+# (issue #118), neverificata pentru ca fetch-ul HTTP live e blocat in acest
+# mediu de dezvoltare -- CONFIRMATA gresita de un raport real de utilizator
+# (statii afisand valori de ordinul miilor pe un grafic etichetat kW, ex.
+# 2500 in loc de 2.5): API-ul raporteaza de fapt WATI, nu kW, ca restul
+# platformei. Maparea e deliberat DEFENSIVA: o cheie lipsa/necunoscuta
+# produce `None` (necunoscut), niciodata 0 -- consecvent cu restul
+# platformei (vezi docs/CODE_STANDARDS.md, regula 2).
 def _dec(value) -> Decimal | None:
     if value is None:
         return None
@@ -245,24 +246,24 @@ def _dec(value) -> Decimal | None:
 
 
 def map_station_latest_to_telemetry(raw: dict) -> dict:
-    generation_kw = _dec(raw.get("generationPower"))
-    consumption_kw = _dec(raw.get("consumptionPower"))
-    charge_kw = _dec(raw.get("chargePower"))
-    discharge_kw = _dec(raw.get("dischargePower"))
-    purchase_kw = _dec(raw.get("purchasePower"))
-    export_kw = _dec(raw.get("wirePower"))
+    generation_w = _dec(raw.get("generationPower"))
+    consumption_w = _dec(raw.get("consumptionPower"))
+    charge_w = _dec(raw.get("chargePower"))
+    discharge_w = _dec(raw.get("dischargePower"))
+    purchase_w = _dec(raw.get("purchasePower"))
+    export_w = _dec(raw.get("wirePower"))
     soc = _dec(raw.get("batterySOC"))
 
     # Conventia platformei (vezi app/models/telemetry.py): baterie
     # pozitiv=incarcare/negativ=descarcare; retea pozitiv=import/negativ=export.
     # Deye Cloud raporteaza incarcare/descarcare si import/export ca doua
     # valori separate, ambele >= 0 -- combinate aici in convenția cu semn.
-    battery_kw = None
-    if charge_kw is not None or discharge_kw is not None:
-        battery_kw = (charge_kw or Decimal(0)) - (discharge_kw or Decimal(0))
-    grid_kw = None
-    if purchase_kw is not None or export_kw is not None:
-        grid_kw = (purchase_kw or Decimal(0)) - (export_kw or Decimal(0))
+    battery_w = None
+    if charge_w is not None or discharge_w is not None:
+        battery_w = (charge_w or Decimal(0)) - (discharge_w or Decimal(0))
+    grid_w = None
+    if purchase_w is not None or export_w is not None:
+        grid_w = (purchase_w or Decimal(0)) - (export_w or Decimal(0))
 
     measured_at = None
     last_update_time = raw.get("lastUpdateTime")
@@ -272,14 +273,11 @@ def map_station_latest_to_telemetry(raw: dict) -> dict:
         except (OverflowError, OSError, ValueError):
             measured_at = None
 
-    def _w(kw: Decimal | None) -> Decimal | None:
-        return kw * 1000 if kw is not None else None
-
     return {
-        "pv_power_w": _w(generation_kw),
-        "load_power_w": _w(consumption_kw),
-        "battery_power_w": _w(battery_kw),
-        "grid_power_w": _w(grid_kw),
+        "pv_power_w": generation_w,
+        "load_power_w": consumption_w,
+        "battery_power_w": battery_w,
+        "grid_power_w": grid_w,
         "battery_soc_percent": soc,
         "measured_at": measured_at,
     }

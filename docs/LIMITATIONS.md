@@ -2044,9 +2044,9 @@ si vedea telemetria statiei importata de acolo, read-only:
   `lastUpdateTime` (UNIX seconds, UTC prin definitie), stocat `DateTime(timezone=True)`
   ca restul platformei; afisarea foloseste fusul statiei ca peste tot altundeva
   (nicio conversie speciala adaugata, cea existenta se aplica neschimbat).
-- **Unitati si conventii de semn documentate explicit, dar NEVERIFICATE live**
-  (vezi limitarea de mai jos): `chargePower`/`dischargePower` (presupuse kW,
-  ambele >= 0) combinate in `battery_power_w` cu conventia platformei
+- **Unitati (WATI, confirmate live -- vezi addendumul issue #118 mai jos) si
+  conventii de semn documentate explicit**: `chargePower`/`dischargePower`
+  (ambele >= 0) combinate in `battery_power_w` cu conventia platformei
   (pozitiv=incarcare); `purchasePower`/`wirePower` combinate similar in
   `grid_power_w` (pozitiv=import). O cheie lipsa produce `None` (necunoscut),
   NICIODATA 0 -- consecvent cu `docs/CODE_STANDARDS.md` regula 2.
@@ -2074,18 +2074,17 @@ si Open-Meteo (sectiunea 2):**
 - **Raspunsul de SUCCES al `/v1.0/station/latest` (campurile efective:
   `generationPower`, `consumptionPower`, `chargePower`, `dischargePower`,
   `purchasePower`, `wirePower`, `batterySOC`, `lastUpdateTime`) NU a putut fi
-  verificat impotriva unui cont Deye Cloud real cu o statie reala** -- accesul
-  MCP disponibil in aceasta sesiune nu are credentiale reale (doar
-  `appId`/`appSecret` de test, respinse de server), iar specificatia OpenAPI
-  bundle-uita expune doar schema REQUEST-urilor (rezolvata), nu si schema
-  raspunsurilor de succes. Numele de camp folosite reflecta conventia publica
-  documentata a familiei de API-uri Deye/Solarman pentru date in timp real --
-  maparea (`map_station_latest_to_telemetry`) e deliberat DEFENSIVA (o cheie
+  inspectat direct** (accesul MCP disponibil in aceasta sesiune nu are
+  credentiale reale, iar specificatia OpenAPI bundle-uita expune doar schema
+  REQUEST-urilor) -- dar **unitatea campurilor de putere a fost confirmata
+  indirect, live**: un utilizator cu o statie reala a raportat simptomul
+  exact al ipotezei gresite (valori de ordinul miilor pe un grafic etichetat
+  kW), corectat in cod (vezi addendumul de mai jos). Numele de camp raman
+  neverificate direct impotriva JSON-ului brut -- maparea
+  (`map_station_latest_to_telemetry`) ramane deliberat DEFENSIVA (o cheie
   lipsa/neasteptata produce `None`, niciodata o valoare inventata sau 0), ca
   un raspuns real cu alte nume de camp sa degradeze la "date lipsa", nu la
-  date gresite afisate ca reale. **Inainte de a considera acest conector gata
-  de productie: verificat impotriva a cel putin un cont Deye Cloud real, cu
-  hardware real inregistrat, si ajustat maparea daca numele de camp difera.**
+  date gresite afisate ca reale.
 - **Rate limits reale, ToS si constrangeri de account-linking** -- portalul
   developer.deyecloud.com (unde ar fi documentate limitele de request/minut,
   politica de utilizare acceptabila, procesul de aprobare a aplicatiei) nu a
@@ -2103,25 +2102,29 @@ si Open-Meteo (sectiunea 2):**
   si nu este logata. Daca refresh-ul real este confirmat, urmatorul PR ar trebui
   sa migreze spre token rotativ si sa stearga parola dupa conectarea initiala.
 
-### Addendum: plauzibilitate de unitate pe puterea Deye Cloud (issue #118)
+### Addendum: unitatea reala confirmata WATI, nu kW (issue #118)
 
-Presupunerea kW de mai sus tot NU a putut fi verificata live (acelasi
-`EGRESS_BLOCKED`) -- nu am inlocuit-o cu o alta presupunere la fel de
-neverificata. In schimb, `poll_connection` compara acum fiecare citire
-mapata (`pv_power_w`/`load_power_w`/`battery_power_w`/`grid_power_w`) cu un
-plafon de plauzibilitate: de 3x capacitatea configurata a statiei
-(`max(pv_installed_power_kw, inverter_power_kw)`), sau 50 kW daca statia nu
-are inca o configuratie salvata. O citire peste plafon NU e respinsa (ar
-putea fi totusi corecta pentru o instalatie mare/neconfigurata inca) -- e
-scrisa in continuare, dar conexiunea trece in `last_sync_status="warning"`
-(distinct de `succeeded`), cu un mesaj vizibil in UI
-(`stations/deye_integration.html`) si un log structurat
-(`deye_cloud.poll_implausible_power`, cu valorile mapate si plafonul
-folosit). Astfel o presupunere de unitate gresita (1000x, exact riscul
-semnalat de issue) devine un avertisment vizibil pentru operator, in loc sa
-umfle tacit consumul/economiile afisate. Verificarea live impotriva unui
-cont Deye Cloud real ramane recomandarea de baza inainte de productie,
-neschimbata.
+Primul mitigator adaugat pentru acest risc a fost doar un plafon de
+plauzibilitate (`poll_connection` comparand fiecare citire mapata cu 3x
+capacitatea configurata a statiei, sau 50 kW fara configuratie), fara sa
+schimbe presupunerea de kW insasi -- inca neverificata live in acel moment
+(`EGRESS_BLOCKED`).
+
+**Actualizare:** un utilizator cu o statie reala, conectata prin Deye Cloud,
+a raportat exact simptomul prezis de issue -- graficul de putere ("PV,
+consum, baterie, retea", etichetat kW) afisa valori de ordinul miilor (ex.
+`2500` in loc de `2.5`). Asta confirma live ca API-ul Deye/Solarman
+raporteaza WATI, nu kW, la `generationPower`/`consumptionPower`/
+`chargePower`/`dischargePower`/`purchasePower`/`wirePower`. Corectat direct
+in `map_station_latest_to_telemetry` (`app/services/deye_cloud_service.py`):
+campurile nu mai sunt inmultite cu 1000 la stocare, tratate acum ca WATI
+direct, consecvent cu restul platformei (`TelemetryRaw.*_power_w`).
+
+Plafonul de plauzibilitate adaugat mai devreme **ramane** ca filet de
+siguranta general (un raspuns API genuin aberant, o discrepanta viitoare de
+unitate pe un alt camp), nu doar pentru acest bug acum corectat -- vezi
+`_power_plausibility_ceiling_w`/`_implausible_power_fields` si testele
+aferente (`tests/unit/test_deye_cloud_service.py`).
 
 **Explicit in afara scopului acestui PR:**
 
