@@ -163,7 +163,6 @@ def test_dashboard_chart_widgets_have_isolated_retry_errors(client, db):
     assert resp.status_code == 200
     for chart_id in [
         "chart-power",
-        "chart-soc",
         "chart-prices",
         "chart-plan",
         "chart-forecast-pv",

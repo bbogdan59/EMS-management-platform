@@ -305,11 +305,11 @@ function emsInitDashboard(stationId, initialSummary = null) {
       };
     }
     chart.setOption({
-      grid: { left: 48, right: 16, top: 24, bottom: 32 },
+      grid: opts.grid || { left: 48, right: 16, top: 24, bottom: 32 },
       tooltip: { trigger: "axis" },
       legend: opts.legend !== false ? {} : undefined,
       xAxis: { type: "time" },
-      yAxis: { type: "value", name: opts.yName || "" },
+      yAxis: opts.yAxis || { type: "value", name: opts.yName || "" },
       series: configuredSeries,
     });
     return chart;
@@ -362,7 +362,6 @@ function emsInitDashboard(stationId, initialSummary = null) {
   const timeseriesCache = new Map(); // url -> { data, ts }
   const TIMESERIES_CACHE_TTL_MS = 30000;
   let powerChartController = null;
-  let socChartController = null;
 
   async function fetchTimeseries(range, controller) {
     const url = `/stations/${stationId}/data/timeseries?range=${range}`;
@@ -396,33 +395,32 @@ function emsInitDashboard(stationId, initialSummary = null) {
       if (resEl) resEl.textContent = describeResolution(data);
       if (!points.length) { showWidgetState(widget, "empty"); return; }
       showWidgetState(widget, "ok");
-      const mk = (key, name) => ({ name, type: "line", data: points.map((d) => [d.t, d[key]]) });
-      lineChart(widget.chartEl, [mk("pv_kw", "PV"), mk("load_kw", "Consum"), mk("battery_kw", "Baterie"), mk("grid_kw", "Retea")], { yName: "kW", markAreas: qualityMarkAreas(points) });
+      const mk = (key, name) => ({ name, type: "line", yAxisIndex: 1, data: points.map((d) => [d.t, d[key]]) });
+      const soc = {
+        name: "SOC baterie",
+        type: "line",
+        yAxisIndex: 0,
+        smooth: true,
+        lineStyle: { width: 1.5, opacity: 0.38 },
+        itemStyle: { opacity: 0.38 },
+        areaStyle: { opacity: 0.04 },
+        z: 1,
+        data: points.map((d) => [d.t, d.soc_pct]),
+      };
+      const powerSeries = [mk("pv_kw", "PV"), mk("load_kw", "Consum"), mk("battery_kw", "Baterie"), mk("grid_kw", "Retea")].map((item) => ({
+        ...item,
+        z: 3,
+      }));
+      lineChart(widget.chartEl, [soc, ...powerSeries], {
+        grid: { left: 48, right: 54, top: 28, bottom: 32 },
+        yAxis: [
+          { type: "value", name: "%", min: 0, max: 100 },
+          { type: "value", name: "kW" },
+        ],
+        markAreas: qualityMarkAreas(points),
+      });
     } catch (e) {
       if (controller !== powerChartController) return; // inlocuita/anulata intre timp, nu e o eroare de afisat
-      console.error(e);
-      showWidgetState(widget, "error");
-    }
-  }
-
-  async function loadSocChart(range) {
-    const widget = widgetCard("chart-soc");
-    if (!widget) return;
-    wireRetry(widget, () => loadSocChart(range));
-    if (socChartController) socChartController.abort();
-    const controller = new AbortController();
-    socChartController = controller;
-    try {
-      const data = await fetchTimeseries(range, controller);
-      if (controller !== socChartController) return;
-      const points = data.points || [];
-      const resEl = $("chart-soc-resolution");
-      if (resEl) resEl.textContent = describeResolution(data);
-      if (!points.length) { showWidgetState(widget, "empty"); return; }
-      showWidgetState(widget, "ok");
-      lineChart(widget.chartEl, [{ name: "SOC", type: "line", areaStyle: {}, data: points.map((d) => [d.t, d.soc_pct]) }], { yName: "%", legend: false, markAreas: qualityMarkAreas(points) });
-    } catch (e) {
-      if (controller !== socChartController) return;
       console.error(e);
       showWidgetState(widget, "error");
     }
@@ -847,7 +845,6 @@ function emsInitDashboard(stationId, initialSummary = null) {
   // Bootstrap initial
   if (initialSummary) setKpis(initialSummary);
   lazyLoadWidget("chart-power", () => loadPowerChart("24h"));
-  lazyLoadWidget("chart-soc", () => loadSocChart("24h"));
   lazyLoadWidget("chart-prices", loadPricesChart);
   lazyLoadWidget("chart-plan", loadPlanChart);
   lazyLoadWidget("chart-forecast-pv", () => loadForecastChart("pv"));
@@ -863,11 +860,8 @@ function emsInitDashboard(stationId, initialSummary = null) {
   if (rangeSelect) {
     rangeSelect.addEventListener("change", () => {
       const powerEl = $("chart-power");
-      const socEl = $("chart-soc");
       if (powerEl) powerEl.dataset.lazyLoaded = "0";
-      if (socEl) socEl.dataset.lazyLoaded = "0";
       loadPowerChart(rangeSelect.value);
-      loadSocChart(rangeSelect.value);
       const exportLink = $("export-link");
       if (exportLink) exportLink.href = `/stations/${stationId}/export.csv?range=${rangeSelect.value}`;
     });

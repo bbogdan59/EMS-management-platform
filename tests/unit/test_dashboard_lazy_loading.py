@@ -12,7 +12,6 @@ def test_dashboard_charts_are_registered_for_lazy_visibility_loading():
 
     for chart_id in [
         "chart-power",
-        "chart-soc",
         "chart-prices",
         "chart-plan",
         "chart-forecast-pv",
@@ -42,12 +41,26 @@ def test_dashboard_timeseries_charts_mark_quality_intervals():
     assert "markAreas: qualityMarkAreas(points)" in dashboard_js
 
 
+def test_dashboard_power_chart_overlays_faded_soc_on_left_axis():
+    template = Path("app/web/templates/dashboard/station.html").read_text()
+    dashboard_js = Path("app/web/static/js/dashboard.js").read_text()
+
+    assert "PV, consum, baterie, retea + SOC baterie" in template
+    assert 'id="chart-soc"' not in template
+    assert 'lazyLoadWidget("chart-soc"' not in dashboard_js
+    assert 'name: "SOC baterie"' in dashboard_js
+    assert "yAxisIndex: 0" in dashboard_js
+    assert 'yAxis: [\n          { type: "value", name: "%", min: 0, max: 100 },\n          { type: "value", name: "kW" },\n        ]' in dashboard_js
+    assert "lineStyle: { width: 1.5, opacity: 0.38 }" in dashboard_js
+    assert "areaStyle: { opacity: 0.04 }" in dashboard_js
+
+
 def test_dashboard_timeseries_line_symbols_are_threshold_based():
     dashboard_js = Path("app/web/static/js/dashboard.js").read_text()
 
     assert "const EMS_CHART_SYMBOL_THRESHOLD = 48" in dashboard_js
     assert "item.data.length <= EMS_CHART_SYMBOL_THRESHOLD" in dashboard_js
-    assert 'const mk = (key, name) => ({ name, type: "line", data:' in dashboard_js
+    assert 'const mk = (key, name) => ({ name, type: "line", yAxisIndex: 1, data:' in dashboard_js
 
 
 def test_daily_export_energy_chart_preserves_missing_values_as_gaps():
