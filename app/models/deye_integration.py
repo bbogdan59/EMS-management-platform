@@ -70,7 +70,7 @@ class DeyeCloudConnection(Entity):
     access_token_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     last_sync_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    last_sync_status: Mapped[str | None] = mapped_column(String(16), nullable=True)  # succeeded|failed|skipped
+    last_sync_status: Mapped[str | None] = mapped_column(String(16), nullable=True)  # succeeded|warning|failed|skipped
     last_sync_message: Mapped[str | None] = mapped_column(String(500), nullable=True)
     consecutive_failure_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 

@@ -119,6 +119,22 @@ neconfirmata per client real) si randamentele de incarcare/descarcare deja
 descurajeaza arbitrajul cu marja mica in mod natural, prin functia obiectiv.
 O implementare completa a pragului explicit ramane de facut.
 
+**Addendum (issue #117):** campul e disponibil in interfata sa "nu spuna" ca
+e activ cand nu e. Rezolvat prin doua modificari nedistructive (fara migrare
+de coloana, fara pierderea valorilor deja salvate pe versiuni de preferinte
+existente):
+- Eticheta din UI a devenit explicit "Prag beneficiu economic arbitraj
+  (informativ)", cu un text ajutator care spune direct ca optimizatorul NU
+  aplica inca acest prag ca o constrangere si de ce (costul de uzura descuraja
+  deja arbitrajul cu marja mica) -- vezi `stations/preferences.html`.
+- Ambiguitatea de unitate semnalata de issue (numele campului sugereaza lei
+  totali, eticheta UI si precizia `Numeric(8,4)` sugerau dintotdeauna
+  lei/kWh) e clarificata explicit printr-un comentariu pe
+  `PreferenceVersion.arbitrage_min_benefit_lei` si pe schema Pydantic
+  (`PreferenceInput.arbitrage_min_benefit_lei`, `station_forms.py`): valoarea
+  e in **lei/kWh**, nu total lei -- fara sa redenumim coloana (ar necesita o
+  migrare si ar rupe orice integrare externa existenta pe acest nume).
+
 ## 6. Formula de remunerare a exportului -- doar tarif fix sau indexat simplu
 
 Sectiunea 7 din cerinte atrage atentia ca exportul clientului NU e neaparat
@@ -2086,6 +2102,26 @@ si Open-Meteo (sectiunea 2):**
   inainte de productie; pana atunci, parola contului ramane criptata la repaus
   si nu este logata. Daca refresh-ul real este confirmat, urmatorul PR ar trebui
   sa migreze spre token rotativ si sa stearga parola dupa conectarea initiala.
+
+### Addendum: plauzibilitate de unitate pe puterea Deye Cloud (issue #118)
+
+Presupunerea kW de mai sus tot NU a putut fi verificata live (acelasi
+`EGRESS_BLOCKED`) -- nu am inlocuit-o cu o alta presupunere la fel de
+neverificata. In schimb, `poll_connection` compara acum fiecare citire
+mapata (`pv_power_w`/`load_power_w`/`battery_power_w`/`grid_power_w`) cu un
+plafon de plauzibilitate: de 3x capacitatea configurata a statiei
+(`max(pv_installed_power_kw, inverter_power_kw)`), sau 50 kW daca statia nu
+are inca o configuratie salvata. O citire peste plafon NU e respinsa (ar
+putea fi totusi corecta pentru o instalatie mare/neconfigurata inca) -- e
+scrisa in continuare, dar conexiunea trece in `last_sync_status="warning"`
+(distinct de `succeeded`), cu un mesaj vizibil in UI
+(`stations/deye_integration.html`) si un log structurat
+(`deye_cloud.poll_implausible_power`, cu valorile mapate si plafonul
+folosit). Astfel o presupunere de unitate gresita (1000x, exact riscul
+semnalat de issue) devine un avertisment vizibil pentru operator, in loc sa
+umfle tacit consumul/economiile afisate. Verificarea live impotriva unui
+cont Deye Cloud real ramane recomandarea de baza inainte de productie,
+neschimbata.
 
 **Explicit in afara scopului acestui PR:**
 
