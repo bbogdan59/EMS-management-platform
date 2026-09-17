@@ -47,6 +47,12 @@ class PanelGroupInput(Strict):
 class StationConfigInput(Strict):
     pv_installed_power_kw: Decimal = Field(gt=0)
     inverter_power_kw: Decimal = Field(gt=0)
+    # Coordonatele statiei (issue #132): traiesc pe `Station`, nu pe versiunea
+    # de configuratie, dar se editeaza din aceeasi pagina/formular -- un typo
+    # la crearea statiei degradeaza permanent prognoza PV (`pv_forecast_service`)
+    # fara nicio cale de corectie din UI inainte de acest fix.
+    latitude: Decimal = Field(ge=-90, le=90)
+    longitude: Decimal = Field(ge=-180, le=180)
     battery_reference_capacity_kwh: Decimal | None = Field(default=None, ge=0)
     battery_available_capacity_kwh: Decimal | None = Field(default=None, ge=0)
     battery_max_charge_power_kw: Decimal | None = Field(default=None, ge=0)

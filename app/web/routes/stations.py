@@ -230,6 +230,8 @@ def station_config_submit(
     request: Request,
     pv_installed_power_kw: str = Form(...),
     inverter_power_kw: str = Form(...),
+    latitude: str = Form(...),
+    longitude: str = Form(...),
     battery_reference_capacity_kwh: str | None = Form(None),
     battery_available_capacity_kwh: str | None = Form(None),
     battery_max_charge_power_kw: str | None = Form(None),
@@ -266,6 +268,8 @@ def station_config_submit(
     raw = {
         "pv_installed_power_kw": pv_installed_power_kw,
         "inverter_power_kw": inverter_power_kw,
+        "latitude": latitude,
+        "longitude": longitude,
         "battery_reference_capacity_kwh": _none_if_blank(battery_reference_capacity_kwh),
         "battery_available_capacity_kwh": _none_if_blank(battery_available_capacity_kwh),
         "battery_max_charge_power_kw": _none_if_blank(battery_max_charge_power_kw),
@@ -360,6 +364,10 @@ def station_config_submit(
     )
     db.add(config)
     db.flush()
+    coordinates_changed = station.latitude != validated.latitude or station.longitude != validated.longitude
+    station.latitude = validated.latitude
+    station.longitude = validated.longitude
+    db.add(station)
     for group, pv_model in zip(validated.panel_groups, pv_models, strict=True):
         db.add(
             PanelGroup(
@@ -379,7 +387,11 @@ def station_config_submit(
     record_audit(
         db, action="station_config_updated", resource_type="station_config", resource_id=str(config.id),
         actor_user_id=user.id, actor_label=user.email, station_id=station.id,
-        metadata={"version": version, "panel_group_count": len(validated.panel_groups)},
+        metadata={
+            "version": version,
+            "panel_group_count": len(validated.panel_groups),
+            "coordinates_changed": coordinates_changed,
+        },
     )
     try:
         db.commit()
