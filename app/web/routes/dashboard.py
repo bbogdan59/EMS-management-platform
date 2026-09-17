@@ -129,11 +129,7 @@ def data_prices(
     station_role: tuple = Depends(StationAccess(min_role="viewer")),
 ):
     station, _role = station_role
-    from app.web.context import build_nav_context  # noqa
-
-    from app.services.opcom_service import BUCHAREST
-
-    market_today = utcnow().astimezone(BUCHAREST).date()
+    market_today = utcnow().astimezone(dashboard_service._station_tz(station)).date()
     target_date = market_today if day == "today" else market_today + timedelta(days=1)
     data = dashboard_service.get_prices(db, station, target_date)
     return JSONResponse({"day": day, "date": target_date.isoformat(), "intervals": data, "published": len(data) > 0})

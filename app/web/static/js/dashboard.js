@@ -85,7 +85,7 @@ function emsInitDashboard(stationId, initialSummary = null) {
     $("kpi-battery").textContent = !hasValue(batt) ? "fara date" : (batt >= 0 ? "Incarcare " : "Descarcare ") + fmt(Math.abs(batt)) + " kW";
   }
   function updateEvKpi(s) {
-    $("kpi-ev").textContent = s.ev_connected === null || s.ev_connected === undefined ? "necunoscut" : (s.ev_connected ? ("conectat" + (s.ev_power_kw ? ", " + fmt(s.ev_power_kw) + " kW" : "")) : "neconectat");
+    $("kpi-ev").textContent = s.ev_connected === null || s.ev_connected === undefined ? "necunoscut" : (s.ev_connected ? ("conectat" + (hasValue(s.ev_power_kw) ? ", " + fmt(s.ev_power_kw) + " kW" : "")) : "neconectat");
   }
   function updatePriceBuyKpi(s) { $("kpi-price-buy").textContent = hasValue(s.price_buy_lei_kwh) ? fmt(s.price_buy_lei_kwh, 4) + " lei/kWh" : "indisponibil"; }
   function updatePriceSellKpi(s) { $("kpi-price-sell").textContent = hasValue(s.price_sell_lei_kwh) ? fmt(s.price_sell_lei_kwh, 4) + " lei/kWh" : "indisponibil"; }
