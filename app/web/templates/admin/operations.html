@@ -143,7 +143,7 @@
               {% else %}<span class="badge-warn">{{ r.status }}</span>{% endif %}
               {% if r.is_fallback %}<span class="badge-warn" title="{{ r.fallback_reason }}">fallback</span>{% endif %}
             </td>
-            <td>{{ r.objective_value_lei | lei if r.objective_value_lei is not none else "-" }}</td>
+            <td>{{ "%.2f"|format(r.objective_value_lei) if r.objective_value_lei is not none else "-" }}</td>
             <td><a class="text-brand-700 hover:underline dark:text-brand-300" href="/admin/operations/optimization-runs/{{ r.id }}">plan explicabil &rarr;</a></td>
           </tr>
           {% endfor %}
