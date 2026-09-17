@@ -584,7 +584,7 @@ function emsInitDashboard(stationId, initialSummary = null) {
         series: [
           { name: "PV", type: "bar", stack: "e", data: daily.map((d) => d.pv_kwh) },
           { name: "Import", type: "bar", stack: "i", data: daily.map((d) => d.grid_import_kwh) },
-          { name: "Export", type: "bar", stack: "x", data: daily.map((d) => -d.grid_export_kwh) },
+          { name: "Export", type: "bar", stack: "x", data: daily.map((d) => d.grid_export_kwh == null ? null : -d.grid_export_kwh) },
         ],
       });
     } catch (e) {

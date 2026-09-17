@@ -48,3 +48,10 @@ def test_dashboard_timeseries_line_symbols_are_threshold_based():
     assert "const EMS_CHART_SYMBOL_THRESHOLD = 48" in dashboard_js
     assert "item.data.length <= EMS_CHART_SYMBOL_THRESHOLD" in dashboard_js
     assert 'const mk = (key, name) => ({ name, type: "line", data:' in dashboard_js
+
+
+def test_daily_export_energy_chart_preserves_missing_values_as_gaps():
+    dashboard_js = Path("app/web/static/js/dashboard.js").read_text()
+
+    assert "d.grid_export_kwh == null ? null : -d.grid_export_kwh" in dashboard_js
+    assert "data: daily.map((d) => -d.grid_export_kwh)" not in dashboard_js
