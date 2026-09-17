@@ -9,6 +9,9 @@
         Istoric disponibil: {{ status.earliest_date or "-" }} &rarr; {{ status.latest_date or "-" }}
         ({{ status.total_days_available }} zile)
       </p>
+      <p class="text-xs text-gray-500 dark:text-gray-400">
+        Graficele de piata folosesc lei/MWh, unitatea OPCOM; dashboardul statiei afiseaza aceleasi preturi in lei/kWh (lei/MWh ÷ 1000).
+      </p>
     </div>
     <a class="btn-secondary" href="/market/export.csv">Export CSV (medii zilnice)</a>
   </div>
@@ -53,7 +56,7 @@
   <!-- Fereastra scurta cu istoric suprapus -->
   <div class="card">
     <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
-      <h2 class="font-medium">Pret PZU: 2 zile trecute, azi, 3 zile viitoare</h2>
+      <h2 class="font-medium">Pret PZU (lei/MWh): 2 zile trecute, azi, 3 zile viitoare</h2>
       <span class="text-xs text-gray-500 dark:text-gray-400">Anul curent este evidentiat; anii anteriori sunt estompati.</span>
     </div>
     <p class="mb-2 text-xs text-gray-500 dark:text-gray-400">
@@ -70,7 +73,7 @@
   <!-- Timeline cu linie punctata pentru viitor -->
   <div class="card">
     <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
-      <h2 class="font-medium">Evolutie pret</h2>
+      <h2 class="font-medium">Evolutie pret (lei/MWh)</h2>
       <div class="flex flex-wrap items-center gap-2">
         <div id="timeline-chart-type-toggles" class="flex flex-wrap gap-1 text-sm"></div>
         <div id="timeline-range-toggles" class="flex flex-wrap gap-1 text-sm"></div>
@@ -92,7 +95,7 @@
   <!-- Overlay an-peste-an -->
   <div class="card">
     <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
-      <h2 class="font-medium">Suprapunere preturi pe ani (zi-din-an)</h2>
+      <h2 class="font-medium">Suprapunere preturi pe ani (lei/MWh, zi-din-an)</h2>
       <div id="year-toggles" class="flex flex-wrap gap-3 text-sm"></div>
     </div>
     <div class="empty-state text-sm text-gray-500" hidden>Fara date istorice inca.</div>
@@ -105,7 +108,7 @@
 
   <!-- Predictie pana la final de an -->
   <div class="card">
-    <h2 class="mb-1 font-medium">Predictie pret mediu zilnic pana la 31 decembrie</h2>
+    <h2 class="mb-1 font-medium">Predictie pret mediu zilnic (lei/MWh) pana la 31 decembrie</h2>
     <p id="forecast-note" class="mb-2 text-xs text-amber-700 dark:text-amber-300"></p>
     <div class="empty-state text-sm text-gray-500" hidden>Predictia necesita cel putin cateva zile de istoric.</div>
     <div class="error-state text-sm text-red-600" hidden>
@@ -117,7 +120,7 @@
 
   <!-- Medii lunare -->
   <div class="card">
-    <h2 class="mb-2 font-medium">Medii lunare pe ani</h2>
+    <h2 class="mb-2 font-medium">Medii lunare pe ani (lei/MWh)</h2>
     <div class="empty-state text-sm text-gray-500" hidden>Fara date lunare inca.</div>
     <div class="error-state text-sm text-red-600" hidden>
       Graficul nu a putut fi incarcat.
