@@ -181,22 +181,27 @@ def test_persistent_5xx_raises_unavailable_after_max_retries(monkeypatch):
 # --- Mapare Deye -> model canonic (defensiva, unitati/semne) ----------------
 
 
-def test_map_station_latest_combines_charge_discharge_into_signed_battery_power():
+def test_map_station_latest_inverts_battery_power_sign_and_uses_wire_power_directly():
     """Campurile Deye/Solarman sunt in WATI (issue #118, confirmat de un
     raport real de utilizator -- valori de ordinul miilor pe un grafic
-    etichetat kW), nu kW -- maparea NU mai inmulteste cu 1000."""
+    etichetat kW), nu kW -- maparea NU mai inmulteste cu 1000.
+
+    Verificat live impotriva unui cont real: `batteryPower` e pozitiv la
+    descarcare/negativ la incarcare (opusul conventiei platformei, semnul se
+    inverseaza); `wirePower` e deja in conventia platformei (+import/-export)
+    si e folosit direct."""
     mapped = svc.map_station_latest_to_telemetry(
-        {"chargePower": 1500, "dischargePower": 0, "generationPower": 2000, "consumptionPower": 1000, "purchasePower": 0, "wirePower": 500, "batterySOC": 80}
+        {"batteryPower": -1500, "generationPower": 2000, "consumptionPower": 1000, "wirePower": -500, "batterySOC": 80}
     )
-    assert mapped["battery_power_w"] == 1500  # incarcare -> pozitiv, conventia platformei
-    assert mapped["grid_power_w"] == -500  # export net -> negativ
+    assert mapped["battery_power_w"] == 1500  # incarcare (Deye: negativ) -> pozitiv, conventia platformei
+    assert mapped["grid_power_w"] == -500  # wirePower folosit direct (export net -> negativ)
     assert mapped["pv_power_w"] == 2000
     assert mapped["load_power_w"] == 1000
     assert mapped["battery_soc_percent"] == 80
 
 
 def test_map_station_latest_discharge_is_negative_battery_power():
-    mapped = svc.map_station_latest_to_telemetry({"chargePower": 0, "dischargePower": 2000})
+    mapped = svc.map_station_latest_to_telemetry({"batteryPower": 2000})
     assert mapped["battery_power_w"] == -2000
 
 
@@ -205,17 +210,15 @@ def test_map_station_latest_treats_deye_power_fields_as_watts_not_kw():
         {
             "generationPower": 1263,
             "consumptionPower": 1110,
-            "purchasePower": 0,
             "wirePower": 20,
-            "chargePower": 0,
-            "dischargePower": 500,
+            "batteryPower": 500,
         }
     )
 
     assert mapped["pv_power_w"] == Decimal("1263")
     assert mapped["load_power_w"] == Decimal("1110")
-    assert mapped["grid_power_w"] == Decimal("-20")
-    assert mapped["battery_power_w"] == Decimal("-500")
+    assert mapped["grid_power_w"] == Decimal("20")  # wirePower folosit direct, conventia platformei
+    assert mapped["battery_power_w"] == Decimal("-500")  # batteryPower descarcare (+) -> semn inversat
 
 
 def test_map_station_latest_missing_keys_are_none_not_zero():
@@ -328,7 +331,7 @@ def test_poll_connection_success_creates_telemetry_row_with_cloud_source(db, mon
     conn = _connection(db, station, user, device_id=cloud_device.id)
     db.flush()
 
-    raw = {"generationPower": 3200, "consumptionPower": 1100, "chargePower": 500, "dischargePower": 0, "purchasePower": 0, "wirePower": 2100, "batterySOC": 76, "lastUpdateTime": 1757721600}
+    raw = {"generationPower": 3200, "consumptionPower": 1100, "batteryPower": -500, "wirePower": 2100, "batterySOC": 76, "lastUpdateTime": 1757721600}
     monkeypatch.setattr(svc, "_valid_access_token", lambda c: "token")
     monkeypatch.setattr(svc, "fetch_station_latest", lambda token, station_id: raw)
 
@@ -589,7 +592,6 @@ def test_deye_watt_ingest_feeds_dashboard_kpis_and_aggregates_in_kw_kwh(db, monk
     raw = {
         "generationPower": 1263,
         "consumptionPower": 1110,
-        "purchasePower": 0,
         "wirePower": 20,
         "lastUpdateTime": int(measured_at.timestamp()),
     }
@@ -602,7 +604,7 @@ def test_deye_watt_ingest_feeds_dashboard_kpis_and_aggregates_in_kw_kwh(db, monk
 
     assert abs(summary["pv_power_kw"] - 1.263) < 0.001
     assert abs(summary["load_power_kw"] - 1.11) < 0.001
-    assert abs(summary["grid_power_kw"] - (-0.02)) < 0.001
+    assert abs(summary["grid_power_kw"] - 0.02) < 0.001  # wirePower folosit direct, conventia platformei
     raw_row = db.scalar(
         select(TelemetryRaw).where(
             TelemetryRaw.device_id == cloud_device.id,
@@ -622,7 +624,7 @@ def test_deye_watt_ingest_feeds_dashboard_kpis_and_aggregates_in_kw_kwh(db, monk
     assert interval is not None
     assert interval.pv_energy_kwh == Decimal("0.1053")
     assert interval.load_energy_kwh == Decimal("0.0925")
-    assert interval.grid_export_energy_kwh == Decimal("0.0017")
+    assert interval.grid_import_energy_kwh == Decimal("0.0017")
 
 
 # --- Ciclul de viata al conexiunii: connect/select/disconnect ---------------
