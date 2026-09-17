@@ -12,7 +12,7 @@ from app.models.user import Invitation
 from app.services import auth_service
 from app.web.routes import sse
 from tests.factories import make_membership, make_org, make_station, make_user
-from tests.web_helpers import login
+from tests.web_helpers import get_csrf, login
 
 
 def test_organization_invitation_rejects_global_role(client, db):
@@ -97,6 +97,31 @@ def test_production_requires_secure_cookie_and_non_console_email():
         Settings(**common, session_cookie_secure=False, email_backend="smtp")
     with pytest.raises(RuntimeError, match="EMAIL_BACKEND=console"):
         Settings(**common, session_cookie_secure=True, email_backend="console")
+
+
+def test_password_reset_request_message_reflects_email_deliverability(client, db, monkeypatch):
+    """Mesajul dupa submit nu trebuie sa pretinda livrarea unui email cand
+    backend-ul e 'console' (issue #149) -- si trebuie identic indiferent
+    daca adresa exista, ca sa nu permita enumerarea conturilor."""
+    from app.web.routes import auth as auth_routes
+
+    csrf = get_csrf(client)
+    resp = client.post(
+        "/request-password-reset",
+        data={"csrf_token": csrf, "email": "does-not-exist@test.local"},
+    )
+    assert resp.status_code == 200
+    assert "administrator" in resp.text.lower()
+    assert "am trimis" not in resp.text.lower()
+
+    monkeypatch.setattr(auth_routes.settings, "email_backend", "smtp")
+    csrf = get_csrf(client)
+    resp = client.post(
+        "/request-password-reset",
+        data={"csrf_token": csrf, "email": "also-does-not-exist@test.local"},
+    )
+    assert resp.status_code == 200
+    assert "am trimis" in resp.text.lower()
 
 
 def test_console_email_logs_metadata_without_body(monkeypatch):

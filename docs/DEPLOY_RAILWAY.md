@@ -70,11 +70,33 @@ SMTP_PASSWORD=<secret SMTP>
 SMTP_FROM_ADDRESS=<adresa expeditor>
 SMTP_USE_TLS=true
 DEMO_MODE_ENABLED=false  # OBLIGATORIU false in productie (config.py refuza pornirea altfel)
+
+# Optional (issue #149) -- vezi mai jos pentru un deploy fara SMTP configurat:
+INVITATION_DELIVERY_MODE=email
 ```
 
 `config.py` refuza pornirea in productie daca cookie-ul de sesiune nu este
-`Secure` sau daca backend-ul de email este `console`. Backend-ul console
-redacteaza corpul mesajelor deoarece acesta contine tokenuri de invitatie/resetare.
+`Secure` sau daca backend-ul de email este `console` **si**
+`INVITATION_DELIVERY_MODE=email` (implicit). Backend-ul console redacteaza
+corpul mesajelor deoarece acesta contine tokenuri de invitatie/resetare.
+
+### Deploy fara SMTP configurat (`INVITATION_DELIVERY_MODE=manual_link`)
+
+Daca nu ai (inca) un provider SMTP, seteaza `INVITATION_DELIVERY_MODE=manual_link`
+in loc de `email` -- restul variabilelor `SMTP_*`/`EMAIL_BACKEND` pot ramane
+implicite (`EMAIL_BACKEND=console`), fara sa blocheze pornirea in productie.
+In acest mod, invitarea unui membru (din `/organizations/{id}` sau din
+backoffice, `/admin/organizations/{id}`) nu mai trimite niciun email -- pagina
+afiseaza direct URL-ul complet de invitatie, o singura data, cu un buton de
+copiere in clipboard; administratorul care a creat invitatia trebuie sa
+transmita acel link manual (ex. mesagerie interna) persoanei invitate.
+
+Resetarea parolei RAMANE neschimbata -- foloseste in continuare
+`email_deliverable` (`EMAIL_BACKEND=smtp`) pentru a decide daca UI-ul
+pretinde ca a trimis un link; cu `EMAIL_BACKEND=console`, mesajul afisat
+dupa cerere indica explicit ca nu exista livrare automata si indruma
+utilizatorul catre administratorul organizatiei, in loc sa pretinda un
+email nelivrabil.
 
 > Nota despre `DATABASE_URL`: Railway furnizeaza propriul `DATABASE_URL` in
 > formatul `postgresql://...` (fara driver). `app/config.py` normalizeaza

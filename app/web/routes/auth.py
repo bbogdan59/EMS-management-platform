@@ -10,6 +10,7 @@ from app.core.csrf import verify_csrf
 from app.core.rate_limit import RateLimitExceeded, check_fixed_window
 from app.database import get_db
 from app.services import auth_service
+from app.web.response_headers import apply_no_store_headers
 from app.web.templating import templates
 
 router = APIRouter()
@@ -18,9 +19,7 @@ settings = get_settings()
 
 def _sensitive_template(request: Request, template: str, context: dict, status_code: int = 200):
     response = templates.TemplateResponse(request, template, context, status_code=status_code)
-    response.headers["Cache-Control"] = "no-store"
-    response.headers["Referrer-Policy"] = "no-referrer"
-    return response
+    return apply_no_store_headers(response)
 
 
 def _client_ip(request: Request) -> str:
@@ -132,7 +131,12 @@ def request_reset_form(request: Request):
 def request_reset_submit(request: Request, email: str = Form(...), db: Session = Depends(get_db)):
     auth_service.request_password_reset(db, email)
     db.commit()
-    return templates.TemplateResponse(request, "auth/request_password_reset.html", {"sent": True})
+    # Daca nu exista un backend de email real (issue #149), tokenul de
+    # resetare tot e creat in DB (util pentru un flux administrativ viitor),
+    # dar UI-ul NU pretinde ca a trimis un email nelivrabil -- mesajul e
+    # identic indiferent daca adresa exista, ca sa nu enumere conturile.
+    context = {"sent": True, "email_deliverable": settings.email_deliverable}
+    return templates.TemplateResponse(request, "auth/request_password_reset.html", context)
 
 
 @router.get("/reset-password")

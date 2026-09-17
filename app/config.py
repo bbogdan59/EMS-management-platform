@@ -56,6 +56,16 @@ class Settings(BaseSettings):
     invite_token_ttl_hours: int = 72
     login_rate_limit_attempts: int = 10
     login_rate_limit_window_seconds: int = 300
+    # In lipsa unui SMTP configurat (issue #149), invitatiile pot fi livrate
+    # printr-un link copiabil afisat o singura data unui actor autorizat, in
+    # loc sa se bazeze pe un email nelivrabil in productie:
+    # - "email": comportamentul istoric, trimite prin adaptorul configurat;
+    # - "manual_link": nu apeleaza deloc adaptorul de email pentru invitatii;
+    #   ruta care creeaza/regenereaza afiseaza URL-ul complet o singura data.
+    # Reset-ul de parola NU foloseste acest mod -- ramane pe adaptorul de
+    # email (vezi `email_deliverable` mai jos), ca sa nu expuna public un
+    # link de resetare a parolei.
+    invitation_delivery_mode: Literal["email", "manual_link"] = "email"
 
     # --- Email adapter ---
     email_backend: Literal["console", "smtp"] = "console"
@@ -148,6 +158,19 @@ class Settings(BaseSettings):
         return self.environment == "production"
 
     @property
+    def email_deliverable(self) -> bool:
+        """True doar daca exista un adaptor care poate livra efectiv un
+        email unui destinatar extern. Backend-ul 'console' scrie doar in
+        loguri (si acelea redactate) -- niciun UI nu trebuie sa pretinda ca
+        a "trimis" ceva cand backend-ul e 'console' (issue #149: reset de
+        parola fara SMTP)."""
+        return self.email_backend == "smtp"
+
+    @property
+    def invitation_manual_link(self) -> bool:
+        return self.invitation_delivery_mode == "manual_link"
+
+    @property
     def celery_broker(self) -> str:
         return self.celery_broker_url or self.redis_url
 
@@ -179,8 +202,12 @@ class Settings(BaseSettings):
             raise RuntimeError("Datele OPCOM sintetice nu pot fi activate in productie.")
         if self.is_production and not self.session_cookie_secure:
             raise RuntimeError("SESSION_COOKIE_SECURE trebuie activat in productie.")
-        if self.is_production and self.email_backend == "console":
-            raise RuntimeError("EMAIL_BACKEND=console nu poate fi folosit in productie.")
+        if self.is_production and self.email_backend == "console" and self.invitation_delivery_mode == "email":
+            raise RuntimeError(
+                "EMAIL_BACKEND=console nu poate fi folosit in productie cu INVITATION_DELIVERY_MODE=email "
+                "(niciun email nu ar fi livrat efectiv). Configureaza SMTP sau seteaza "
+                "INVITATION_DELIVERY_MODE=manual_link pentru a invita membri printr-un link copiabil, fara SMTP."
+            )
         if self.is_production and self.legacy_claim_code_enabled:
             raise RuntimeError(
                 "Fluxul legacy de asociere prin cod manual (15 minute) nu poate fi activat in productie. "

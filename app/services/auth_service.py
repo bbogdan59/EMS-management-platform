@@ -161,30 +161,58 @@ def bootstrap_first_admin(db: Session, provided_token: str, email: str, password
 def create_invitation(
     db: Session, organization: Organization, email: str, role: str, invited_by_user_id: uuid.UUID
 ) -> tuple[Invitation, str]:
+    """Creeaza (sau, daca exista deja una pending pentru aceeasi organizatie+
+    email, ROTESTE) o invitatie. Reutilizarea randului existent -- in loc sa
+    creeze un al doilea rand pending -- face operatia idempotenta la dublu
+    submit sau la o reinvitare a cuiva deja invitat: ramane mereu cel mult o
+    invitatie pending per (organization_id, email), cu un singur link valid
+    la un moment dat (issue #149)."""
     if role not in ORGANIZATION_ROLES:
         raise AuthError("Rol de organizatie invalid.")
+    normalized_email = email.lower().strip()
     raw_token = generate_opaque_token()
-    invitation = Invitation(
-        organization_id=organization.id,
-        email=email.lower().strip(),
-        role=role,
-        token_hash=hash_token(raw_token),
-        invited_by_user_id=invited_by_user_id,
-        expires_at=expires_in(hours=settings.invite_token_ttl_hours),
-    )
-    db.add(invitation)
-    db.flush()
 
-    accept_url = f"{settings.base_url}/accept-invitation?token={raw_token}"
-    get_email_adapter().send(
-        to=invitation.email,
-        subject=f"Invitatie EMS Platform - {organization.name}",
-        body=(
-            f"Ai fost invitat sa te alaturi organizatiei '{organization.name}' cu rolul '{role}'.\n"
-            f"Acceseaza acest link pentru a-ti crea contul (valabil {settings.invite_token_ttl_hours}h):\n"
-            f"{accept_url}"
-        ),
+    existing = db.scalar(
+        select(Invitation).where(
+            Invitation.organization_id == organization.id,
+            Invitation.email == normalized_email,
+            Invitation.accepted_at.is_(None),
+            Invitation.revoked_at.is_(None),
+        )
     )
+    if existing is not None:
+        existing.role = role
+        existing.token_hash = hash_token(raw_token)
+        existing.expires_at = expires_in(hours=settings.invite_token_ttl_hours)
+        db.add(existing)
+        db.flush()
+        invitation = existing
+    else:
+        invitation = Invitation(
+            organization_id=organization.id,
+            email=normalized_email,
+            role=role,
+            token_hash=hash_token(raw_token),
+            invited_by_user_id=invited_by_user_id,
+            expires_at=expires_in(hours=settings.invite_token_ttl_hours),
+        )
+        db.add(invitation)
+        db.flush()
+
+    if settings.invitation_delivery_mode == "email":
+        accept_url = f"{settings.base_url}/accept-invitation?token={raw_token}"
+        get_email_adapter().send(
+            to=invitation.email,
+            subject=f"Invitatie EMS Platform - {organization.name}",
+            body=(
+                f"Ai fost invitat sa te alaturi organizatiei '{organization.name}' cu rolul '{role}'.\n"
+                f"Acceseaza acest link pentru a-ti crea contul (valabil {settings.invite_token_ttl_hours}h):\n"
+                f"{accept_url}"
+            ),
+        )
+    # In modul 'manual_link' nu apelam deloc adaptorul de email -- URL-ul
+    # complet e returnat apelantului (raw_token), care il afiseaza o singura
+    # data unui actor autorizat; doar hash-ul ramane persistat mai sus.
     return invitation, raw_token
 
 

@@ -10,6 +10,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user, require_platform_admin
+from app.config import get_settings
 from app.core.audit import record_audit
 from app.core.csrf import verify_csrf
 from app.core.security import utcnow
@@ -37,6 +38,8 @@ from app.services import (
     station_service,
 )
 from app.web.context import build_nav_context
+from app.web.invitation_ui import invitation_reveal, should_reveal_invitation_link
+from app.web.response_headers import apply_no_store_headers
 from app.web.templating import templates
 
 router = APIRouter(dependencies=[Depends(require_platform_admin)])
@@ -102,6 +105,52 @@ def create_organization(
     return RedirectResponse("/admin/organizations", status_code=303)
 
 
+def _admin_organization_context(
+    db: Session, request: Request, organization: Organization, user: User, *, invitation_reveal=None
+) -> dict:
+    """Contextul paginii de backoffice a unei organizatii (issue #24) --
+    partajat intre GET (listare) si POST-urile de invitatie (issue #149) care
+    trebuie sa reafiseze pagina direct, nu sa redirecteze, ca sa poata arata
+    linkul afisat o singura data."""
+    member_rows = membership_service.list_members(db, organization)
+    pending_invitations = membership_service.list_pending_invitations(db, organization)
+
+    station_rows = []
+    for station in db.scalars(select(Station).where(Station.organization_id == organization.id).order_by(Station.name)).all():
+        device_count = db.scalar(select(func.count(Device.id)).where(Device.station_id == station.id))
+        open_alerts = db.scalar(
+            select(func.count(Alert.id)).where(Alert.station_id == station.id, Alert.status == AlertStatus.open.value)
+        )
+        latest_telemetry = dashboard_service.get_latest_telemetry(db, station.id)
+        station_rows.append(
+            {
+                "station": station,
+                "device_count": device_count,
+                "open_alerts": open_alerts,
+                "last_telemetry_at": latest_telemetry.measured_at if latest_telemetry else None,
+            }
+        )
+
+    recent_audit = db.scalars(
+        select(AuditLog).where(AuditLog.organization_id == organization.id).order_by(AuditLog.occurred_at.desc()).limit(20)
+    ).all()
+
+    settings = get_settings()
+    return {
+        "organization": organization,
+        "members": member_rows,
+        "pending_invitations": pending_invitations,
+        "organization_roles": sorted(auth_service.ORGANIZATION_ROLES),
+        "station_rows": station_rows,
+        "recent_audit": recent_audit,
+        "errors": request.query_params.getlist("error"),
+        "now": utcnow(),
+        "invitation_reveal": invitation_reveal,
+        "invitation_delivery_mode": settings.invitation_delivery_mode,
+        **build_nav_context(db, user),
+    }
+
+
 @router.get("/organizations/{organization_id}")
 def organization_detail(
     request: Request,
@@ -118,41 +167,72 @@ def organization_detail(
     if organization is None:
         return RedirectResponse("/admin/organizations", status_code=303)
 
-    member_rows = membership_service.list_members(db, organization)
-    pending_invitations = membership_service.list_pending_invitations(db, organization)
-
-    station_rows = []
-    for station in db.scalars(select(Station).where(Station.organization_id == organization_id).order_by(Station.name)).all():
-        device_count = db.scalar(select(func.count(Device.id)).where(Device.station_id == station.id))
-        open_alerts = db.scalar(
-            select(func.count(Alert.id)).where(Alert.station_id == station.id, Alert.status == AlertStatus.open.value)
-        )
-        latest_telemetry = dashboard_service.get_latest_telemetry(db, station.id)
-        station_rows.append(
-            {
-                "station": station,
-                "device_count": device_count,
-                "open_alerts": open_alerts,
-                "last_telemetry_at": latest_telemetry.measured_at if latest_telemetry else None,
-            }
-        )
-
-    recent_audit = db.scalars(
-        select(AuditLog).where(AuditLog.organization_id == organization_id).order_by(AuditLog.occurred_at.desc()).limit(20)
-    ).all()
-
-    context = {
-        "organization": organization,
-        "members": member_rows,
-        "pending_invitations": pending_invitations,
-        "organization_roles": sorted(auth_service.ORGANIZATION_ROLES),
-        "station_rows": station_rows,
-        "recent_audit": recent_audit,
-        "errors": request.query_params.getlist("error"),
-        "now": utcnow(),
-        **build_nav_context(db, user),
-    }
+    context = _admin_organization_context(db, request, organization, user)
     return templates.TemplateResponse(request, "admin/organization_detail.html", context)
+
+
+@router.post("/organizations/{organization_id}/invitations", dependencies=[Depends(verify_csrf)])
+def admin_invite_member(
+    request: Request,
+    organization_id: uuid.UUID,
+    email: str = Form(...),
+    role: str = Form(...),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Permite unui platform_admin sa invite direct un membru in orice
+    organizatie din backoffice (issue #149), fara sa intre prin impersonare
+    in tenant -- actioneaza explicit ca platform_admin (auditat cu
+    `actor_user_id`/`actor_label` reale), acelasi serviciu
+    (`auth_service.create_invitation`) ca autoservirea organizatiei."""
+    organization = db.get(Organization, organization_id)
+    if organization is None:
+        return RedirectResponse("/admin/organizations", status_code=303)
+    settings = get_settings()
+    try:
+        invitation, raw_token = auth_service.create_invitation(db, organization, email, role, user.id)
+    except auth_service.AuthError as exc:
+        db.rollback()
+        context = _admin_organization_context(db, request, organization, user)
+        context["invitation_error"] = str(exc)
+        return templates.TemplateResponse(request, "admin/organization_detail.html", context, status_code=400)
+    record_audit(
+        db, action="invitation_created", resource_type="invitation", resource_id=str(invitation.id),
+        actor_user_id=user.id, actor_label=user.email, organization_id=organization.id,
+        metadata={"invited_email": email, "role": role, "delivery_mode": settings.invitation_delivery_mode, "via": "platform_admin"},
+    )
+    db.commit()
+
+    reveal = invitation_reveal(invitation, raw_token) if should_reveal_invitation_link(settings) else None
+    context = _admin_organization_context(db, request, organization, user, invitation_reveal=reveal)
+    response = templates.TemplateResponse(request, "admin/organization_detail.html", context)
+    return apply_no_store_headers(response)
+
+
+@router.post("/organizations/{organization_id}/invitations/{invitation_id}/resend", dependencies=[Depends(verify_csrf)])
+def admin_resend_invitation(
+    request: Request,
+    organization_id: uuid.UUID,
+    invitation_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    organization = db.get(Organization, organization_id)
+    invitation = db.get(Invitation, invitation_id) if organization is not None else None
+    if organization is None or invitation is None or invitation.organization_id != organization_id:
+        return RedirectResponse("/admin/organizations", status_code=303)
+    settings = get_settings()
+    try:
+        raw_token = membership_service.resend_invitation(db, organization, invitation, user)
+    except membership_service.MembershipError as exc:
+        db.rollback()
+        return RedirectResponse(f"/admin/organizations/{organization_id}?error={exc}", status_code=303)
+    db.commit()
+
+    reveal = invitation_reveal(invitation, raw_token) if should_reveal_invitation_link(settings) else None
+    context = _admin_organization_context(db, request, organization, user, invitation_reveal=reveal)
+    response = templates.TemplateResponse(request, "admin/organization_detail.html", context)
+    return apply_no_store_headers(response)
 
 
 @router.post("/organizations/{organization_id}/edit", dependencies=[Depends(verify_csrf)])
