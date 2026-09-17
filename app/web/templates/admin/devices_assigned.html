@@ -54,14 +54,14 @@
                   {% if s.id != d.station_id %}<option value="{{ s.id }}">{{ s.name }}</option>{% endif %}
                 {% endfor %}
               </select>
-              <input class="input font-mono text-xs" name="confirm_identifier" placeholder="confirma serialul" required style="width: 12rem" />
+              <input class="input w-full min-w-[24rem] font-mono text-xs" name="confirm_identifier" placeholder="confirma serialul sau UUID-ul de instalare" required />
               <button type="submit" class="btn-primary" onclick="return confirm('Transferi acest device catre statia selectata? Credentiala curenta va fi revocata imediat.');">Transfera</button>
             </form>
           </td>
           <td>
             <form method="post" action="/admin/devices/{{ d.id }}/factory-reset" class="flex flex-wrap items-center gap-2">
               <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}" />
-              <input class="input font-mono text-xs" name="confirm_identifier" placeholder="confirma serialul" required style="width: 12rem" />
+              <input class="input w-full min-w-[24rem] font-mono text-xs" name="confirm_identifier" placeholder="confirma serialul sau UUID-ul de instalare" required />
               <button type="submit" class="btn-danger" onclick="return confirm('Resetezi acest device din fabrica? Se detaseaza de statie si credentiala curenta e revocata imediat.');">Factory reset</button>
             </form>
           </td>

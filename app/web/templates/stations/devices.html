@@ -41,7 +41,7 @@
   {% if can_edit %}
   <div class="card border-brand-300">
     <h2 class="mb-2 font-medium">{% if onboarding %}Pasul 2 din 3: Asociaza device-ul EMS{% else %}Adauga device-ul EMS{% endif %}</h2>
-    <p class="mb-3 text-sm text-gray-500 dark:text-gray-400">Conecteaza device-ul la alimentare si internet, apoi introdu (sau scaneaza) Device Code de pe eticheta sigilata ori serialul dispozitivului. Nu trebuie sa modifici nimic pe Raspberry Pi -- niciun cod de editat manual in filesystem/CLI.</p>
+    <p class="mb-3 text-sm text-gray-500 dark:text-gray-400">Conecteaza device-ul la alimentare si internet, apoi introdu sau scaneaza Device Code-ul de pe eticheta sigilata. Nu trebuie sa modifici nimic pe Raspberry Pi -- niciun cod de editat manual in filesystem/CLI.</p>
     <form method="post" action="/stations/{{ station.id }}/devices/activate" class="flex flex-wrap items-end gap-3">
       <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}" />
       {% if wizard_step %}<input type="hidden" name="wizard" value="1" />{% elif onboarding %}<input type="hidden" name="onboarding" value="1" />{% endif %}
