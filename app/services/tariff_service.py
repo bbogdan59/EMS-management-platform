@@ -273,7 +273,7 @@ def compute_effective_price_lei_per_kwh(
         returneaza `None` explicit -- apelantul trebuie sa EXCLUDA acea ora
         din orice suma, niciodata sa o trateze ca gratuita sau sa foloseasca
         tacit un alt pret.
-      - `economic_calculation_disabled=True`: `None` necondiTionat (formula
+      - `economic_calculation_disabled=True`: `None` neconditionat (formula
         contractuala reala nu e implementata -- vezi `limitation_note`)."""
     if (
         tariff_version is None

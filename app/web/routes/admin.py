@@ -42,7 +42,7 @@ from app.web.templating import templates
 router = APIRouter(dependencies=[Depends(require_platform_admin)])
 logger = structlog.get_logger(__name__)
 
-_SAFE_ENQUEUE_ERROR = "Jobul nu a putut fi trimis către worker. Încercați din nou."
+_SAFE_ENQUEUE_ERROR = "Jobul nu a putut fi trimis catre worker. Incercati din nou."
 
 
 @router.get("")
