@@ -427,7 +427,7 @@ function emsInitMarket(availableYears) {
         return {
           name: year,
           type: "bar",
-          color: EMS_YEAR_COLORS[availableYears.indexOf(Number(year)) % EMS_YEAR_COLORS.length],
+          color: EMS_YEAR_COLORS[Math.max(availableYears.indexOf(Number(year)), 0) % EMS_YEAR_COLORS.length],
           data: monthNames.map((_, i) => byMonth.get(i + 1) ?? null),
         };
       });

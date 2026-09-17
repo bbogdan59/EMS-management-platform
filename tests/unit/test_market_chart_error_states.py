@@ -41,3 +41,12 @@ def test_market_chart_fetches_cache_successful_payloads_briefly_by_url():
     assert "const cached = marketDataCache.get(url);" in script
     assert "Date.now() - cached.ts < MARKET_DATA_CACHE_TTL_MS" in script
     assert "marketDataCache.set(url, { data, ts: Date.now() });" in script
+
+
+def test_market_year_color_lookup_falls_back_for_unmatched_years():
+    script = Path("app/web/static/js/market.js").read_text()
+
+    guarded = "EMS_YEAR_COLORS[Math.max(availableYears.indexOf(Number(year)), 0) % EMS_YEAR_COLORS.length]"
+    unguarded = "EMS_YEAR_COLORS[availableYears.indexOf(Number(year)) % EMS_YEAR_COLORS.length]"
+    assert script.count(guarded) == 2
+    assert unguarded not in script
