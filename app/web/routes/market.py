@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import io
+import uuid
 from datetime import timedelta
 
 from fastapi import APIRouter, Depends, Query, Request
@@ -33,6 +34,7 @@ def _parse_years(years: str | None) -> list[int] | None:
 @router.get("/market/prices")
 def market_prices_page(
     request: Request,
+    station_id: uuid.UUID | None = Query(default=None),
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
@@ -41,7 +43,7 @@ def market_prices_page(
     context = {
         "available_years": available_years,
         "status": status,
-        **build_nav_context(db, user),
+        **build_nav_context(db, user, station_id),
     }
     return templates.TemplateResponse(request, "market/prices.html", context)
 
