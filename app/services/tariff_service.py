@@ -254,14 +254,18 @@ def compute_effective_price_lei_per_kwh(
 
         cost_marginal_energie
           + variable_component_lei_per_kwh   (compat cu versiuni vechi)
-          + distribution_lei_per_kwh
-          + transport_lei_per_kwh
-          + other_regulated_lei_per_kwh
+          + distribution_lei_per_kwh      (doar import)
+          + transport_lei_per_kwh         (doar import)
+          + other_regulated_lei_per_kwh   (doar import)
         = subtotal PRE-TVA
 
         daca `vat_rate_percent` e setat: subtotal * (1 + vat_rate_percent/100)
         altfel: subtotal neschimbat -- `None` inseamna explicit "TVA neinclus
         in aceasta cifra", nu "0% TVA" (diferenta conteaza pentru un audit).
+
+    Pentru `direction=export`, componentele de retea/taxe reglementate sunt
+    ignorate chiar daca exista valori istorice stocate accidental pe versiune:
+    ele sunt taxe de import, nu venit din energie exportata.
 
     `cost_marginal_energie`:
       - `kind=fixed` (`fixed_price_lei_per_kwh` setat): valoare CONSTANTA,
@@ -288,13 +292,13 @@ def compute_effective_price_lei_per_kwh(
     else:
         return None
 
-    subtotal = (
-        energy
-        + tariff_version.variable_component_lei_per_kwh
-        + tariff_version.distribution_lei_per_kwh
-        + tariff_version.transport_lei_per_kwh
-        + tariff_version.other_regulated_lei_per_kwh
-    )
+    subtotal = energy + tariff_version.variable_component_lei_per_kwh
+    if getattr(tariff_version.tariff, "direction", None) != "export":
+        subtotal += (
+            tariff_version.distribution_lei_per_kwh
+            + tariff_version.transport_lei_per_kwh
+            + tariff_version.other_regulated_lei_per_kwh
+        )
     if tariff_version.vat_rate_percent is not None:
         subtotal = subtotal * (Decimal(1) + tariff_version.vat_rate_percent / Decimal(100))
     return subtotal

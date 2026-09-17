@@ -13,7 +13,10 @@ from app.services import dashboard_service as dashboard
 from tests.factories import make_device, make_market_day, make_org, make_station, make_user
 
 
-def _add_tariff_version(db, station, direction, *, valid_from, valid_to=None, fixed_price):
+def _add_tariff_version(
+    db, station, direction, *, valid_from, valid_to=None, fixed_price,
+    variable_component=0, distribution=0, transport=0, other_regulated=0, vat_rate=None,
+):
     tariff = db.query(Tariff).filter_by(station_id=station.id, direction=direction).one_or_none()
     if tariff is None:
         tariff = Tariff(station_id=station.id, direction=direction, kind="fixed", name=f"t-{direction}")
@@ -23,7 +26,10 @@ def _add_tariff_version(db, station, direction, *, valid_from, valid_to=None, fi
         TariffVersion(
             tariff_id=tariff.id, valid_from=valid_from, valid_to=valid_to,
             fixed_price_lei_per_kwh=Decimal(str(fixed_price)), opcom_margin_lei_per_kwh=None,
-            fixed_monthly_fee_lei=Decimal("0"), variable_component_lei_per_kwh=Decimal("0"),
+            fixed_monthly_fee_lei=Decimal("0"), variable_component_lei_per_kwh=Decimal(str(variable_component)),
+            distribution_lei_per_kwh=Decimal(str(distribution)), transport_lei_per_kwh=Decimal(str(transport)),
+            other_regulated_lei_per_kwh=Decimal(str(other_regulated)),
+            vat_rate_percent=Decimal(str(vat_rate)) if vat_rate is not None else None,
         )
     )
     db.flush()
@@ -325,6 +331,25 @@ def test_estimated_savings_export_revenue_reduces_net_cost(db):
     assert result["available"] is True
     # 0 kWh import - 3 kWh export * 0.4 lei/kWh = -1.2 lei (venit net, nu cost).
     assert abs(result["actual_net_cost_lei"] - (-1.2)) < 0.01
+
+
+def test_estimated_savings_export_revenue_ignores_export_grid_charges(db):
+    station = _station(db, "exportcharges")
+    t0 = utcnow().replace(minute=0, second=0, microsecond=0) - timedelta(days=10)
+    _add_tariff_version(db, station, "import", valid_from=t0 - timedelta(days=1), fixed_price="1.0")
+    _add_tariff_version(
+        db, station, "export", valid_from=t0 - timedelta(days=1), fixed_price="0.4",
+        distribution="0.2", transport="0.05", other_regulated="0.03", vat_rate="19",
+    )
+
+    _add_hour(db, station, t0, load=0, pv=3, grid_import=0, grid_export=3)
+    db.commit()
+
+    result = dashboard.get_estimated_savings(db, station, t0, t0 + timedelta(hours=1))
+
+    assert result["available"] is True
+    assert result["export_revenue_lei"] == 1.43
+    assert result["actual_net_cost_lei"] == -1.43
 
 
 def test_estimated_savings_excludes_hours_without_resolvable_price_and_reports_coverage(db):

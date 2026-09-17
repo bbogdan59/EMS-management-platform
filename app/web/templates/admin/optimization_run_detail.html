@@ -22,7 +22,10 @@
       {% if run.is_fallback %}<span class="badge-warn">plan de asteptare (fallback)</span>{% endif %}
       {% if plan %}<span class="badge-muted">plan v{{ plan.version }} &middot; {{ plan.status }} &middot; mod {{ plan.execution_mode }}</span>{% endif %}
     </p>
-    {% if run.objective_value_lei is not none %}<p class="text-sm">Cost net estimat pe orizont: <strong>{{ run.objective_value_lei | lei }}</strong></p>{% endif %}
+    {% if run.objective_value_lei is not none %}
+    <p class="text-sm">Scor optimizare: <strong>{{ "%.4f"|format(run.objective_value_lei) }}</strong></p>
+    <p class="text-xs text-gray-500 dark:text-gray-400">Diagnostic solver; include penalizari si valoare terminala, deci nu este cost net real. Costul real pe interval este in tabelul detaliat.</p>
+    {% endif %}
     {% if run.explanation_summary %}<p class="text-sm text-gray-600 dark:text-gray-300">{{ run.explanation_summary }}</p>{% endif %}
   </div>
 

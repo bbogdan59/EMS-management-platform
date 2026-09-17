@@ -18,7 +18,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from app.models.tariff import TariffVersion
+from app.models.tariff import Tariff, TariffVersion
 from app.services import tariff_service as svc
 from tests.factories import make_org, make_station, make_user
 
@@ -100,6 +100,20 @@ def test_all_network_and_regulated_components_sum_correctly(db):
     )
     # 0.50 + 0.01 + 0.15 + 0.05 + 0.02 = 0.73
     assert svc.compute_effective_price_lei_per_kwh(v, None) == Decimal("0.73")
+
+
+def test_export_effective_price_ignores_import_side_grid_charges(db):
+    v = _version(
+        tariff=Tariff(station_id=uuid.uuid4(), direction="export", kind="fixed", name="Export"),
+        fixed_price_lei_per_kwh=Decimal("0.40"),
+        variable_component_lei_per_kwh=Decimal("0.01"),
+        distribution_lei_per_kwh=Decimal("0.20"),
+        transport_lei_per_kwh=Decimal("0.05"),
+        other_regulated_lei_per_kwh=Decimal("0.03"),
+        vat_rate_percent=Decimal("19"),
+    )
+
+    assert svc.compute_effective_price_lei_per_kwh(v, None) == Decimal("0.4879")
 
 
 def test_vat_applied_when_rate_set(db):

@@ -150,6 +150,8 @@ def test_optimization_produces_balanced_feasible_plan(db):
 
     assert run.status == OptimizationRunStatus.succeeded.value
     assert run.is_fallback is False
+    assert "Scor optimizare" in run.explanation_summary
+    assert "Cost net estimat" not in run.explanation_summary
 
     plan = db.scalar(select(Plan).where(Plan.optimization_run_id == run.id))
     intervals = db.scalars(select(PlanInterval).where(PlanInterval.plan_id == plan.id)).all()
