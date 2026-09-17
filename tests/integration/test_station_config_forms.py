@@ -25,6 +25,8 @@ def _config_payload(station, **overrides):
         "csrf_token": "",
         "pv_installed_power_kw": "6",
         "inverter_power_kw": "6",
+        "latitude": "44.43",
+        "longitude": "26.10",
         "battery_charge_efficiency": "0.95",
         "battery_discharge_efficiency": "0.95",
         "panel_groups_json": json.dumps([{"name": "Sud", "power_kwp": "6", "azimuth_degrees": "180", "tilt_degrees": "30"}]),

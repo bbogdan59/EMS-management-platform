@@ -28,6 +28,11 @@
     <input type="hidden" name="panel_groups_json" id="panel_groups_json" />
     {% if wizard_step %}<input type="hidden" name="wizard" value="1" />{% endif %}
 
+    {% call field_group("Locatie") %}
+    {{ numeric_field("latitude", "Latitudine", value=station.latitude, unit="°", step="0.000001", min=-90, max=90, required=True, help="Necesara pentru prognoza productiei solare (pozitia soarelui la locatia statiei) -- o corectie aici se aplica din urmatoarea rulare a prognozei.") }}
+    {{ numeric_field("longitude", "Longitudine", value=station.longitude, unit="°", step="0.000001", min=-180, max=180, required=True) }}
+    {% endcall %}
+
     {% call field_group("Sistem PV / invertor") %}
     {{ numeric_field("pv_installed_power_kw", "Putere PV instalata", value=config.pv_installed_power_kw if config, unit="kW", min=0.001, required=True) }}
     {{ numeric_field("inverter_power_kw", "Putere invertor", value=config.inverter_power_kw if config, unit="kW", min=0.001, required=True) }}
