@@ -55,6 +55,18 @@ def test_dashboard_power_chart_overlays_faded_soc_on_left_axis():
     assert "areaStyle: { opacity: 0.04 }" in dashboard_js
 
 
+def test_dashboard_heatmap_uses_15m_slots_with_hour_labels_and_kw_values():
+    template = Path("app/web/templates/dashboard/station.html").read_text()
+    dashboard_js = Path("app/web/static/js/dashboard.js").read_text()
+
+    assert "Heatmap consum (15 minute x zi din saptamana)" in template
+    assert "Insuficiente agregate la 15 minute pentru heatmap." in template
+    assert "const slots = [...Array(96).keys()].map((slot) => {" in dashboard_js
+    assert "data.map((d) => [d.slot, d.weekday, Number(d.avg_load_kw.toFixed(3))])" in dashboard_js
+    assert 'axisLabel: { formatter: (value, index) => (index % 4 === 0 ? value.slice(0, 2) : "") }' in dashboard_js
+    assert "${params.value[2]} kW" in dashboard_js
+
+
 def test_dashboard_timeseries_line_symbols_are_threshold_based():
     dashboard_js = Path("app/web/static/js/dashboard.js").read_text()
 

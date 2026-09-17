@@ -59,10 +59,24 @@ def _add_hour(db, station, period_start, *, load=None, pv=None, grid_import=None
     db.flush()
 
 
-def _station(db, suffix=""):
+def _add_15m_load(db, station, period_start, *, load_kwh, coverage=1.0):
+    db.add(
+        TelemetryAggregate(
+            station_id=station.id,
+            period_type="interval_15m",
+            period_start=period_start,
+            period_end=period_start + timedelta(minutes=15),
+            load_energy_kwh=Decimal(str(load_kwh)) if load_kwh is not None else None,
+            coverage={"load": coverage},
+        )
+    )
+    db.flush()
+
+
+def _station(db, suffix="", **overrides):
     user = make_user(db, email=f"dash{suffix}@test.local")
     org = make_org(db, f"Dash Org {suffix}")
-    return make_station(db, org, user, name=f"Dash Station {suffix}")
+    return make_station(db, org, user, name=f"Dash Station {suffix}", **overrides)
 
 
 def _add_raw(db, station, device, measured_at, *, pv=None, load=None, battery=None, grid=None, soc=None, sequence=0, is_simulated=False, is_late=False):
@@ -508,6 +522,26 @@ def test_estimated_savings_excludes_incomplete_energy_instead_of_zero_filling(db
     assert result["available"] is True
     assert result["hours_priced"] == 1
     assert result["hours_with_incomplete_energy_data"] == 1
+
+
+# --- get_heatmap ---------------------------------------------------------
+
+
+def test_heatmap_uses_15m_slots_and_returns_average_load_kw(db, monkeypatch):
+    station = _station(db, "heatmap", timezone="UTC")
+    now = datetime(2026, 9, 17, 12, tzinfo=UTC)
+    monkeypatch.setattr(dashboard, "utcnow", lambda: now)
+
+    slot_start = datetime(2026, 9, 15, 10, 15, tzinfo=UTC)
+    _add_15m_load(db, station, slot_start, load_kwh=Decimal("0.50"))
+    _add_15m_load(db, station, slot_start - timedelta(weeks=1), load_kwh=Decimal("1.00"))
+    _add_15m_load(db, station, slot_start + timedelta(minutes=15), load_kwh=Decimal("9.00"), coverage=0.5)
+    _add_hour(db, station, slot_start.replace(minute=0), load=99, pv=0, grid_import=99, grid_export=0)
+    db.commit()
+
+    result = dashboard.get_heatmap(db, station)
+
+    assert result == [{"weekday": 1, "slot": 41, "avg_load_kw": 3.0}]
 
 
 # --- get_forecast_vs_actual ---------------------------------------------

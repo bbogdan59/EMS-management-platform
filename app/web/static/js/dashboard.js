@@ -547,15 +547,28 @@ function emsInitDashboard(stationId, initialSummary = null) {
       if (!data.length) { showWidgetState(widget, "empty"); return; }
       showWidgetState(widget, "ok");
       const days = ["Luni", "Marti", "Miercuri", "Joi", "Vineri", "Sambata", "Duminica"];
+      const slots = [...Array(96).keys()].map((slot) => {
+        const hour = String(Math.floor(slot / 4)).padStart(2, "0");
+        const minute = String((slot % 4) * 15).padStart(2, "0");
+        return `${hour}:${minute}`;
+      });
       const chart = echarts.init(widget.chartEl, emsChartTheme());
-      const values = data.map((d) => [d.hour, d.weekday, Number(d.avg_load_kwh.toFixed(3))]);
+      const values = data.map((d) => [d.slot, d.weekday, Number(d.avg_load_kw.toFixed(3))]);
       const max = Math.max(...values.map((v) => v[2]), 0.1);
       chart.setOption({
-        tooltip: { position: "top" },
+        tooltip: {
+          position: "top",
+          formatter: (params) => `${days[params.value[1]]} ${slots[params.value[0]]}<br/>${params.value[2]} kW`,
+        },
         grid: { left: 60, right: 16, top: 16, bottom: 32 },
-        xAxis: { type: "category", data: [...Array(24).keys()], name: "Ora" },
+        xAxis: {
+          type: "category",
+          data: slots,
+          name: "Ora",
+          axisLabel: { formatter: (value, index) => (index % 4 === 0 ? value.slice(0, 2) : "") },
+        },
         yAxis: { type: "category", data: days },
-        visualMap: { min: 0, max, calculable: true, orient: "horizontal", left: "center", bottom: 0 },
+        visualMap: { min: 0, max, calculable: true, orient: "horizontal", left: "center", bottom: 0, text: ["kW", "0"] },
         series: [{ type: "heatmap", data: values, label: { show: false } }],
       });
     } catch (e) {
