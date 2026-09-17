@@ -22,18 +22,18 @@
     </div>
     <table class="w-full text-sm">
       <thead class="text-left text-gray-500">
-        <tr><th class="py-1">Valabil de la</th><th>Pana la</th><th>Pret fix</th><th>Marja OPCOM</th><th>Distributie</th><th>Transport</th><th>Alte taxe</th><th>TVA</th><th>Decontare</th></tr>
+        <tr><th class="py-1">Valabil de la</th><th>Pana la</th><th>Pret fix (lei/kWh)</th><th>Marja OPCOM (lei/kWh)</th><th>Distributie (lei/kWh)</th><th>Transport (lei/kWh)</th><th>Alte taxe (lei/kWh)</th><th>TVA</th><th>Decontare</th></tr>
       </thead>
       <tbody>
         {% for v in t.versions %}
         <tr class="border-t border-gray-100 dark:border-gray-800">
           <td class="py-1">{{ v.valid_from.strftime("%d.%m.%Y %H:%M") }}</td>
           <td>{{ v.valid_to.strftime("%d.%m.%Y %H:%M") if v.valid_to else "-" }}</td>
-          <td>{{ (v.fixed_price_lei_per_kwh | lei) if v.fixed_price_lei_per_kwh is not none else "-" }}</td>
-          <td>{{ v.opcom_margin_lei_per_kwh if v.opcom_margin_lei_per_kwh is not none else "-" }}</td>
-          <td>{{ v.distribution_lei_per_kwh }}</td>
-          <td>{{ v.transport_lei_per_kwh }}</td>
-          <td>{{ v.other_regulated_lei_per_kwh }}</td>
+          <td>{{ v.fixed_price_lei_per_kwh | lei_per_kwh }}</td>
+          <td>{{ v.opcom_margin_lei_per_kwh | lei_per_kwh }}</td>
+          <td>{{ v.distribution_lei_per_kwh | lei_per_kwh }}</td>
+          <td>{{ v.transport_lei_per_kwh | lei_per_kwh }}</td>
+          <td>{{ v.other_regulated_lei_per_kwh | lei_per_kwh }}</td>
           <td>{{ (v.vat_rate_percent ~ "%") if v.vat_rate_percent is not none else "neinclus" }}</td>
           <td>{{ v.settlement_method }}</td>
         </tr>
