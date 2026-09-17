@@ -7,7 +7,7 @@
       <h1 class="text-xl font-semibold">Plan explicabil -- {{ station.name if station else "statie stearsa" }}</h1>
       <p class="text-sm text-gray-500 dark:text-gray-400">
         Rulare #{{ run.id }} &middot; declansata de {{ run.triggered_by }}{% if triggered_by_user %} ({{ triggered_by_user.email }}){% endif %}
-        &middot; {{ run.created_at.strftime("%d.%m.%Y %H:%M") }} UTC
+        &middot; {{ run.created_at | local_dt(station.timezone if station else None) }}
       </p>
     </div>
     <a class="text-sm text-brand-700 hover:underline dark:text-brand-300" href="/admin/operations#optimization-runs">&larr; Operatiuni</a>

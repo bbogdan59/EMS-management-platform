@@ -13,11 +13,11 @@
 <h1 class="text-xl font-semibold">Configuratie invertor — {{ device.name }}</h1>
 <p>Stare: <strong>{{ state.status }}</strong>. Salvarea unei configuratii nu confirma aplicarea in invertor.</p>
 {% if not device.capabilities.get('inverter_settings_v1') %}<p class="badge-warn">Agentul nu declara executia setarilor. Configuratia ramane in asteptare; nu se emit comenzi fizice.</p>{% endif %}
-{% if state.command %}<p>Comanda: {{ state.command.status }}, expira {{ state.command.expires_at }}. {{ state.command.error or '' }}</p>{% endif %}
+{% if state.command %}<p>Comanda: {{ state.command.status }}, expira {{ state.command.expires_at | local_dt(station.timezone) }}. {{ state.command.error or '' }}</p>{% endif %}
 <div class="card">
 <h2>Ultima observatie a dispozitivului</h2>
 {% if state.reported %}
-<p>Model {{ state.reported.model }}, firmware {{ state.reported.firmware }} — {{ state.reported.measured_at }}</p>
+<p>Model {{ state.reported.model }}, firmware {{ state.reported.firmware }} — {{ state.reported.measured_at | local_dt(station.timezone) }}</p>
 <p>{{ state.reported.outcome }}: {{ state.reported.reason or '' }}</p>
 <table class="w-full"><thead><tr><th>Setare</th><th>Observat</th><th>Dorit</th></tr></thead><tbody>
 {% for key,value in state.reported.settings.items() %}<tr><td>{{ key }}</td><td>{{ value if value is not none else 'necunoscut' }}</td><td>{{ state.desired.settings.get(key, 'nespecificat') if state.desired else 'nespecificat' }}</td></tr>{% endfor %}
@@ -47,6 +47,6 @@
 {% endif %}
 </div>
 {% endif %}
-<div class="card"><h2>Istoric configuratii dorite</h2><ul>{% for item in history %}<li>v{{ item.version }} — {{ item.created_at }} — autor {{ item.created_by }} — {{ item.reason }} — {{ item.digest[:12] }}</li>{% endfor %}</ul></div>
+<div class="card"><h2>Istoric configuratii dorite</h2><ul>{% for item in history %}<li>v{{ item.version }} — {{ item.created_at | local_dt(station.timezone) }} — autor {{ item.created_by }} — {{ item.reason }} — {{ item.digest[:12] }}</li>{% endfor %}</ul></div>
 </div>
 {% endblock %}

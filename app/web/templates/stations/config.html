@@ -16,7 +16,7 @@
   <h1 class="text-xl font-semibold">Configurare tehnica - {{ station.name }}</h1>
 
   {% if config %}
-  <p class="text-sm text-gray-500 dark:text-gray-400">Versiune curenta: v{{ config.version }} ({{ config.created_at.strftime("%d.%m.%Y %H:%M") }})</p>
+  <p class="text-sm text-gray-500 dark:text-gray-400">Versiune curenta: v{{ config.version }} ({{ config.created_at | local_dt(station.timezone) }})</p>
   {% endif %}
 
   {{ error_summary(errors) }}
@@ -153,7 +153,7 @@
         {% for c in history %}
         <tr class="border-t border-gray-100 dark:border-gray-800">
           <td class="py-1">v{{ c.version }}</td>
-          <td>{{ c.created_at.strftime("%d.%m.%Y %H:%M") }}</td>
+          <td>{{ c.created_at | local_dt(station.timezone) }}</td>
           <td>{{ c.pv_installed_power_kw }}</td>
           <td>{{ c.inverter_power_kw }}</td>
         </tr>

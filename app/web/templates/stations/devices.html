@@ -81,7 +81,7 @@
               <span class="badge-muted">{{ d.status }}</span>
             {% endif %}
           </td>
-          <td>{{ d.last_heartbeat_at.strftime("%d.%m.%Y %H:%M") if d.last_heartbeat_at else "niciodata" }}</td>
+          <td>{{ d.last_heartbeat_at | local_dt(station.timezone) if d.last_heartbeat_at else "niciodata" }}</td>
           <td>{{ d.firmware_version or "-" }}</td>
           <td>
             {% if can_edit and d.status == "active" %}

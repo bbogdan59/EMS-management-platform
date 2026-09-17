@@ -32,7 +32,7 @@
     <h2 class="font-medium">Plan activ care ar fi inlocuit</h2>
     <p class="text-sm">
       Exista un plan activ <strong>v{{ active_plan.version }}</strong> (status <code>{{ active_plan.status }}</code>,
-      publicat la {{ active_plan.published_at.strftime("%d.%m.%Y %H:%M") if active_plan.published_at else "-" }}).
+      publicat la {{ active_plan.published_at | local_dt(station.timezone) if active_plan.published_at else "-" }}).
       Daca aceasta reoptimizare reuseste, planul curent va fi marcat <code>superseded</code> imediat --
       nu va mai fi cel activ pentru statie.
     </p>

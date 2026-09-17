@@ -41,7 +41,7 @@
           <td>{{ stations_by_id[d.station_id].name if d.station_id in stations_by_id else "-" }}</td>
           <td>
             {% if d.last_heartbeat_at %}
-              {{ d.last_heartbeat_at.strftime("%d.%m.%Y %H:%M") }}
+              {{ d.last_heartbeat_at | local_dt(None) }}
               {% if (now - d.last_heartbeat_at).total_seconds() < 900 %}<span class="badge-ok ml-1">online</span>{% endif %}
             {% else %}niciodata{% endif %}
           </td>
