@@ -609,8 +609,8 @@ def poll_connection(db: Session, connection: DeyeCloudConnection) -> dict:
     if offenders:
         connection.last_sync_status = "warning"
         connection.last_sync_message = (
-            f"Putere neplauzibil de mare ({', '.join(offenders)}) -- posibil ca API-ul Deye sa raporteze W, "
-            "nu kW (issue #118, neverificat live). Verificati valorile fata de puterea reala a statiei."
+            f"Putere Deye Cloud neplauzibil de mare ({', '.join(offenders)}) fata de configuratia statiei. "
+            "Verificati raspunsul brut si puterea reala a statiei."
         )
         logger.warning(
             "deye_cloud.poll_implausible_power",

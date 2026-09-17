@@ -23,7 +23,8 @@ from app.core.security import utcnow
 from app.models.deye_integration import DeyeCloudConnection
 from app.models.enums import DeyeCloudConnectionStatus, TelemetrySource
 from app.models.station import Station
-from app.models.telemetry import TelemetryRaw
+from app.models.telemetry import TelemetryAggregate, TelemetryRaw
+from app.services import aggregation_service, dashboard_service
 from app.services import deye_cloud_service as svc
 from tests.factories import make_device, make_org, make_station, make_user
 
@@ -197,6 +198,24 @@ def test_map_station_latest_combines_charge_discharge_into_signed_battery_power(
 def test_map_station_latest_discharge_is_negative_battery_power():
     mapped = svc.map_station_latest_to_telemetry({"chargePower": 0, "dischargePower": 2000})
     assert mapped["battery_power_w"] == -2000
+
+
+def test_map_station_latest_treats_deye_power_fields_as_watts_not_kw():
+    mapped = svc.map_station_latest_to_telemetry(
+        {
+            "generationPower": 1263,
+            "consumptionPower": 1110,
+            "purchasePower": 0,
+            "wirePower": 20,
+            "chargePower": 0,
+            "dischargePower": 500,
+        }
+    )
+
+    assert mapped["pv_power_w"] == Decimal("1263")
+    assert mapped["load_power_w"] == Decimal("1110")
+    assert mapped["grid_power_w"] == Decimal("-20")
+    assert mapped["battery_power_w"] == Decimal("-500")
 
 
 def test_map_station_latest_missing_keys_are_none_not_zero():
@@ -405,32 +424,46 @@ def test_power_plausibility_ceiling_falls_back_when_station_has_no_config(db):
     assert svc._power_plausibility_ceiling_w(db, station.id) == svc._FALLBACK_POWER_CEILING_W
 
 
-def test_poll_connection_flags_implausible_power_as_warning_but_still_persists(db, monkeypatch):
-    """Plafonul de plauzibilitate ramane un filet de siguranta general (ex.
-    un raspuns API genuin aberant), distinct de bug-ul de unitate al issue
-    #118 (rezolvat acum in `map_station_latest_to_telemetry` insasi, care nu
-    mai inmulteste cu 1000). Citirea tot trebuie scrisa (ar putea fi corecta
-    pentru o instalatie mare), dar conexiunea trece in starea de
-    avertisment, vizibila operatorului."""
+def test_poll_connection_keeps_confirmed_deye_watts_plausible(db, monkeypatch):
+    """Un raspuns Deye de 5000 inseamna 5000 W (5 kW), nu 5000 kW."""
     _, user, station, cloud_device = _setup_station(db, "implausible")
     conn = _connection(db, station, user, device_id=cloud_device.id)
     db.flush()
 
-    # Statia are 5 kW (implicit make_station) -> plafon 15000 W.
-    raw = {"generationPower": 5_000_000, "lastUpdateTime": 1757721600}
+    raw = {"generationPower": 5000, "lastUpdateTime": 1757721600}
     monkeypatch.setattr(svc, "_valid_access_token", lambda c: "token")
     monkeypatch.setattr(svc, "fetch_station_latest", lambda token, station_id: raw)
 
     result = svc.poll_connection(db, conn)
 
-    assert result["status"] == "succeeded"  # tot scrisa, nu respinsa tacit
+    assert result["status"] == "succeeded"
+    assert result["implausible_power_fields"] == []
+    assert conn.last_sync_status == "succeeded"
+    assert conn.last_sync_message is None
+    row = db.scalar(select(TelemetryRaw).where(TelemetryRaw.device_id == cloud_device.id))
+    assert row is not None
+    assert float(row.pv_power_w) == 5000
+
+
+def test_poll_connection_flags_truly_implausible_watt_values(db, monkeypatch):
+    _, user, station, cloud_device = _setup_station(db, "implausible-w")
+    conn = _connection(db, station, user, device_id=cloud_device.id)
+    db.flush()
+
+    raw = {"generationPower": 50_000_000, "lastUpdateTime": 1757721600}
+    monkeypatch.setattr(svc, "_valid_access_token", lambda c: "token")
+    monkeypatch.setattr(svc, "fetch_station_latest", lambda token, station_id: raw)
+
+    result = svc.poll_connection(db, conn)
+
+    assert result["status"] == "succeeded"
     assert result["implausible_power_fields"] == ["pv_power_w"]
     assert conn.last_sync_status == "warning"
     assert conn.last_sync_message is not None
     assert "pv_power_w" in conn.last_sync_message
     row = db.scalar(select(TelemetryRaw).where(TelemetryRaw.device_id == cloud_device.id))
     assert row is not None
-    assert float(row.pv_power_w) == 5_000_000
+    assert float(row.pv_power_w) == 50_000_000
 
 
 def test_poll_connection_plausible_power_keeps_succeeded_status_without_message(db, monkeypatch):
@@ -446,6 +479,49 @@ def test_poll_connection_plausible_power_keeps_succeeded_status_without_message(
     assert result["implausible_power_fields"] == []
     assert conn.last_sync_status == "succeeded"
     assert conn.last_sync_message is None
+
+
+def test_deye_watt_ingest_feeds_dashboard_kpis_and_aggregates_in_kw_kwh(db, monkeypatch):
+    _, user, station, cloud_device = _setup_station(db, "dashboard-units")
+    conn = _connection(db, station, user, device_id=cloud_device.id)
+    measured_at = utcnow().replace(minute=0, second=0, microsecond=0)
+    raw = {
+        "generationPower": 1263,
+        "consumptionPower": 1110,
+        "purchasePower": 0,
+        "wirePower": 20,
+        "lastUpdateTime": int(measured_at.timestamp()),
+    }
+    monkeypatch.setattr(svc, "_valid_access_token", lambda c: "token")
+    monkeypatch.setattr(svc, "fetch_station_latest", lambda token, station_id: raw)
+
+    svc.poll_connection(db, conn)
+    summary = dashboard_service.get_summary(db, station)
+    aggregation_service.reaggregate_range(db, station, measured_at, measured_at + timedelta(minutes=15))
+
+    assert abs(summary["pv_power_kw"] - 1.263) < 0.001
+    assert abs(summary["load_power_kw"] - 1.11) < 0.001
+    assert abs(summary["grid_power_kw"] - (-0.02)) < 0.001
+    raw_row = db.scalar(
+        select(TelemetryRaw).where(
+            TelemetryRaw.device_id == cloud_device.id,
+            TelemetryRaw.source == TelemetrySource.deye_cloud.value,
+        )
+    )
+    assert raw_row is not None
+    assert raw_row.pv_power_w == Decimal("1263")
+
+    interval = db.scalar(
+        select(TelemetryAggregate).where(
+            TelemetryAggregate.station_id == station.id,
+            TelemetryAggregate.period_type == "interval_15m",
+            TelemetryAggregate.period_start == measured_at,
+        )
+    )
+    assert interval is not None
+    assert interval.pv_energy_kwh == Decimal("0.1053")
+    assert interval.load_energy_kwh == Decimal("0.0925")
+    assert interval.grid_export_energy_kwh == Decimal("0.0017")
 
 
 # --- Ciclul de viata al conexiunii: connect/select/disconnect ---------------
