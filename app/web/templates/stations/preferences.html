@@ -76,7 +76,7 @@
             <label class="label" for="field-ev-departure">Ora plecare EV</label>
             <input class="input" id="field-ev-departure" type="time" name="ev_departure_time" value="{{ preference.ev_departure_time.strftime('%H:%M') if preference and preference.ev_departure_time }}" {% if not can_edit %}disabled{% endif %} />
           </div>
-          {{ numeric_field("arbitrage_min_benefit_lei", "Prag beneficiu economic arbitraj", value=preference.arbitrage_min_benefit_lei if preference else 0, unit="lei/kWh", step="0.0001", min=0, disabled=not can_edit) }}
+          {{ numeric_field("arbitrage_min_benefit_lei", "Prag beneficiu economic arbitraj (informativ)", value=preference.arbitrage_min_benefit_lei if preference else 0, unit="lei/kWh", step="0.0001", min=0, disabled=not can_edit, help="Valoare in lei/kWh, salvata pentru referinta -- optimizatorul NU o aplica inca drept constrangere explicita (necesita perechi incarcare/descarcare cu diferenta de pret peste acest prag). Costul de uzura a bateriei descurajeaza deja arbitrajul cu marja mica.") }}
         </div>
       </fieldset>
     </details>

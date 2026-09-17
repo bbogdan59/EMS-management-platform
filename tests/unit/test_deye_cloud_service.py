@@ -11,6 +11,7 @@ import hashlib
 import json
 import uuid
 from datetime import timedelta
+from decimal import Decimal
 
 import httpx
 import pytest
@@ -21,6 +22,7 @@ from app.core.crypto import DecryptionError, decrypt_secret, encrypt_secret
 from app.core.security import utcnow
 from app.models.deye_integration import DeyeCloudConnection
 from app.models.enums import DeyeCloudConnectionStatus, TelemetrySource
+from app.models.station import Station
 from app.models.telemetry import TelemetryRaw
 from app.services import deye_cloud_service as svc
 from tests.factories import make_device, make_org, make_station, make_user
@@ -367,6 +369,79 @@ def test_poll_connection_backoff_skips_before_wait_elapses(db, monkeypatch):
     monkeypatch.setattr(svc, "fetch_station_latest", _boom)
     result = svc.poll_connection(db, conn)
     assert result == {"status": "skipped", "reason": "backoff"}
+
+
+# --- Plauzibilitate de unitate pe putere (issue #118) ------------------------
+
+
+def test_implausible_power_fields_empty_when_within_ceiling():
+    mapped = {"pv_power_w": Decimal(4000), "load_power_w": Decimal(3000), "battery_power_w": Decimal(-1000), "grid_power_w": Decimal(500)}
+    assert svc._implausible_power_fields(mapped, ceiling_w=Decimal(15000)) == []
+
+
+def test_implausible_power_fields_flags_values_over_ceiling_by_absolute_value():
+    mapped = {"pv_power_w": Decimal(4_000_000), "load_power_w": Decimal(1000), "battery_power_w": Decimal(-9_000_000), "grid_power_w": None}
+    offenders = svc._implausible_power_fields(mapped, ceiling_w=Decimal(15000))
+    assert offenders == ["pv_power_w", "battery_power_w"]
+
+
+def test_power_plausibility_ceiling_uses_station_rated_capacity(db):
+    org = make_org(db, "Org Ceiling")
+    user = make_user(db, email="ceiling@test.local")
+    station = make_station(db, org, user, name="Statie Ceiling", pv_installed_power_kw=Decimal("8"), inverter_power_kw=Decimal("6"))
+    db.commit()
+    # max(8, 6) kW * 1000 * marja de 3x
+    assert svc._power_plausibility_ceiling_w(db, station.id) == Decimal(24000)
+
+
+def test_power_plausibility_ceiling_falls_back_when_station_has_no_config(db):
+    org = make_org(db, "Org NoConfig")
+    station = Station(organization_id=org.id, name="Statie fara config", timezone="Europe/Bucharest")
+    db.add(station)
+    db.commit()
+    assert svc._power_plausibility_ceiling_w(db, station.id) == svc._FALLBACK_POWER_CEILING_W
+
+
+def test_poll_connection_flags_implausible_power_as_warning_but_still_persists(db, monkeypatch):
+    """Simuleaza exact riscul semnalat de issue #118: API-ul raporteaza
+    watts, nu kW -- o statie de 5 kW ar aparea ca "5000 kW". Citirea tot
+    trebuie scrisa (ar putea fi corecta pentru o instalatie mare), dar
+    conexiunea trece in starea de avertisment, vizibila operatorului."""
+    _, user, station, cloud_device = _setup_station(db, "implausible")
+    conn = _connection(db, station, user, device_id=cloud_device.id)
+    db.flush()
+
+    # Statia are 5 kW (implicit make_station) -> plafon 15000 W; simuleaza
+    # un raspuns deja in W interpretat gresit ca kW (5000 * 1000 = 5,000,000 W).
+    raw = {"generationPower": 5000, "lastUpdateTime": 1757721600}
+    monkeypatch.setattr(svc, "_valid_access_token", lambda c: "token")
+    monkeypatch.setattr(svc, "fetch_station_latest", lambda token, station_id: raw)
+
+    result = svc.poll_connection(db, conn)
+
+    assert result["status"] == "succeeded"  # tot scrisa, nu respinsa tacit
+    assert result["implausible_power_fields"] == ["pv_power_w"]
+    assert conn.last_sync_status == "warning"
+    assert conn.last_sync_message is not None
+    assert "pv_power_w" in conn.last_sync_message
+    row = db.scalar(select(TelemetryRaw).where(TelemetryRaw.device_id == cloud_device.id))
+    assert row is not None
+    assert float(row.pv_power_w) == 5_000_000
+
+
+def test_poll_connection_plausible_power_keeps_succeeded_status_without_message(db, monkeypatch):
+    _, user, station, cloud_device = _setup_station(db, "plausible")
+    conn = _connection(db, station, user, device_id=cloud_device.id)
+    db.flush()
+
+    raw = {"generationPower": 3.2, "lastUpdateTime": 1757721600}
+    monkeypatch.setattr(svc, "_valid_access_token", lambda c: "token")
+    monkeypatch.setattr(svc, "fetch_station_latest", lambda token, station_id: raw)
+
+    result = svc.poll_connection(db, conn)
+    assert result["implausible_power_fields"] == []
+    assert conn.last_sync_status == "succeeded"
+    assert conn.last_sync_message is None
 
 
 # --- Ciclul de viata al conexiunii: connect/select/disconnect ---------------

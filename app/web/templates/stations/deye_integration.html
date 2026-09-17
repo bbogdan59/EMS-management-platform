@@ -88,10 +88,14 @@
         Ultima sincronizare:
         {% if connection.last_sync_at %}{{ connection.last_sync_at | local_dt(station.timezone) }} --
           {% if connection.last_sync_status == "succeeded" %}<span class="badge-ok">reusita</span>
+          {% elif connection.last_sync_status == "warning" %}<span class="badge-warn">reusita, cu avertisment</span>
           {% elif connection.last_sync_status == "skipped" %}<span class="badge-muted">omisa ({{ connection.last_sync_message }})</span>
           {% else %}<span class="badge-error">esuata</span>{% endif %}
         {% else %}<span class="badge-muted">inca nicio sincronizare</span>{% endif %}
       </p>
+      {% if connection.last_sync_status == "warning" %}
+      <p class="badge-warn rounded p-3 text-sm">{{ connection.last_sync_message }}</p>
+      {% endif %}
       <p class="mt-2 text-sm text-gray-500 dark:text-gray-400">
         Datele Deye Cloud pot avea o latenta/rezolutie diferita fata de un dispozitiv EMS local si
         NU garanteaza control instant (aceasta conexiune e doar citire).

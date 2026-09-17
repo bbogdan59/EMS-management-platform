@@ -76,6 +76,16 @@ class PreferenceVersion(Entity):
     ev_required_energy_kwh: Mapped[Decimal | None] = mapped_column(Numeric(8, 3), nullable=True)
     ev_departure_time: Mapped[time | None] = mapped_column(Time, nullable=True)
     automation_suspended_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Prag informativ de marja economica per unitate de energie -- in ciuda
+    # numelui (mostenit), valoarea e in **lei/kWh**, nu lei totali (precizia
+    # Numeric(8,4) si eticheta UI "lei/kWh" reflecta deja aceasta intentie;
+    # vezi issue #117). `optimization_service.py` NU foloseste inca acest
+    # camp ca o constrangere explicita -- ar necesita perechi explicite
+    # "incarca la ora X ca sa descarci la ora Y" cu diferenta de pret peste
+    # prag (vezi docs/LIMITATIONS.md sectiunea 5); costul de uzura a bateriei
+    # deja descurajeaza arbitrajul cu marja mica, in mod natural, prin
+    # functia obiectiv. UI-ul afiseaza explicit acest camp ca informativ, nu
+    # activ, ca sa nu induca in eroare un operator care il seteaza.
     arbitrage_min_benefit_lei: Mapped[Decimal] = mapped_column(Numeric(8, 4), default=0, nullable=False)
 
     conflict_warnings: Mapped[list] = mapped_column(

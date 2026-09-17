@@ -52,7 +52,7 @@ from app.core.security import utcnow
 from app.models.device import Device
 from app.models.deye_integration import DeyeCloudConnection, DeyeCloudDeviceLink
 from app.models.enums import DeviceStatus, DeyeCloudConnectionStatus, TelemetrySource
-from app.models.station import Station
+from app.models.station import Station, StationConfigVersion
 from app.models.telemetry import TelemetryRaw
 from app.models.user import User
 
@@ -69,6 +69,44 @@ CLOUD_BOOT_ID = "deye_cloud"
 # recenta decat acest interval pentru statie, Deye Cloud NU mai scrie deloc
 # (regula de prioritate ceruta de issue #43, vezi docstring `poll_connection`).
 LOCAL_DEVICE_ACTIVE_WINDOW = timedelta(minutes=settings.deye_cloud_local_device_active_minutes)
+
+# Issue #118: conventia reala de unitate a campurilor de putere raportate de
+# Deye/Solarman (`generationPower`/`chargePower`/etc.) nu a putut fi
+# verificata impotriva unui cont/statie reale (fetch HTTP live blocat in
+# acest mediu de dezvoltare) -- `map_station_latest_to_telemetry` PRESUPUNE
+# ca API-ul raporteaza kW, nu W. Daca presupunerea e gresita, fiecare citire
+# ar fi 1000x prea mare. In lipsa unei verificari live, nu inlocuim tacit
+# presupunerea cu alta la fel de neverificata -- in schimb, un plafon de
+# plauzibilitate (capacitatea invertorului statiei, cu marja generoasa
+# pentru varfuri tranzitorii; un plafon fix generos daca statia nu are inca
+# o configuratie) transforma o presupunere gresita intr-un avertisment
+# vizibil (`last_sync_status="warning"`, log structurat), in
+# loc sa umfle tacit 1000x consumul/economiile afisate.
+_PLAUSIBILITY_MARGIN = Decimal(3)
+_FALLBACK_POWER_CEILING_W = Decimal(50_000)  # 50 kW: generos pentru rezidential/comercial mic
+
+
+def _power_plausibility_ceiling_w(db: Session, station_id) -> Decimal:
+    config = db.scalar(
+        select(StationConfigVersion)
+        .where(StationConfigVersion.station_id == station_id)
+        .order_by(StationConfigVersion.version.desc())
+        .limit(1)
+    )
+    if config is None:
+        return _FALLBACK_POWER_CEILING_W
+    rated_kw = max(config.pv_installed_power_kw, config.inverter_power_kw)
+    return rated_kw * 1000 * _PLAUSIBILITY_MARGIN
+
+
+def _implausible_power_fields(mapped: dict, ceiling_w: Decimal) -> list[str]:
+    offenders = []
+    for field in ("pv_power_w", "load_power_w", "battery_power_w", "grid_power_w"):
+        value = mapped.get(field)
+        if value is not None and abs(value) > ceiling_w:
+            offenders.append(field)
+    return offenders
+
 
 _BACKOFF_BASE_SECONDS = 60
 _BACKOFF_MAX_SECONDS = 3600
@@ -565,9 +603,32 @@ def poll_connection(db: Session, connection: DeyeCloudConnection) -> dict:
         # inca randul de mai sus la verificarea de deduplicare de mai jos.
         db.flush()
 
+    ceiling_w = _power_plausibility_ceiling_w(db, connection.station_id)
+    offenders = _implausible_power_fields(mapped, ceiling_w)
+
     connection.last_sync_at = now
-    connection.last_sync_status = "succeeded"
-    connection.last_sync_message = None
     connection.consecutive_failure_count = 0
+    if offenders:
+        connection.last_sync_status = "warning"
+        connection.last_sync_message = (
+            f"Putere neplauzibil de mare ({', '.join(offenders)}) -- posibil ca API-ul Deye sa raporteze W, "
+            "nu kW (issue #118, neverificat live). Verificati valorile fata de puterea reala a statiei."
+        )
+        logger.warning(
+            "deye_cloud.poll_implausible_power",
+            connection_id=str(connection.id),
+            station_id=str(connection.station_id),
+            offenders=offenders,
+            ceiling_w=str(ceiling_w),
+            mapped={k: (str(v) if v is not None else None) for k, v in mapped.items()},
+        )
+    else:
+        connection.last_sync_status = "succeeded"
+        connection.last_sync_message = None
     db.add(connection)
-    return {"status": "succeeded", "telemetry_created": created, "measured_at": measured_at.isoformat()}
+    return {
+        "status": "succeeded",
+        "telemetry_created": created,
+        "measured_at": measured_at.isoformat(),
+        "implausible_power_fields": offenders,
+    }

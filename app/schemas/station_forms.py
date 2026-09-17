@@ -123,6 +123,8 @@ class PreferenceInput(Strict):
     ev_required_energy_kwh: Decimal | None = Field(default=None, ge=0)
     ev_departure_time: time | None = None
     automation_suspended_until: str | None = Field(default=None, max_length=32)
+    # lei/kWh (nu total lei, in ciuda numelui campului) -- vezi comentariul
+    # de pe PreferenceVersion.arbitrage_min_benefit_lei (issue #117).
     arbitrage_min_benefit_lei: Decimal = Field(default=Decimal("0"), ge=0)
     expected_version: int = Field(ge=0)
 
