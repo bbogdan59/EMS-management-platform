@@ -490,7 +490,7 @@ def _run_locked(db: Session, station_id: uuid.UUID, triggered_by: str, triggered
 
     display_tz = ZoneInfo(station.timezone)
     run.explanation_summary = (
-        f"Cost net estimat pe orizont: {result['objective']:.2f} lei. "
+        f"Scor optimizare: {result['objective']:.2f} (obiectiv solver; nu este cost net real). "
         f"Prioritate: {preference.priority}. "
         f"Interval optimizat: {start.astimezone(display_tz):%d.%m %H:%M} - "
         f"{end.astimezone(display_tz):%d.%m %H:%M} {station.timezone}."

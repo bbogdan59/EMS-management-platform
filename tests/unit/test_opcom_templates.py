@@ -21,7 +21,9 @@ def test_dashboard_and_admin_templates_do_not_duplicate_money_units():
     assert "Venit efectiv export (lei/kWh)" not in dashboard_template
     assert "Cost efectiv import</p>" in dashboard_template
     assert "Venit efectiv export</p>" in dashboard_template
-    assert "<th>Status</th><th>Cost net (lei)</th>" in operations_template
+    assert "<th>Status</th><th>Scor optimizare</th>" in operations_template
+    assert "Cost net (lei)" not in operations_template
+    assert "nu este cost net real" in operations_template
     assert "objective_value_lei | lei" not in operations_template
 
 

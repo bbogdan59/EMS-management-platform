@@ -124,15 +124,15 @@
           <label class="label">Componenta variabila (lei/kWh)</label>
           <input class="input" type="number" step="0.00001" name="variable_component_lei_per_kwh" value="0" />
         </div>
-        <div>
+        <div data-import-charge-field>
           <label class="label">Distributie (lei/kWh)</label>
           <input class="input" type="number" step="0.00001" name="distribution_lei_per_kwh" value="0" />
         </div>
-        <div>
+        <div data-import-charge-field>
           <label class="label">Transport (lei/kWh)</label>
           <input class="input" type="number" step="0.00001" name="transport_lei_per_kwh" value="0" />
         </div>
-        <div>
+        <div data-import-charge-field>
           <label class="label">Alte taxe reglementate (lei/kWh)</label>
           <input class="input" type="number" step="0.00001" name="other_regulated_lei_per_kwh" value="0" />
         </div>
@@ -187,6 +187,7 @@
     const vat = form.elements.vat_rate_percent;
     const disabled = document.getElementById("economic-calculation-disabled");
     const limitation = document.getElementById("limitation-note");
+    const importChargeFields = Array.from(form.querySelectorAll("[data-import-charge-field]"));
     const sampleKwh = Number(form.dataset.previewKwh || "300");
     const marketPrice = form.dataset.marketPrice === "" ? null : Number(form.dataset.marketPrice);
     const presetNotes = {
@@ -207,6 +208,18 @@
       marginField.classList.toggle("hidden", kind.value !== "indexed_opcom");
     }
 
+    function syncDirectionFields() {
+      const isExport = direction.value === "export";
+      [distribution, transport, other].forEach((input) => {
+        if (!input) return;
+        input.disabled = isExport;
+        if (isExport) input.value = "0";
+      });
+      importChargeFields.forEach((field) => {
+        field.classList.toggle("opacity-50", isExport);
+      });
+    }
+
     function applyPreset() {
       const value = preset.value;
       direction.value = value === "fixed_export" ? "export" : "import";
@@ -217,6 +230,7 @@
       }
       note.textContent = presetNotes[value] || presetNotes.fixed_import;
       syncKindFields();
+      syncDirectionFields();
       updatePreview();
     }
 
@@ -237,7 +251,10 @@
           : "Completeaza pretul fix pentru a vedea estimarea.";
         return;
       }
-      let effective = energy + num(variable) + num(distribution) + num(transport) + num(other);
+      let effective = energy + num(variable);
+      if (direction.value !== "export") {
+        effective += num(distribution) + num(transport) + num(other);
+      }
       const vatRate = vat.value.trim() === "" ? null : num(vat);
       if (vatRate !== null) effective *= 1 + vatRate / 100;
       const energyCost = effective * sampleKwh;
@@ -249,6 +266,7 @@
 
     preset.addEventListener("change", applyPreset);
     kind.addEventListener("change", () => { syncKindFields(); updatePreview(); });
+    direction.addEventListener("change", () => { syncDirectionFields(); updatePreview(); });
     form.addEventListener("input", updatePreview);
     applyPreset();
   })();

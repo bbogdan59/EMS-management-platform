@@ -47,3 +47,14 @@ def test_tariff_live_preview_uses_same_component_shape_as_service():
         assert f"form.elements.{field}" in template
     assert "marketPrice + num(margin)" in template
     assert "effective *= 1 + vatRate / 100" in template
+
+
+def test_tariff_export_form_disables_import_side_grid_charges():
+    template = Path("app/web/templates/stations/tariffs.html").read_text()
+
+    assert "data-import-charge-field" in template
+    assert "function syncDirectionFields()" in template
+    assert 'const isExport = direction.value === "export";' in template
+    assert "input.disabled = isExport;" in template
+    assert 'if (isExport) input.value = "0";' in template
+    assert 'if (direction.value !== "export") {' in template

@@ -132,7 +132,7 @@
         <button type="submit" class="btn-primary">Reexecuta&hellip;</button>
       </form>
       <table class="mt-4 w-full text-sm">
-        <thead class="text-left text-gray-500"><tr><th class="py-1">Data</th><th>Status</th><th>Cost net (lei)</th><th></th></tr></thead>
+        <thead class="text-left text-gray-500"><tr><th class="py-1">Data</th><th>Status</th><th>Scor optimizare</th><th></th></tr></thead>
         <tbody>
           {% for r in optimization_runs %}
           <tr class="border-t border-gray-100 dark:border-gray-800">
@@ -143,7 +143,7 @@
               {% else %}<span class="badge-warn">{{ r.status }}</span>{% endif %}
               {% if r.is_fallback %}<span class="badge-warn" title="{{ r.fallback_reason }}">fallback</span>{% endif %}
             </td>
-            <td>{{ "%.2f"|format(r.objective_value_lei) if r.objective_value_lei is not none else "-" }}</td>
+            <td title="Obiectiv solver: include penalizari si valoare terminala; nu este cost net real.">{{ "%.4f"|format(r.objective_value_lei) if r.objective_value_lei is not none else "-" }}</td>
             <td><a class="text-brand-700 hover:underline dark:text-brand-300" href="/admin/operations/optimization-runs/{{ r.id }}">plan explicabil &rarr;</a></td>
           </tr>
           {% endfor %}
