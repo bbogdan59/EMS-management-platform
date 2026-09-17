@@ -3,11 +3,14 @@ componentelor noi de cost (distributie/transport/alte taxe/TVA) si preview-ul
 de factura-exemplu afisat dupa salvare."""
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 from sqlalchemy import select
 
 from app.core.rate_limit import reset_key
+from app.models.enums import ImportRunStatus
+from app.models.market import ImportRun, MarketPriceInterval
 from app.models.tariff import Tariff, TariffVersion
 from tests.factories import make_membership, make_org, make_station, make_user
 from tests.web_helpers import get_csrf, login
@@ -23,6 +26,25 @@ def _setup(db):
     station = make_station(db, org, admin, name="Tariff Routes Station")
     db.commit()
     return org, admin, viewer, station
+
+
+def _add_market_interval(db, interval_start: datetime, price_lei_per_kwh: Decimal):
+    run = ImportRun(
+        source="opcom_pzu", delivery_date=interval_start.date(), revision=1,
+        status=ImportRunStatus.succeeded.value, source_url="https://test.local",
+        interval_count=1,
+    )
+    db.add(run)
+    db.flush()
+    db.add(
+        MarketPriceInterval(
+            import_run_id=run.id, source="opcom_pzu", delivery_date=interval_start.date(), revision=1,
+            interval_index=1, interval_start=interval_start, interval_end=interval_start + timedelta(minutes=15),
+            currency="RON", price_lei_per_mwh=price_lei_per_kwh * Decimal("1000"),
+            price_lei_per_kwh=price_lei_per_kwh, is_negative=price_lei_per_kwh < 0, is_current=True,
+        )
+    )
+    db.flush()
 
 
 def test_organization_admin_can_create_fixed_tariff_with_new_components(client, db):
@@ -106,6 +128,36 @@ def test_tariffs_page_shows_reason_when_preview_unavailable_for_indexed_without_
     resp = client.get(f"/stations/{station.id}/tariffs")
     assert resp.status_code == 200
     assert "Exemplu indisponibil" in resp.text
+
+
+def test_tariffs_page_uses_latest_non_future_opcom_price_for_preview(client, db):
+    from freezegun import freeze_time
+
+    _org, admin, _viewer, station = _setup(db)
+    now = datetime(2026, 9, 10, 12, 0, tzinfo=UTC)
+    _add_market_interval(db, now - timedelta(hours=1), Decimal("0.20"))
+    _add_market_interval(db, now + timedelta(days=1), Decimal("0.90"))
+    db.commit()
+
+    login(client, admin.email, "Password1234")
+    csrf = get_csrf(client)
+    client.post(
+        f"/stations/{station.id}/tariffs",
+        data={
+            "csrf_token": csrf, "direction": "import", "kind": "indexed_opcom", "name": "Indexat curent",
+            "opcom_margin_lei_per_kwh": "0.10", "fixed_monthly_fee_lei": "0", "variable_component_lei_per_kwh": "0",
+            "settlement_method": "net_metering_15min", "settlement_interval_days": "30",
+        },
+        follow_redirects=False,
+    )
+
+    with freeze_time(now):
+        resp = client.get(f"/stations/{station.id}/tariffs")
+
+    assert resp.status_code == 200
+    assert 'data-market-price="0.200000"' in resp.text
+    assert "pret efectiv <strong>0.3000 lei/kWh</strong>" in resp.text
+    assert "1.0000 lei/kWh" not in resp.text
 
 
 def test_fixed_contract_with_stray_opcom_margin_is_rejected_with_error_and_saves_nothing(client, db):

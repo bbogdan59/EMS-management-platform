@@ -147,10 +147,20 @@ function emsInitMarket(availableYears) {
     return value == null ? "-" : `${Number(value).toFixed(2)} lei/MWh`;
   }
 
+  function describeTimelineResolution(payload) {
+    const pct = payload.coverage !== null && payload.coverage !== undefined ? Math.round(payload.coverage * 100) : null;
+    const aggregation = payload.aggregation || {};
+    const method = aggregation.ohlc_lei_mwh || aggregation.price_lei_mwh || "medie";
+    const timezone = payload.timezone ? ` · ${payload.timezone}` : "";
+    return `rezolutie ${payload.resolution} (${method})${timezone}` + (pct !== null ? ` · acoperire ${pct}%` : "");
+  }
+
   function renderTimeline(payload) {
     const el = $("chart-timeline");
     if (!el) return;
     const data = payload.points || [];
+    const resEl = $("chart-timeline-resolution");
+    if (resEl) resEl.textContent = describeTimelineResolution(payload);
     showChartState(el, data.length === 0 ? "empty" : "ok");
     if (!data.length) return;
 

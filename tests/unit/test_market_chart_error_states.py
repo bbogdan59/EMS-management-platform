@@ -50,3 +50,14 @@ def test_market_year_color_lookup_falls_back_for_unmatched_years():
     unguarded = "EMS_YEAR_COLORS[availableYears.indexOf(Number(year)) % EMS_YEAR_COLORS.length]"
     assert script.count(guarded) == 2
     assert unguarded not in script
+
+
+def test_market_timeline_displays_resolution_metadata():
+    template = Path("app/web/templates/market/prices.html").read_text()
+    script = Path("app/web/static/js/market.js").read_text()
+
+    assert 'id="chart-timeline-resolution"' in template
+    assert "function describeTimelineResolution(payload)" in script
+    assert '$("chart-timeline-resolution")' in script
+    assert "payload.aggregation || {}" in script
+    assert "payload.timezone" in script

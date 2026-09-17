@@ -603,7 +603,11 @@ def tariffs_page(
 
     latest_market_price = db.scalar(
         select(MarketPriceInterval.price_lei_per_kwh)
-        .where(MarketPriceInterval.source == "opcom_pzu", MarketPriceInterval.is_current.is_(True))
+        .where(
+            MarketPriceInterval.source == "opcom_pzu",
+            MarketPriceInterval.is_current.is_(True),
+            MarketPriceInterval.interval_start <= utcnow(),
+        )
         .order_by(MarketPriceInterval.interval_start.desc())
         .limit(1)
     )
