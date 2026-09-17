@@ -24,6 +24,15 @@ def fmt_lei(value) -> str:
     return f"{float(value):,.2f} lei".replace(",", " ")
 
 
+def fmt_lei_per_kwh(value) -> str:
+    """Pretul pe kWh e stocat cu 5 zecimale (`Numeric(10, 5)`, vezi
+    `app/models/tariff.py`) -- rotunjirea la 2 zecimale a `fmt_lei` ar
+    ascunde marje mici reale (ex. 0.00085 lei/kWh ar aparea ca 0.00)."""
+    if value is None:
+        return "-"
+    return f"{float(value):,.5f} lei/kWh".replace(",", " ")
+
+
 def fmt_local_dt(value, tz_name: str | None) -> str:
     """Converteste un datetime (sau un string ISO 8601, cum sunt stocate
     timestamp-urile in `OptimizationRun.input_snapshot`, un camp JSON) in ora
@@ -41,4 +50,5 @@ def fmt_local_dt(value, tz_name: str | None) -> str:
 
 
 templates.env.filters["lei"] = fmt_lei
+templates.env.filters["lei_per_kwh"] = fmt_lei_per_kwh
 templates.env.filters["local_dt"] = fmt_local_dt
