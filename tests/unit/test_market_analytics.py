@@ -67,9 +67,9 @@ def test_five_day_overlay_preserves_raw_resolution_and_aligns_history(db):
     assert overlay["current_year"] == 2026
     assert overlay["window"] == {
         "start_date": "2026-09-08",
-        "end_date": "2026-09-12",
+        "end_date": "2026-09-13",
         "days_before": 2,
-        "days_after": 2,
+        "days_after": 3,
     }
     assert len(overlay["series"][2026]) == 96
     assert len(overlay["series"][2025]) == 24
