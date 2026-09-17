@@ -676,7 +676,7 @@ def get_heatmap(db: Session, station: Station, weeks: int = 8) -> list[dict]:
         select(TelemetryAggregate)
         .where(
             TelemetryAggregate.station_id == station.id,
-            TelemetryAggregate.period_type == "hour",
+            TelemetryAggregate.period_type == "interval_15m",
             TelemetryAggregate.period_start >= since,
         )
     ).all()
@@ -685,11 +685,11 @@ def get_heatmap(db: Session, station: Station, weeks: int = 8) -> list[dict]:
         if r.load_energy_kwh is None or (r.coverage or {}).get("load", 0) < 0.9:
             continue
         local = r.period_start.astimezone(tz)
-        key = (local.weekday(), local.hour)
-        buckets.setdefault(key, []).append(float(r.load_energy_kwh))
+        slot = local.hour * 4 + local.minute // 15
+        buckets.setdefault((local.weekday(), slot), []).append(float(r.load_energy_kwh) * 4)
     return [
-        {"weekday": wd, "hour": h, "avg_load_kwh": sum(v) / len(v)}
-        for (wd, h), v in sorted(buckets.items())
+        {"weekday": wd, "slot": slot, "avg_load_kw": sum(v) / len(v)}
+        for (wd, slot), v in sorted(buckets.items())
     ]
 
 

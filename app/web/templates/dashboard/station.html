@@ -193,10 +193,10 @@
       <h2 id="charts-client-title" class="font-medium">Evolutii utile</h2>
       <p class="text-sm text-gray-500 dark:text-gray-400">Grafice compacte pentru ultimele ore. Schimba intervalul daca ai nevoie de mai mult context.</p>
     </div>
-    <div class="grid gap-4 lg:grid-cols-2">
+    <div class="grid gap-4">
     <div class="card">
       <div class="mb-2 flex items-center justify-between gap-2">
-        <h2 class="font-medium">PV, consum, baterie, retea</h2>
+        <h2 class="font-medium">PV, consum, baterie, retea + SOC baterie</h2>
         <span id="chart-power-resolution" class="text-xs text-gray-400 dark:text-gray-500"></span>
       </div>
       <div class="empty-state text-sm text-gray-500" hidden>Fara date de telemetrie in intervalul selectat.</div>
@@ -205,18 +205,6 @@
         <button type="button" class="btn-secondary retry-btn">Reincearca</button>
       </div>
       <div id="chart-power" style="height:280px"></div>
-    </div>
-    <div class="card">
-      <div class="mb-2 flex items-center justify-between gap-2">
-        <h2 class="font-medium">Evolutie SOC baterie</h2>
-        <span id="chart-soc-resolution" class="text-xs text-gray-400 dark:text-gray-500"></span>
-      </div>
-      <div class="empty-state text-sm text-gray-500" hidden>Fara date de telemetrie in intervalul selectat.</div>
-      <div class="error-state text-sm text-red-700 dark:text-red-300 bg-red-50 dark:bg-red-900/30 rounded p-3" hidden>
-        <p class="mb-2">Nu am putut incarca acest grafic. Celelalte grafice nu sunt afectate.</p>
-        <button type="button" class="btn-secondary retry-btn">Reincearca</button>
-      </div>
-      <div id="chart-soc" style="height:280px"></div>
     </div>
     </div>
   </section>
@@ -268,8 +256,8 @@
       <div id="chart-forecast-load" style="height:260px"></div>
     </div>
     <div class="card lg:col-span-2">
-      <h2 class="mb-2 font-medium">Heatmap consum (ora x zi din saptamana)</h2>
-      <div class="empty-state text-sm text-gray-500" hidden>Insuficiente agregate orare pentru heatmap.</div>
+      <h2 class="mb-2 font-medium">Heatmap consum (15 minute x zi din saptamana)</h2>
+      <div class="empty-state text-sm text-gray-500" hidden>Insuficiente agregate la 15 minute pentru heatmap.</div>
       <div class="error-state text-sm text-red-700 dark:text-red-300 bg-red-50 dark:bg-red-900/30 rounded p-3" hidden>
         <p class="mb-2">Nu am putut incarca acest grafic. Celelalte grafice nu sunt afectate.</p>
         <button type="button" class="btn-secondary retry-btn">Reincearca</button>
