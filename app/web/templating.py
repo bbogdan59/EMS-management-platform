@@ -18,24 +18,6 @@ templates.env.globals["app_name"] = settings.app_name
 templates.env.globals["demo_mode_enabled"] = settings.demo_mode_enabled
 
 
-def fmt_kw(value) -> str:
-    if value is None:
-        return "-"
-    return f"{float(value):,.2f} kW".replace(",", " ")
-
-
-def fmt_kwh(value) -> str:
-    if value is None:
-        return "-"
-    return f"{float(value):,.2f} kWh".replace(",", " ")
-
-
-def fmt_pct(value) -> str:
-    if value is None:
-        return "-"
-    return f"{float(value):.1f}%"
-
-
 def fmt_lei(value) -> str:
     if value is None:
         return "-"
@@ -58,8 +40,5 @@ def fmt_local_dt(value, tz_name: str | None) -> str:
     return value.astimezone(tz).strftime("%d.%m %H:%M")
 
 
-templates.env.filters["kw"] = fmt_kw
-templates.env.filters["kwh"] = fmt_kwh
-templates.env.filters["pct"] = fmt_pct
 templates.env.filters["lei"] = fmt_lei
 templates.env.filters["local_dt"] = fmt_local_dt
