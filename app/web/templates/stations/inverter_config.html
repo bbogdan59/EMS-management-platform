@@ -34,7 +34,7 @@
 <input type="hidden" name="request_id" value="{{ request_id }}">
 <input type="hidden" name="expected_version" value="{{ state.desired.version if state.desired else 0 }}">
 <label>Profil aprobat <select name="profile_id">{% for profile in profiles %}<option value="{{ profile.id }}" {% if state.desired and state.desired.profile_id == profile.id|string %}selected{% endif %}>{{ profile.definition.model }} — {{ profile.definition.protocol_revision }} — {{ profile.digest[:12] }}</option>{% endfor %}</select></label>
-<label>Port serial stabil <input name="port" required value="{{ connection.get('port', '') }}" placeholder="/dev/serial/by-id/..." /></label>
+<label>Port serial stabil <input class="input w-full" name="port" required value="{{ connection.get('port', '') }}" placeholder="/dev/serial/by-id/..." /></label>
 <label>Adresa Modbus <input name="slave" type="number" min="1" max="247" value="{{ connection.get('device_id', 1) }}"></label>
 <label>Baudrate <input name="baudrate" type="number" value="{{ connection.get('baudrate', 9600) }}"></label>
 <label>Paritate <input name="parity" value="{{ connection.get('parity', 'N') }}"></label>
