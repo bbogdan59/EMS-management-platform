@@ -7,7 +7,8 @@
 #   2. Creeaza/actualizeaza .venv si instaleaza dependentele din
 #      requirements.lock.txt (doar daca lipsesc sau lockfile-ul s-a schimbat).
 #   3. Instaleaza dependentele npm si compileaza asset-urile frontend
-#      (Tailwind CSS + vendorizare htmx/echarts) daca lipsesc.
+#      (Tailwind CSS + vendorizare htmx/echarts), ca localul sa ramana aliniat
+#      cu build-ul Docker.
 #   4. Creeaza .env din .env.example daca nu exista deja.
 #   5. Verifica accesul la PostgreSQL si Redis (nu porneste servicii de
 #      sistem automat -- fiecare mediu difera; doar avertizeaza clar daca
@@ -119,12 +120,8 @@ if [ "$SKIP_INSTALL" = false ]; then
     log "Instalez dependentele npm ..."
     npm install --no-fund --no-audit
   fi
-  if [ ! -f "$ROOT_DIR/app/web/static/css/app.css" ] || [ ! -f "$ROOT_DIR/app/web/static/js/vendor/htmx.min.js" ]; then
-    log "Compilez asset-urile frontend (Tailwind CSS + vendorizare htmx/echarts) ..."
-    npm run build
-  else
-    log "Asset-urile frontend exista deja (foloseste 'npm run build' manual daca ai modificat CSS/templates)."
-  fi
+  log "Compilez asset-urile frontend (Tailwind CSS + vendorizare htmx/echarts) ..."
+  npm run build
 else
   log "--skip-install: sar peste npm install/build."
 fi
