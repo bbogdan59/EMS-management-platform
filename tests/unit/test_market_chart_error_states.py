@@ -61,3 +61,20 @@ def test_market_timeline_displays_resolution_metadata():
     assert '$("chart-timeline-resolution")' in script
     assert "payload.aggregation || {}" in script
     assert "payload.timezone" in script
+
+
+def test_five_day_pzu_chart_can_switch_between_mwh_and_kwh():
+    template = Path("app/web/templates/market/prices.html").read_text()
+    script = Path("app/web/static/js/market.js").read_text()
+
+    assert 'id="five-day-unit-label"' in template
+    assert 'id="five-day-unit-toggles"' in template
+    assert "const FIVE_DAY_PRICE_UNITS" in script
+    assert '{ value: "mwh", label: "lei/MWh", factor: 1, decimals: 2 }' in script
+    assert '{ value: "kwh", label: "lei/kWh", factor: 1 / 1000, decimals: 4 }' in script
+    assert "let selectedFiveDayPriceUnit = \"mwh\";" in script
+    assert "function convertFiveDayPrice(value, unitOption)" in script
+    assert "Number(value) * unitOption.factor" in script
+    assert "value: [p.aligned_t, convertFiveDayPrice(p.price_lei_mwh, unitOption)]" in script
+    assert 'yAxis: { type: "value", name: unitOption.label }' in script
+    assert "if (lastFiveDayOverlayPayload) renderFiveDayOverlay(lastFiveDayOverlayPayload);" in script

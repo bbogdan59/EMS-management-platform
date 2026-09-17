@@ -31,7 +31,8 @@ def test_opcom_ui_explains_mwh_and_kwh_price_units():
 
     assert "Graficele de piata folosesc lei/MWh" in market_template
     assert "aceleasi preturi in lei/kWh" in market_template
-    assert "Pret PZU (lei/MWh)" in market_template
+    assert 'id="five-day-unit-label">lei/MWh' in market_template
+    assert 'id="five-day-unit-toggles"' in market_template
     assert "Evolutie pret (lei/MWh)" in market_template
     assert "Suprapunere preturi pe ani (lei/MWh, zi-din-an)" in market_template
     assert "Predictie pret mediu zilnic (lei/MWh)" in market_template

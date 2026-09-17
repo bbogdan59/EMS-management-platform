@@ -56,8 +56,11 @@
   <!-- Fereastra scurta cu istoric suprapus -->
   <div class="card">
     <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
-      <h2 class="font-medium">Pret PZU (lei/MWh): 2 zile trecute, azi, 3 zile viitoare</h2>
-      <span class="text-xs text-gray-500 dark:text-gray-400">Anul curent este evidentiat; anii anteriori sunt estompati.</span>
+      <h2 class="font-medium">Pret PZU (<span id="five-day-unit-label">lei/MWh</span>): 2 zile trecute, azi, 3 zile viitoare</h2>
+      <div class="flex flex-wrap items-center gap-2">
+        <span class="text-xs text-gray-500 dark:text-gray-400">Anul curent este evidentiat; anii anteriori sunt estompati.</span>
+        <div id="five-day-unit-toggles" class="flex flex-wrap gap-1 text-sm"></div>
+      </div>
     </div>
     <p class="mb-2 text-xs text-gray-500 dark:text-gray-400">
       Foloseste rezolutia importata pentru fiecare an: 15 minute cand exista, orar pentru istoricul mai vechi.

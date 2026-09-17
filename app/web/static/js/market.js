@@ -7,6 +7,10 @@ const TIMELINE_CHART_TYPES = [
   { value: "line", label: "Linie" },
   { value: "candles", label: "Candles" },
 ];
+const FIVE_DAY_PRICE_UNITS = [
+  { value: "mwh", label: "lei/MWh", factor: 1, decimals: 2 },
+  { value: "kwh", label: "lei/kWh", factor: 1 / 1000, decimals: 4 },
+];
 const YEARLY_OVERLAY_DEFAULT_YEARS = [2024, 2025, 2026];
 
 function emsInitMarket(availableYears) {
@@ -14,7 +18,9 @@ function emsInitMarket(availableYears) {
   let selectedYears = new Set(defaultYearlyOverlayYears(availableYears));
   let selectedTimelineDays = TIMELINE_DEFAULT_DAYS;
   let selectedTimelineChartType = "line";
+  let selectedFiveDayPriceUnit = "mwh";
   let lastTimelinePayload = null;
+  let lastFiveDayOverlayPayload = null;
   let timelineController = null;
   let fiveDayOverlayController = null;
   let yearlyOverlayController = null;
@@ -143,6 +149,40 @@ function emsInitMarket(availableYears) {
     });
   }
 
+  function selectedFiveDayUnitOption() {
+    return FIVE_DAY_PRICE_UNITS.find((option) => option.value === selectedFiveDayPriceUnit) || FIVE_DAY_PRICE_UNITS[0];
+  }
+
+  function formatPriceValue(value, unitOption) {
+    return value == null ? "-" : `${Number(value).toFixed(unitOption.decimals)} ${unitOption.label}`;
+  }
+
+  function convertFiveDayPrice(value, unitOption) {
+    return value == null ? null : Number(value) * unitOption.factor;
+  }
+
+  function renderFiveDayUnitToggles() {
+    const container = $("five-day-unit-toggles");
+    const label = $("five-day-unit-label");
+    const unitOption = selectedFiveDayUnitOption();
+    if (label) label.textContent = unitOption.label;
+    if (!container) return;
+    container.innerHTML = "";
+    FIVE_DAY_PRICE_UNITS.forEach((option) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.textContent = option.label;
+      btn.className = option.value === selectedFiveDayPriceUnit ? "btn-primary !px-2 !py-1 text-xs" : "btn-secondary !px-2 !py-1 text-xs";
+      btn.addEventListener("click", () => {
+        if (option.value === selectedFiveDayPriceUnit) return;
+        selectedFiveDayPriceUnit = option.value;
+        renderFiveDayUnitToggles();
+        if (lastFiveDayOverlayPayload) renderFiveDayOverlay(lastFiveDayOverlayPayload);
+      });
+      container.appendChild(btn);
+    });
+  }
+
   function formatMarketPrice(value) {
     return value == null ? "-" : `${Number(value).toFixed(2)} lei/MWh`;
   }
@@ -249,6 +289,68 @@ function emsInitMarket(availableYears) {
     }
   }
 
+  function renderFiveDayOverlay(payload) {
+    const el = $("chart-five-day-overlay");
+    if (!el) return;
+    const seriesByYear = payload.series || {};
+    const keys = Object.keys(seriesByYear).sort();
+    showChartState(el, keys.length === 0 ? "empty" : "ok");
+    if (!keys.length) {
+      initChart(el).clear();
+      return;
+    }
+
+    const unitOption = selectedFiveDayUnitOption();
+    const currentYear = Number(payload.current_year);
+    const legendData = keys.map((year) => year === String(currentYear) ? `${year} (curent)` : year);
+    const series = keys.map((year) => {
+      const numericYear = Number(year);
+      const isCurrent = numericYear === currentYear;
+      const color = EMS_YEAR_COLORS[Math.max(availableYears.indexOf(numericYear), 0) % EMS_YEAR_COLORS.length];
+      return {
+        name: isCurrent ? `${year} (curent)` : year,
+        type: "line",
+        showSymbol: false,
+        smooth: false,
+        color,
+        lineStyle: { width: isCurrent ? 3 : 1.5, opacity: isCurrent ? 1 : 0.28 },
+        itemStyle: { opacity: isCurrent ? 1 : 0.28 },
+        emphasis: { focus: "series", lineStyle: { opacity: isCurrent ? 1 : 0.65, width: isCurrent ? 3 : 2 } },
+        z: isCurrent ? 5 : 1,
+        data: seriesByYear[year].map((p) => ({
+          value: [p.aligned_t, convertFiveDayPrice(p.price_lei_mwh, unitOption)],
+          original_t: p.t,
+          delivery_date: p.delivery_date,
+          is_future: p.is_future,
+          is_synthetic: p.is_synthetic,
+        })),
+      };
+    });
+
+    const chart = initChart(el);
+    chart.setOption({
+      grid: { left: 56, right: 16, top: 28, bottom: 40 },
+      tooltip: {
+        trigger: "axis",
+        valueFormatter: (value) => formatPriceValue(value, unitOption),
+        formatter: (params) => {
+          const axisLabel = params[0] ? new Date(params[0].axisValue).toLocaleString("ro-RO", { dateStyle: "short", timeStyle: "short" }) : "";
+          const rows = params.map((item) => {
+            const point = item.data || {};
+            const flags = [point.is_future ? "viitor" : null, point.is_synthetic ? "sintetic" : null].filter(Boolean);
+            const value = Array.isArray(point.value) ? point.value[1] : null;
+            return `${item.marker}${item.seriesName}: ${formatPriceValue(value, unitOption)}${flags.length ? " (" + flags.join(", ") + ")" : ""}`;
+          });
+          return [axisLabel, ...rows].join("<br>");
+        },
+      },
+      legend: { data: legendData },
+      xAxis: { type: "time" },
+      yAxis: { type: "value", name: unitOption.label },
+      series,
+    }, true);
+  }
+
   async function loadFiveDayOverlay() {
     const el = $("chart-five-day-overlay");
     if (!el) return;
@@ -260,62 +362,8 @@ function emsInitMarket(availableYears) {
       const years = [...selectedYears].sort();
       const payload = await fetchJson("/market/data/five-day-overlay?years=" + years.join(","), { signal: controller.signal });
       if (controller !== fiveDayOverlayController) return;
-      const seriesByYear = payload.series || {};
-      const keys = Object.keys(seriesByYear).sort();
-      showChartState(el, keys.length === 0 ? "empty" : "ok");
-      if (!keys.length) {
-        initChart(el).clear();
-        return;
-      }
-
-      const currentYear = Number(payload.current_year);
-      const legendData = keys.map((year) => year === String(currentYear) ? `${year} (curent)` : year);
-      const series = keys.map((year) => {
-        const numericYear = Number(year);
-        const isCurrent = numericYear === currentYear;
-        const color = EMS_YEAR_COLORS[Math.max(availableYears.indexOf(numericYear), 0) % EMS_YEAR_COLORS.length];
-        return {
-          name: isCurrent ? `${year} (curent)` : year,
-          type: "line",
-          showSymbol: false,
-          smooth: false,
-          color,
-          lineStyle: { width: isCurrent ? 3 : 1.5, opacity: isCurrent ? 1 : 0.28 },
-          itemStyle: { opacity: isCurrent ? 1 : 0.28 },
-          emphasis: { focus: "series", lineStyle: { opacity: isCurrent ? 1 : 0.65, width: isCurrent ? 3 : 2 } },
-          z: isCurrent ? 5 : 1,
-          data: seriesByYear[year].map((p) => ({
-            value: [p.aligned_t, p.price_lei_mwh],
-            original_t: p.t,
-            delivery_date: p.delivery_date,
-            is_future: p.is_future,
-            is_synthetic: p.is_synthetic,
-          })),
-        };
-      });
-
-      const chart = initChart(el);
-      chart.setOption({
-        grid: { left: 56, right: 16, top: 28, bottom: 40 },
-        tooltip: {
-          trigger: "axis",
-          valueFormatter: (value) => value == null ? "-" : `${Number(value).toFixed(2)} lei/MWh`,
-          formatter: (params) => {
-            const axisLabel = params[0] ? new Date(params[0].axisValue).toLocaleString("ro-RO", { dateStyle: "short", timeStyle: "short" }) : "";
-            const rows = params.map((item) => {
-              const point = item.data || {};
-              const flags = [point.is_future ? "viitor" : null, point.is_synthetic ? "sintetic" : null].filter(Boolean);
-              const value = Array.isArray(point.value) ? point.value[1] : null;
-              return `${item.marker}${item.seriesName}: ${value == null ? "-" : Number(value).toFixed(2) + " lei/MWh"}${flags.length ? " (" + flags.join(", ") + ")" : ""}`;
-            });
-            return [axisLabel, ...rows].join("<br>");
-          },
-        },
-        legend: { data: legendData },
-        xAxis: { type: "time" },
-        yAxis: { type: "value", name: "lei/MWh" },
-        series,
-      }, true);
+      lastFiveDayOverlayPayload = payload;
+      renderFiveDayOverlay(payload);
     } catch (e) {
       if (controller !== fiveDayOverlayController) return;
       console.error(e);
@@ -457,6 +505,7 @@ function emsInitMarket(availableYears) {
   }
 
   renderYearToggles();
+  renderFiveDayUnitToggles();
   renderTimelineChartTypeToggles();
   renderTimelineRangeToggles();
   loadFiveDayOverlay();
