@@ -4,7 +4,7 @@ from datetime import date, datetime
 
 from app.core.rate_limit import reset_key
 from app.services.market_analytics_service import BUCHAREST
-from tests.factories import make_market_day, make_user
+from tests.factories import make_market_day, make_membership, make_org, make_station, make_user
 from tests.web_helpers import login
 
 
@@ -23,6 +23,23 @@ def test_market_page_renders_for_logged_in_user(client, db):
     resp = client.get("/market/prices")
     assert resp.status_code == 200
     assert "Piata energie" in resp.text
+
+
+def test_market_page_preserves_selected_station_in_nav(client, db):
+    reset_key("login_attempts:testclient")
+    user = make_user(db, email="market-station@test.local", password="Password1234")
+    org = make_org(db, "Market Station Org")
+    make_membership(db, user, org, role="organization_admin")
+    station_a = make_station(db, org, user, name="Market Station A")
+    make_station(db, org, user, name="Market Station B")
+    db.commit()
+
+    login(client, user.email, "Password1234")
+    resp = client.get(f"/market/prices?station_id={station_a.id}")
+
+    assert resp.status_code == 200
+    assert f'value="{station_a.id}" selected' in resp.text
+    assert f'href="/market/prices?station_id={station_a.id}"' in resp.text
 
 
 def test_market_data_endpoints_return_json(client, db):

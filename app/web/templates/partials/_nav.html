@@ -39,7 +39,7 @@
       <a class="nav-link" href="/stations/{{ current_station.id }}/devices">Dispozitive</a>
       <a class="nav-link" href="/stations/{{ current_station.id }}/integrations/deye">Deye Cloud</a>
       {% endif %}
-      <a class="nav-link" href="/market/prices">Piata energie</a>
+      <a class="nav-link" href="/market/prices{% if current_station %}?station_id={{ current_station.id }}{% endif %}">Piata energie</a>
       {% if current_user.is_platform_admin %}
       <a class="nav-link" href="/admin">Administrare</a>
       {% endif %}
