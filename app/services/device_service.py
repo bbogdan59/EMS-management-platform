@@ -204,6 +204,21 @@ def telemetry_semantic_rejection(item: TelemetryItem) -> str | None:
     return None
 
 
+def _extended_telemetry_payload(item: TelemetryItem) -> dict:
+    extended = {}
+    if item.mppt:
+        extended["mppt"] = [row.model_dump(mode="json") for row in item.mppt]
+    if item.phases:
+        extended["phases"] = [row.model_dump(mode="json") for row in item.phases]
+    if item.battery is not None:
+        extended["battery"] = item.battery.model_dump(mode="json", exclude_none=True)
+    if item.status is not None:
+        extended["status"] = item.status.model_dump(mode="json", exclude_none=True)
+    if item.counters:
+        extended["counters"] = [row.model_dump(mode="json", exclude_none=True) for row in item.counters]
+    return extended
+
+
 def ingest_telemetry_batch(
     db: Session, device: Device, items: list[TelemetryItem]
 ) -> tuple[int, int, int, list[str], list[TelemetryItemAck]]:
@@ -247,6 +262,10 @@ def ingest_telemetry_batch(
             continue
 
         is_late = (now - item.measured_at) > LATE_TELEMETRY_THRESHOLD
+        extended = _extended_telemetry_payload(item)
+        raw_payload = dict(item.raw_payload)
+        if extended:
+            raw_payload["extended"] = extended
         rows.append(
             (idx, item, {
                 "id": uuid.uuid4(),
@@ -265,7 +284,7 @@ def ingest_telemetry_batch(
                 "ev_connected": item.ev_connected,
                 "ev_power_w": item.ev_power_w,
                 "quality_flags": item.quality_flags,
-                "raw_payload": item.raw_payload,
+                "raw_payload": raw_payload,
                 "is_simulated": bool(item.raw_payload.get("simulated", False)),
                 "is_late": is_late,
             })
