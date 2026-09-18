@@ -712,12 +712,13 @@ def get_forecast_vs_actual(db: Session, station: Station, metric: str, start: da
     recent), iar randurile vechi raman in baza -- fara sa alegem explicit,
     interogarea de mai jos ar returna MAI MULTE randuri pentru acelasi
     `interval_start` (unul per batch), amestecand pe grafic o prognoza veche,
-    deja depasita, cu una noua. Pentru fiecare `interval_start`, pastram doar
-    prognoza cea mai RECENTA care exista deja LA MOMENTUL acelui interval
+    deja depasita, cu una noua. Pentru intervale istorice pastram prognoza cea
+    mai RECENTA care exista deja LA MOMENTUL acelui interval
     (`issued_at <= interval_start`) -- "prognoza asa cum era cunoscuta atunci",
-    nu una regenerata ulterior (ar insemna folosirea retroactiva a unei
-    informatii care inca nu exista la acel moment)."""
-    from app.models.forecast import ConsumptionForecast, PvForecast
+    nu una regenerata ulterior. Pentru intervale viitoare folosim ultimul batch
+    disponibil, ca seria afisata sa fie continua si sa nu alterneze artificial
+    intre valori valide si lipsa de prognoza."""
+    from app.models.forecast import ConsumptionForecast, PvForecast, WeatherForecast
 
     aggregates = db.scalars(
         select(TelemetryAggregate).where(
@@ -771,31 +772,58 @@ def get_forecast_vs_actual(db: Session, station: Station, metric: str, start: da
             )
         ).all()
 
+    now = utcnow()
+    latest_issued_at = max((f.issued_at for f in rows), default=None)
     best_by_start: dict[datetime, object] = {}
     for f in rows:
-        if f.issued_at > f.interval_start:
+        if f.interval_start <= now and f.issued_at > f.interval_start:
             continue  # prognoza emisa "dupa" momentul prezis -- nu era disponibila atunci
+        if f.interval_start > now and latest_issued_at is not None and f.issued_at < latest_issued_at:
+            continue  # pentru viitor afisam ultimul batch disponibil, nu batch-uri vechi amestecate
         existing = best_by_start.get(f.interval_start)
         if existing is None or f.issued_at > existing.issued_at:
             best_by_start[f.interval_start] = f
     forecasts = sorted(best_by_start.values(), key=lambda f: f.interval_start)
 
+    weather_by_id: dict[uuid.UUID, WeatherForecast] = {}
+    if metric == "pv":
+        weather_ids = [f.based_on_weather_forecast_id for f in forecasts if f.based_on_weather_forecast_id is not None]
+        if weather_ids:
+            weather_by_id = {
+                w.id: w for w in db.scalars(select(WeatherForecast).where(WeatherForecast.id.in_(weather_ids))).all()
+            }
+
     out = []
     for f in forecasts:
         actual_kw = actual_average_kw(f.interval_start, f.interval_end)
         forecast_kw = float(f.predicted_power_kw) if metric == "pv" else float(f.base_load_kw + f.ev_component_kw + f.flexible_component_kw)
-        out.append(
-            {
-                "t": f.interval_start.isoformat(),
-                "forecast_kw": forecast_kw,
-                "actual_kw": actual_kw,
-                "is_synthetic": f.is_synthetic,
-                "forecast_confidence": f.confidence,
-                "forecast_source": f.source,
-                "forecast_source_version": f.source_version,
-                "forecast_issued_at": f.issued_at.isoformat(),
+        point = {
+            "t": f.interval_start.isoformat(),
+            "forecast_kw": forecast_kw,
+            "actual_kw": actual_kw,
+            "is_synthetic": f.is_synthetic,
+            "forecast_confidence": f.confidence,
+            "forecast_source": f.source,
+            "forecast_source_version": f.source_version,
+            "forecast_issued_at": f.issued_at.isoformat(),
+        }
+        if metric == "pv":
+            weather = weather_by_id.get(f.based_on_weather_forecast_id)
+            point["weather"] = None if weather is None else {
+                "source": weather.source,
+                "source_version": weather.source_version,
+                "issued_at": weather.issued_at.isoformat(),
+                "ghi_w_m2": weather.ghi_w_m2,
+                "dni_w_m2": weather.dni_w_m2,
+                "dhi_w_m2": weather.dhi_w_m2,
+                "cloud_cover_percent": weather.cloud_cover_percent,
+                "temperature_c": weather.temperature_c,
+                "precipitation_mm": weather.precipitation_mm,
+                "wind_speed_ms": weather.wind_speed_ms,
+                "confidence": weather.confidence,
+                "is_synthetic": weather.is_synthetic,
             }
-        )
+        out.append(point)
     return out
 
 

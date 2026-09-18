@@ -5,7 +5,7 @@ from decimal import Decimal
 from zoneinfo import ZoneInfo
 
 from app.core.security import utcnow
-from app.models.forecast import ConsumptionForecast, PvForecast
+from app.models.forecast import ConsumptionForecast, PvForecast, WeatherForecast
 from app.models.optimization import OptimizationRun, Plan, PlanInterval
 from app.models.tariff import Tariff, TariffVersion
 from app.models.telemetry import TelemetryAggregate, TelemetryRaw
@@ -692,6 +692,64 @@ def test_forecast_vs_actual_load_metric_uses_consumption_forecast(db):
     assert abs(out[0]["forecast_kw"] - 0.8) < 0.001
     assert out[0]["forecast_confidence"] == "nominal"
     assert out[0]["forecast_source"] == "test"
+
+
+def test_forecast_vs_actual_pv_exposes_weather_context(db):
+    station = _station(db, "pv-weather-context")
+    t = utcnow().replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+    weather = WeatherForecast(
+        station_id=station.id,
+        issued_at=t - timedelta(hours=3),
+        interval_start=t,
+        interval_end=t + timedelta(hours=1),
+        source="open-meteo",
+        source_version="test-model",
+        ghi_w_m2=700.0,
+        dni_w_m2=600.0,
+        dhi_w_m2=120.0,
+        cloud_cover_percent=25.0,
+        temperature_c=28.5,
+        precipitation_mm=0.2,
+        wind_speed_ms=3.4,
+    )
+    db.add(weather)
+    db.flush()
+    db.add(PvForecast(
+        station_id=station.id, issued_at=t - timedelta(hours=1), interval_start=t, interval_end=t + timedelta(hours=1),
+        source="test", predicted_power_kw=Decimal("4.0"), scenario="expected", based_on_weather_forecast_id=weather.id,
+    ))
+    db.commit()
+
+    out = dashboard.get_forecast_vs_actual(db, station, "pv", t, t + timedelta(hours=1))
+
+    assert out[0]["weather"]["source"] == "open-meteo"
+    assert out[0]["weather"]["ghi_w_m2"] == 700.0
+    assert out[0]["weather"]["cloud_cover_percent"] == 25.0
+
+
+def test_forecast_vs_actual_future_load_uses_latest_forecast_batch(db):
+    station = _station(db, "load-future")
+    t = utcnow().replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+    older = t - timedelta(hours=3)
+    latest = t - timedelta(minutes=5)
+
+    db.add(ConsumptionForecast(
+        station_id=station.id, issued_at=older, interval_start=t, interval_end=t + timedelta(minutes=15),
+        source="test", base_load_kw=Decimal("0.5"), ev_component_kw=Decimal("0"), flexible_component_kw=Decimal("0"),
+        is_cold_start=False,
+    ))
+    db.add(ConsumptionForecast(
+        station_id=station.id, issued_at=latest, interval_start=t, interval_end=t + timedelta(minutes=15),
+        source="test", base_load_kw=Decimal("1.4"), ev_component_kw=Decimal("0.2"), flexible_component_kw=Decimal("0.1"),
+        is_cold_start=False,
+    ))
+    db.commit()
+
+    out = dashboard.get_forecast_vs_actual(db, station, "load", t, t + timedelta(minutes=15))
+
+    assert len(out) == 1
+    assert abs(out[0]["forecast_kw"] - 1.7) < 0.001
+    assert out[0]["forecast_issued_at"] == latest.isoformat()
 
 
 # --- get_plan_chart -------------------------------------------------------
