@@ -59,6 +59,7 @@ def test_single_station_user_redirects_straight_to_dashboard(client, db):
     # deloc (doar numele statiei, ca text simplu) -- issue #45.
     assert 'name="station_id"' not in page.text
     assert "DS One Station Org / DS Only Station" in page.text
+    assert f'href="/?station_id={station.id}" class="flex items-center gap-2 text-base font-semibold' in page.text
 
 
 def test_single_station_redirect_does_not_reflect_untrusted_host(client, db):

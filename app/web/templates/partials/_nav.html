@@ -1,6 +1,6 @@
 <header class="border-b border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-900">
   <div class="mx-auto flex max-w-7xl flex-wrap items-center gap-3 px-4 py-3">
-    <a href="/" class="flex items-center gap-2 text-base font-semibold text-brand-700 dark:text-brand-300">
+    <a href="/{% if current_station %}?station_id={{ current_station.id }}{% endif %}" class="flex items-center gap-2 text-base font-semibold text-brand-700 dark:text-brand-300">
       <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <path stroke-linecap="round" stroke-linejoin="round" d="M13 2 3 14h7l-1 8 10-12h-7l1-8z" />
       </svg>
