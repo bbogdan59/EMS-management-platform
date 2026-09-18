@@ -14,13 +14,17 @@ la declansare duplicata si redirect-urile."""
 from __future__ import annotations
 
 import uuid
+from pathlib import Path
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.core.rate_limit import reset_key
 from app.models.admin_job import AdminJob
 from app.models.enums import AdminJobStatus
+from app.models.market import ImportRun, MarketPriceInterval
+from app.models.task_execution import TaskExecution
+from app.services import task_execution_service
 from app.workers import tasks as tasks_module
 from tests.factories import make_org, make_station, make_user
 from tests.web_helpers import login
@@ -293,3 +297,86 @@ def test_trigger_market_retention_rejects_duplicate_in_progress(client, db, monk
     assert resp2.status_code == 303
     assert resp2.headers["location"] == "/admin/operations?error=market_retention_in_progress"
     assert len(calls) == 1
+
+
+def test_admin_can_upload_pzu_csv_when_automatic_import_fails(client, db):
+    admin = make_user(db, email="csv-upload@test.local", password="Password1234", is_platform_admin=True)
+    db.commit()
+    login(client, admin.email, "Password1234")
+    fixture = Path(__file__).parents[1] / "fixtures/opcom_real_sample_pt15m_2026-09-12.csv"
+
+    response = client.post(
+        "/admin/operations/import-opcom-csv",
+        data={"csrf_token": client.cookies.get("ems_csrf"), "delivery_date": "2026-09-12"},
+        files={"csv_file": ("pzu.csv", fixture.read_bytes(), "text/csv")},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/admin/operations?status=csv_imported"
+    run = db.scalar(select(ImportRun).where(ImportRun.triggered_by_user_id == admin.id))
+    assert run.status == "succeeded"
+    assert run.source_url == "manual-upload:pzu.csv"
+    assert run.interval_count == 96
+    assert db.scalar(select(func.count(MarketPriceInterval.id)).where(MarketPriceInterval.import_run_id == run.id)) == 96
+
+
+def test_csv_upload_rejects_non_csv_and_oversized_files(client, db):
+    admin = make_user(db, email="csv-invalid@test.local", password="Password1234", is_platform_admin=True)
+    db.commit()
+    login(client, admin.email, "Password1234")
+    csrf = client.cookies.get("ems_csrf")
+
+    wrong_type = client.post(
+        "/admin/operations/import-opcom-csv",
+        data={"csrf_token": csrf, "delivery_date": "2026-09-12"},
+        files={"csv_file": ("pzu.txt", b"x", "text/plain")},
+        follow_redirects=False,
+    )
+    too_large = client.post(
+        "/admin/operations/import-opcom-csv",
+        data={"csrf_token": csrf, "delivery_date": "2026-09-12"},
+        files={"csv_file": ("pzu.csv", b"x" * 2_000_001, "text/csv")},
+        follow_redirects=False,
+    )
+
+    assert wrong_type.headers["location"] == "/admin/operations?error=invalid_csv_file"
+    assert too_large.headers["location"] == "/admin/operations?error=invalid_csv_size"
+
+
+def test_admin_can_queue_allowlisted_scheduled_task(client, db, monkeypatch):
+    admin = make_user(db, email="task-run@test.local", password="Password1234", is_platform_admin=True)
+    db.commit()
+    login(client, admin.email, "Password1234")
+    calls = []
+    monkeypatch.setattr(task_execution_service.celery_app, "send_task", lambda *args, **kwargs: calls.append((args, kwargs)))
+    task_name = "app.workers.tasks.run_aggregation_task"
+
+    response = client.post(
+        "/admin/task-audit/run",
+        data={"csrf_token": client.cookies.get("ems_csrf"), "task_name": task_name},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    execution = db.scalar(select(TaskExecution).where(TaskExecution.triggered_by_user_id == admin.id))
+    assert execution.task_name == task_name
+    assert execution.source == "manual"
+    assert calls[0][1]["task_id"] == str(execution.id)
+
+
+def test_admin_manual_task_endpoint_rejects_unlisted_task(client, db, monkeypatch):
+    admin = make_user(db, email="task-denied@test.local", password="Password1234", is_platform_admin=True)
+    db.commit()
+    login(client, admin.email, "Password1234")
+    calls = []
+    monkeypatch.setattr(task_execution_service.celery_app, "send_task", lambda *args, **kwargs: calls.append(1))
+
+    response = client.post(
+        "/admin/task-audit/run",
+        data={"csrf_token": client.cookies.get("ems_csrf"), "task_name": "app.workers.tasks.admin_opcom_import_job_task"},
+        follow_redirects=False,
+    )
+
+    assert response.headers["location"] == "/admin/task-audit?error=task_not_allowed"
+    assert calls == []

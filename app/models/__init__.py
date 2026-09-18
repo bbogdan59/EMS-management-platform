@@ -19,6 +19,7 @@ from app.models.organization import Membership, Organization
 from app.models.preference import PreferenceVersion, StationPreference
 from app.models.station import PanelGroup, Station, StationConfig, StationConfigVersion
 from app.models.tariff import Tariff, TariffVersion
+from app.models.task_execution import TaskExecution
 from app.models.telemetry import TelemetryAggregate, TelemetryRaw
 from app.models.user import (
     Invitation,
@@ -64,6 +65,7 @@ __all__ = [
     "StationPreference",
     "Tariff",
     "TariffVersion",
+    "TaskExecution",
     "TelemetryAggregate",
     "TelemetryRaw",
     "User",

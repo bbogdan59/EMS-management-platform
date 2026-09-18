@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from app.models.organization import Membership, Organization
 from app.models.station import Station
 from app.models.user import User
+from app.services.task_execution_service import failed_count
 
 
 def build_nav_context(db: Session, user: User, current_station_id: uuid.UUID | None = None) -> dict:
@@ -44,4 +45,5 @@ def build_nav_context(db: Session, user: User, current_station_id: uuid.UUID | N
         "current_user": user,
         "nav_stations": nav_stations,
         "current_station": current_station,
+        "worker_failure_count": failed_count(db) if user.is_platform_admin else 0,
     }

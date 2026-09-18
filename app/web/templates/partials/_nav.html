@@ -42,6 +42,9 @@
       <a class="nav-link" href="/market/prices{% if current_station %}?station_id={{ current_station.id }}{% endif %}">Piata energie</a>
       {% if current_user.is_platform_admin %}
       <a class="nav-link" href="/admin">Administrare</a>
+      {% if worker_failure_count %}
+      <a class="badge-error" href="/admin/task-audit" title="Taskuri worker esuate in ultimele 10 zile">Worker: {{ worker_failure_count }} esecuri</a>
+      {% endif %}
       {% endif %}
     </nav>
 

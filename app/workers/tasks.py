@@ -36,9 +36,16 @@ from app.services.consumption_forecast_service import (
     generate_consumption_forecast,
 )
 from app.services.optimization_service import OptimizationLockedError
+from app.services.task_execution_service import purge_old_executions
 
 logger = structlog.get_logger(__name__)
 settings = get_settings()
+
+
+@celery_app.task(name="app.workers.tasks.task_execution_retention_task")
+def task_execution_retention_task() -> dict:
+    with session_scope() as db:
+        return {"deleted": purge_old_executions(db), "retention_days": 10}
 
 
 @contextlib.contextmanager
