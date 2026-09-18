@@ -10,7 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import uuid
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import httpx
@@ -360,6 +360,107 @@ def test_poll_connection_is_idempotent_on_identical_reading(db, monkeypatch):
 
     count = db.scalar(select(func.count(TelemetryRaw.id)).where(TelemetryRaw.device_id == cloud_device.id))
     assert count == 1
+
+
+@respx.mock
+def test_fetch_station_history_power_posts_timestamp_window():
+    route = respx.post(f"{BASE}/v1.0/station/history/power").mock(
+        return_value=httpx.Response(200, json={"stationDataItems": []})
+    )
+    start = datetime(2026, 1, 1, 10, 0, tzinfo=UTC)
+    end = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+
+    data = svc.fetch_station_history_power("token", 322, start, end, page=2, size=50)
+
+    assert data == {"stationDataItems": []}
+    request = route.calls[0].request
+    assert request.url.params["page"] == "2"
+    assert request.url.params["size"] == "50"
+    payload = json.loads(request.content)
+    assert payload == {
+        "stationId": 322,
+        "startTimestamp": int(start.timestamp()),
+        "endTimestamp": int(end.timestamp()),
+    }
+
+
+def test_import_station_history_creates_rows_deduplicates_and_reaggregates(db, monkeypatch):
+    _, user, station, cloud_device = _setup_station(db, "history-import")
+    conn = _connection(db, station, user, device_id=cloud_device.id)
+    start = datetime(2026, 1, 1, 10, 0, tzinfo=UTC)
+    existing_at = datetime(2026, 1, 1, 10, 15, tzinfo=UTC)
+    new_at = datetime(2026, 1, 1, 10, 30, tzinfo=UTC)
+    end = datetime(2026, 1, 1, 11, 0, tzinfo=UTC)
+    db.add(
+        TelemetryRaw(
+            device_id=cloud_device.id, station_id=station.id, boot_id=svc.CLOUD_BOOT_ID,
+            sequence=int(existing_at.timestamp()), measured_at=existing_at, received_at=existing_at,
+            source=TelemetrySource.deye_cloud.value, pv_power_w=Decimal("100"),
+        )
+    )
+    db.flush()
+
+    calls = []
+
+    def _history(token, remote_station_id, range_start, range_end, *, page, size):
+        calls.append((token, remote_station_id, range_start, range_end, page, size))
+        if page == 1:
+            return {
+                "stationDataItems": [
+                    {"timeStamp": int(existing_at.timestamp()), "generationPower": 999},
+                    {
+                        "timeStamp": int(new_at.timestamp()),
+                        "generationPower": 1500,
+                        "consumptionPower": 700,
+                        "batteryPower": -200,
+                        "gridPower": -600,
+                        "batterySOC": 61,
+                    },
+                    {"generationPower": 1},
+                ],
+                "total": 3,
+            }
+        return {"stationDataItems": []}
+
+    reaggregated = []
+    monkeypatch.setattr(svc, "fetch_station_history_power", _history)
+    monkeypatch.setattr(
+        svc.aggregation_service,
+        "reaggregate_range",
+        lambda db_arg, station_arg, start_arg, end_arg: reaggregated.append((station_arg.id, start_arg, end_arg)),
+    )
+
+    result = svc.import_station_history(db, conn, start, end)
+
+    assert result["created"] == 1
+    assert result["skipped_existing"] == 1
+    assert result["skipped_invalid_timestamp"] == 1
+    assert result["implausible_power_rows"] == 0
+    assert calls == [("cached-token", 322, start, end, 1, svc.HISTORY_IMPORT_PAGE_SIZE)]
+    imported = db.scalar(
+        select(TelemetryRaw).where(
+            TelemetryRaw.device_id == cloud_device.id,
+            TelemetryRaw.sequence == int(new_at.timestamp()),
+        )
+    )
+    assert imported is not None
+    assert imported.source == TelemetrySource.deye_cloud.value
+    assert imported.pv_power_w == Decimal("1500")
+    assert imported.load_power_w == Decimal("700")
+    assert imported.battery_power_w == Decimal("-200")
+    assert imported.grid_power_w == Decimal("-600")
+    assert imported.battery_soc_percent == Decimal("61")
+    assert reaggregated == [(station.id, new_at, new_at + timedelta(minutes=15))]
+    assert conn.last_sync_status == "succeeded"
+
+
+def test_import_station_history_rejects_large_window(db):
+    _, user, station, cloud_device = _setup_station(db, "history-window")
+    conn = _connection(db, station, user, device_id=cloud_device.id)
+    start = datetime(2026, 1, 1, tzinfo=UTC)
+
+    with pytest.raises(ValueError, match="7 zile"):
+        svc.import_station_history(db, conn, start, start + timedelta(days=8))
 
 
 def test_poll_connection_auth_failure_marks_connection_error(db, monkeypatch):

@@ -6,6 +6,8 @@ are acces de citire la statie."""
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import RedirectResponse
@@ -38,6 +40,14 @@ def _redirect(station_id: uuid.UUID, *, error: str | None = None, notice: str | 
     return RedirectResponse(f"/stations/{station_id}/integrations/deye{qs}", status_code=303)
 
 
+def _parse_station_datetime(value: str, station_timezone: str) -> datetime:
+    parsed = datetime.fromisoformat(value)
+    tz = ZoneInfo(station_timezone)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=tz)
+    return parsed.astimezone(UTC)
+
+
 @router.get("/stations/{station_id}/integrations/deye")
 def page(
     request: Request,
@@ -56,6 +66,7 @@ def page(
         "connection": connection,
         "remote_stations": remote_stations,
         "can_edit": role in ("organization_admin", "platform_admin"),
+        "history_import_max_days": deye_cloud_service.HISTORY_IMPORT_MAX_WINDOW.days,
         **build_nav_context(db, user, station.id),
     }
     return templates.TemplateResponse(request, "stations/deye_integration.html", context)
@@ -132,6 +143,53 @@ def select_station(
     )
     db.commit()
     return _redirect(station.id, notice="Statia Deye Cloud a fost legata. Telemetria va aparea dupa urmatorul polling.")
+
+
+@router.post("/stations/{station_id}/integrations/deye/import-history", dependencies=[Depends(verify_csrf)])
+def import_history(
+    start_at: str = Form(...),
+    end_at: str = Form(...),
+    db: Session = Depends(get_db),
+    access=Depends(edit_access),
+    user: User = Depends(get_current_user),
+):
+    station, _role = access
+    connection = deye_cloud_service.get_connection_for_station(db, station.id)
+    if connection is None:
+        return _redirect(station.id, error="Nicio conectare Deye Cloud activa pentru import istoric.")
+
+    try:
+        start = _parse_station_datetime(start_at, station.timezone)
+        end = _parse_station_datetime(end_at, station.timezone)
+        result = deye_cloud_service.import_station_history(db, connection, start, end)
+    except ValueError as exc:
+        db.rollback()
+        return _redirect(station.id, error=str(exc))
+    except deye_cloud_service.DeyeCloudConfigError as exc:
+        db.rollback()
+        return _redirect(station.id, error=str(exc))
+    except deye_cloud_service.DeyeCloudAuthError:
+        db.rollback()
+        return _redirect(station.id, error="Autentificare Deye Cloud esuata -- reconecteaza contul.")
+    except deye_cloud_service.DeyeCloudError:
+        db.rollback()
+        return _redirect(station.id, error="Nu am putut importa istoricul din Deye Cloud. Reincearca mai tarziu.")
+
+    record_audit(
+        db, action="deye_cloud_history_imported", resource_type="deye_cloud_connection", resource_id=str(connection.id),
+        actor_user_id=user.id, actor_label="user", station_id=station.id,
+        metadata={
+            "start": start.isoformat(),
+            "end": end.isoformat(),
+            "created": result["created"],
+            "skipped_existing": result["skipped_existing"],
+            "skipped_invalid_timestamp": result["skipped_invalid_timestamp"],
+            "implausible_power_rows": result["implausible_power_rows"],
+        },
+    )
+    db.commit()
+    notice = f"Import istoric finalizat: {result['created']} randuri noi, {result['skipped_existing']} deja existente."
+    return _redirect(station.id, notice=notice)
 
 
 @router.post("/stations/{station_id}/integrations/deye/disconnect", dependencies=[Depends(verify_csrf)])

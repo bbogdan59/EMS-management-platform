@@ -5,6 +5,8 @@ are loc (autentificarea/listarea statiilor sunt monkeypatch-uite la nivelul
 functiilor de serviciu, ca in restul suitei -- vezi `test_opcom_import.py`)."""
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 from app.core.rate_limit import RateLimitExceeded, reset_key
 from app.models.deye_integration import DeyeCloudConnection
 from app.models.enums import DeyeCloudConnectionStatus
@@ -126,6 +128,56 @@ def test_organization_admin_can_connect_select_and_disconnect(client, db, monkey
     db.refresh(conn)
     assert conn.status == DeyeCloudConnectionStatus.disconnected.value
     assert conn.encrypted_access_token is None
+
+
+def test_organization_admin_can_trigger_deye_history_import(client, db, monkeypatch):
+    reset_key("login_attempts:testclient")
+    user = make_user(db, email="deyehistory@test.local", password="Password1234")
+    org = make_org(db, "Deye Org History")
+    station = make_station(db, org, user, name="Statie Deye History")
+    make_membership(db, user, org, role="organization_admin")
+    db.commit()
+    _stub_auth(monkeypatch)
+
+    login(client, user.email, "Password1234")
+    csrf = client.cookies.get("ems_csrf")
+    client.post(
+        f"/stations/{station.id}/integrations/deye/connect",
+        data={"csrf_token": csrf, "app_id": "station-app", "app_secret": "station-secret", "email": "client@example.com", "password": "hunter2", "consent": "yes"},
+    )
+    client.post(
+        f"/stations/{station.id}/integrations/deye/select",
+        data={"csrf_token": csrf, "remote_station_id": 322},
+    )
+    db.expire_all()
+    page = client.get(f"/stations/{station.id}/integrations/deye")
+    assert page.status_code == 200
+    assert b"Import istoric" in page.content
+
+    seen = {}
+
+    def _import(db_arg, connection, start, end):
+        seen["connection_id"] = connection.id
+        seen["start"] = start
+        seen["end"] = end
+        return {
+            "created": 4,
+            "skipped_existing": 2,
+            "skipped_invalid_timestamp": 0,
+            "implausible_power_rows": 0,
+        }
+
+    monkeypatch.setattr(svc, "import_station_history", _import)
+    response = client.post(
+        f"/stations/{station.id}/integrations/deye/import-history",
+        data={"csrf_token": csrf, "start_at": "2026-01-01T10:00", "end_at": "2026-01-01T11:00"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert "Import+istoric+finalizat" in response.headers["location"]
+    assert seen["start"] == datetime(2026, 1, 1, 8, 0, tzinfo=UTC)
+    assert seen["end"] == datetime(2026, 1, 1, 9, 0, tzinfo=UTC)
 
 
 def test_station_selection_rejects_forged_remote_id(client, db, monkeypatch):

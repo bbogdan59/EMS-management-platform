@@ -76,7 +76,7 @@ Note:
 | `POST /organizations/{id}/stations` (creare statie), configurare invertor/tehnica, tarife | `StationAccess`/`OrganizationAccess(min_role="organization_admin")` |
 | `POST /organizations/{id}/invitations`, `.../members/*`, `.../invitations/*` (issue #23) | `OrganizationAccess(min_role="organization_admin")` |
 | `GET /stations/{id}/integrations/deye` (stare conector Deye Cloud) | `StationAccess(min_role="viewer")` |
-| `POST /stations/{id}/integrations/deye/connect\|select\|disconnect` (issue #43) | `StationAccess(min_role="organization_admin")` -- acelasi prag ca gestiunea dispozitivelor |
+| `POST /stations/{id}/integrations/deye/connect\|select\|disconnect\|import-history` (issue #43) | `StationAccess(min_role="organization_admin")` -- acelasi prag ca gestiunea dispozitivelor |
 | `/admin/*` (backoffice cross-tenant, inclusiv lifecycle organizatie si administrare membri) | `require_platform_admin` (verifica `User.is_platform_admin`, nu un rol de organizatie) |
 | `GET /stations/{id}/sse` (flux live) | `StationAccess(min_role="viewer")`, re-verificat la FIECARE ciclu de polling (nu doar la deschiderea conexiunii) -- o membership dezactivata/eliminata sau o sesiune revocata inchide fluxul in cel mult `POLL_INTERVAL_SECONDS` |
 
