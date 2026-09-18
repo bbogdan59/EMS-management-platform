@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block title %}Flota device-uri - {{ app_name }}{% endblock %}
+{% block content %}
+<div class="space-y-6">
+  <h1 class="text-xl font-semibold">Flota device-uri</h1>
+  {% include "admin/_tabs.html" %}
+
+  <div class="card">
+    <p class="mb-4 text-sm text-gray-500">
+      Toate device-urile, orice status, asociate sau nu -- vedere read-only cross-statie. Pentru
+      alocare/revocare foloseste <a class="underline" href="/admin/devices/pending">Device-uri neasociate</a>;
+      pentru transfer/factory reset, <a class="underline" href="/admin/devices/assigned">Device-uri asociate</a>.
+      "online" inseamna un heartbeat primit in ultimele 15 minute -- nu e o stare persistata, e calculata
+      la fiecare afisare. Instantaneul de resurse (CPU/memorie/temperatura/disk) e RAPORTAT de dispozitiv la
+      fiecare heartbeat; un camp lipsa inseamna ca dispozitivul nu l-a putut citi, niciodata 0 inventat.
+    </p>
+    <table class="w-full text-sm">
+      <thead class="text-left text-gray-500">
+        <tr>
+          <th class="py-1">Device</th>
+          <th>Serial / Installation UUID</th>
+          <th>Prezenta</th>
+          <th>Asociere</th>
+          <th>Status</th>
+          <th>Firmware</th>
+          <th>Ultimul heartbeat</th>
+          <th>CPU</th>
+          <th>Memorie</th>
+          <th>Temperatura</th>
+          <th>Disk</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for d in devices %}
+        {% set stats = d.system_stats or {} %}
+        {% set online = d.last_heartbeat_at and (now - d.last_heartbeat_at).total_seconds() < 900 %}
+        <tr class="border-t border-gray-100 dark:border-gray-800">
+          <td class="py-1">{{ d.name }}</td>
+          <td class="font-mono text-xs">{{ d.serial_number or d.installation_uuid or "-" }}</td>
+          <td>
+            {% if online %}<span class="badge-ok">online</span>{% else %}<span class="badge-muted">offline</span>{% endif %}
+          </td>
+          <td>
+            {% if d.station_id and d.station_id in stations_by_id %}
+              <span class="badge-ok">linked</span> {{ stations_by_id[d.station_id].name }}
+            {% else %}
+              <span class="badge-muted">unlinked</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if d.status == "active" %}<span class="badge-ok">{{ d.status }}</span>
+            {% elif d.status == "revoked" %}<span class="badge-error">{{ d.status }}</span>
+            {% else %}<span class="badge-warn">{{ d.status }}</span>{% endif %}
+          </td>
+          <td class="font-mono text-xs">{{ d.firmware_version or "-" }}</td>
+          <td>{{ d.last_heartbeat_at | local_dt(None) if d.last_heartbeat_at else "niciodata" }}</td>
+          <td>{{ stats.cpu_load_1m if stats.cpu_load_1m is not none else "-" }}</td>
+          <td>
+            {% if stats.memory_used_percent is not none %}
+              {{ stats.memory_used_percent }}%{% if stats.memory_total_mb is not none %} din {{ stats.memory_total_mb }} MB{% endif %}
+            {% else %}-{% endif %}
+          </td>
+          <td>{{ (stats.temperature_c ~ " °C") if stats.temperature_c is not none else "-" }}</td>
+          <td>{{ (stats.disk_used_percent ~ "%") if stats.disk_used_percent is not none else "-" }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="11" class="py-4 text-center text-gray-500">Niciun device inregistrat.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

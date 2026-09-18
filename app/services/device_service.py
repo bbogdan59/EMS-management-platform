@@ -4,7 +4,7 @@ import uuid
 from collections import Counter
 from datetime import timedelta
 
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -20,18 +20,19 @@ from app.core.security import (
     verify_password,
 )
 from app.models.command import Command, CommandEvent
-from app.models.device import ClaimCode, Device, DeviceCredential
+from app.models.device import ClaimCode, Device, DeviceCredential, DeviceLogEntry
 from app.models.enums import ClaimCodeStatus, CommandStatus, DeviceStatus, PlanStatus
 from app.models.optimization import Plan
 from app.models.preference import PreferenceVersion
 from app.models.station import Station, StationConfigVersion
 from app.models.telemetry import TelemetryRaw
 from app.models.user import User
-from app.schemas.device_api import TelemetryItem, TelemetryItemAck
+from app.schemas.device_api import DeviceLogEntryIn, TelemetryItem, TelemetryItemAck
 
 MAX_FUTURE_SKEW = timedelta(minutes=5)
 MAX_TELEMETRY_AGE = timedelta(days=400)
 LATE_TELEMETRY_THRESHOLD = timedelta(minutes=5)
+DEVICE_LOG_RETENTION = timedelta(days=10)
 TELEMETRY_SEMANTIC_REASONS = {
     "pv_power_negative": "pv_power_w nu poate fi negativ.",
     "load_power_negative": "load_power_w nu poate fi negativ.",
@@ -128,16 +129,67 @@ def rotate_credential(db: Session, device: Device) -> str:
     return raw_secret
 
 
-def record_heartbeat(db: Session, device: Device, boot_id: str, firmware_version: str | None, capabilities: dict) -> Device:
+def record_heartbeat(
+    db: Session,
+    device: Device,
+    boot_id: str,
+    firmware_version: str | None,
+    capabilities: dict,
+    system_stats: dict | None = None,
+) -> Device:
     device.last_heartbeat_at = utcnow()
     device.last_boot_id = boot_id
     if firmware_version:
         device.firmware_version = firmware_version
     if capabilities:
         device.capabilities = {**(device.capabilities or {}), **capabilities}
+    # Wholesale replace, not merged: a stat the device stops reporting (e.g.
+    # a sensor read failure) should disappear, not linger as stale data.
+    device.system_stats = system_stats or {}
     db.add(device)
     db.flush()
     return device
+
+
+def ingest_device_logs(db: Session, device: Device, entries: list[DeviceLogEntryIn]) -> int:
+    """Stores compact debug log lines for the device configuration page's
+    live-debugging view, then prunes anything older than
+    DEVICE_LOG_RETENTION for this device -- a future timestamp beyond
+    MAX_FUTURE_SKEW is dropped silently (clock skew, not a real event),
+    same tolerance as telemetry."""
+    now = utcnow()
+    accepted = 0
+    for entry in entries:
+        if entry.occurred_at > now + MAX_FUTURE_SKEW:
+            continue
+        db.add(
+            DeviceLogEntry(
+                device_id=device.id, occurred_at=entry.occurred_at, received_at=now,
+                level=entry.level, code=entry.code, detail=entry.detail,
+            )
+        )
+        accepted += 1
+    db.execute(
+        delete(DeviceLogEntry).where(
+            DeviceLogEntry.device_id == device.id, DeviceLogEntry.occurred_at < now - DEVICE_LOG_RETENTION
+        )
+    )
+    db.flush()
+    return accepted
+
+
+def list_recent_device_logs(db: Session, device: Device, limit: int = 200) -> list[DeviceLogEntry]:
+    """Newest first, already pruned to DEVICE_LOG_RETENTION by ingest -- the
+    cutoff here just protects a device that hasn't reported in a while (its
+    rows are still within retention but the caller only wants recent ones)."""
+    return list(
+        db.scalars(
+            select(DeviceLogEntry)
+            .where(DeviceLogEntry.device_id == device.id, DeviceLogEntry.occurred_at >= utcnow() - DEVICE_LOG_RETENTION)
+            .order_by(DeviceLogEntry.occurred_at.desc())
+            .limit(limit)
+        )
+    )
 
 
 def telemetry_semantic_rejection(item: TelemetryItem) -> str | None:

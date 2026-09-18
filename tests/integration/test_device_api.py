@@ -182,3 +182,58 @@ def test_device_revoke_blocks_further_access(client, db):
 
     resp = client.post("/api/v1/devices/heartbeat", json={"boot_id": "b1", "firmware_version": "1", "capabilities": {}}, headers=auth_header)
     assert resp.status_code == 401
+
+
+def test_heartbeat_persists_reported_system_stats(client, db):
+    user = make_user(db, email="devowner5@test.local", password="Password1234")
+    org = make_org(db, "Device Org 5")
+    station = make_station(db, org, user, name="Device Station 5")
+    db.commit()
+    raw_code = _claim_code(db, station, user)
+
+    claim_resp = client.post(
+        "/api/v1/devices/claim", json={"claim_code": raw_code, "device_name": "D", "hardware_info": {}}
+    )
+    payload = claim_resp.json()
+    auth_header = {"Authorization": f"Bearer {payload['device_id']}.{payload['credential_secret']}"}
+
+    resp = client.post(
+        "/api/v1/devices/heartbeat",
+        json={
+            "boot_id": "b1", "firmware_version": "1", "capabilities": {},
+            "system_stats": {"cpu_load_1m": 0.3, "memory_used_percent": 40, "disk_used_percent": 12},
+        },
+        headers=auth_header,
+    )
+    assert resp.status_code == 200
+
+    from app.models.device import Device
+    device = db.get(Device, uuid.UUID(payload["device_id"]))
+    assert device.system_stats == {"cpu_load_1m": 0.3, "memory_used_percent": 40, "disk_used_percent": 12}
+
+
+def test_heartbeat_without_system_stats_defaults_to_empty_not_missing(client, db):
+    """Older agents that don't send `system_stats` at all must not 422 --
+    the field is optional, defaulting to {}."""
+    user = make_user(db, email="devowner6@test.local", password="Password1234")
+    org = make_org(db, "Device Org 6")
+    station = make_station(db, org, user, name="Device Station 6")
+    db.commit()
+    raw_code = _claim_code(db, station, user)
+
+    claim_resp = client.post(
+        "/api/v1/devices/claim", json={"claim_code": raw_code, "device_name": "D", "hardware_info": {}}
+    )
+    payload = claim_resp.json()
+    auth_header = {"Authorization": f"Bearer {payload['device_id']}.{payload['credential_secret']}"}
+
+    resp = client.post(
+        "/api/v1/devices/heartbeat",
+        json={"boot_id": "b1", "firmware_version": "1", "capabilities": {}},
+        headers=auth_header,
+    )
+    assert resp.status_code == 200
+
+    from app.models.device import Device
+    device = db.get(Device, uuid.UUID(payload["device_id"]))
+    assert device.system_stats == {}

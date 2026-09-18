@@ -15,6 +15,8 @@ from app.models.optimization import Plan
 from app.schemas.device_api import (
     ClaimRequest,
     ClaimResponse,
+    DeviceLogBatchRequest,
+    DeviceLogBatchResponse,
     HeartbeatRequest,
     HeartbeatResponse,
     RotateCredentialResponse,
@@ -62,7 +64,9 @@ def heartbeat(
     device=Depends(get_authenticated_device),
     db: Session = Depends(get_db),
 ):
-    device = device_service.record_heartbeat(db, device, payload.boot_id, payload.firmware_version, payload.capabilities)
+    device = device_service.record_heartbeat(
+        db, device, payload.boot_id, payload.firmware_version, payload.capabilities, payload.system_stats
+    )
 
     has_active_plan = (
         db.scalar(
@@ -92,6 +96,22 @@ def heartbeat(
         has_active_plan=has_active_plan,
         pending_command_count=pending_command_count,
     )
+
+
+@router.post("/devices/logs", response_model=DeviceLogBatchResponse)
+def submit_device_logs(
+    payload: DeviceLogBatchRequest,
+    device=Depends(get_authenticated_device),
+    db: Session = Depends(get_db),
+):
+    """Compact warning/error lines for the device configuration page's
+    live-debugging view -- never a stack trace or raw payload (enforced by
+    the schema's field lengths). Best-effort: losing a batch on a network
+    drop is acceptable, unlike telemetry, so there is no outbox/ack contract
+    here (see DeviceLogEntryIn's docstring)."""
+    accepted = device_service.ingest_device_logs(db, device, payload.entries)
+    db.commit()
+    return DeviceLogBatchResponse(accepted=accepted)
 
 
 @router.post("/devices/credentials/rotate", response_model=RotateCredentialResponse)

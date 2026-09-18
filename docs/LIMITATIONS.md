@@ -2639,3 +2639,50 @@ extinderi in `tests/integration/test_web_security.py`): reveal in
 modul `email`, headerele no-store/no-referrer/noindex, RBAC (platform_admin
 pentru ruta de backoffice), CSRF, respingerea rolului global
 `platform_admin` printr-o invitatie, si mesajul neutru de reset de parola.
+
+## Addendum: Flota device-uri (admin) si jurnal compact de debug pe device
+
+Doua cereri legate: (1) un dashboard admin cross-statie cu online/offline,
+linked/unlinked, firmware si stats de sistem (CPU/memorie/temperatura/disk);
+(2) pe pagina de configurare a device-ului (statie), vizibilitate live pentru
+debugging -- firmware, aceleasi stats de sistem, si un jurnal compact de
+loguri recente.
+
+**Stats de sistem (`system_stats`):** camp JSON liber pe `Device`
+(`app/models/device.py`), RAPORTAT de agent in fiecare heartbeat
+(`system_stats.py` in `EMS-device-code`, folosind `os.getloadavg()`,
+`/proc/meminfo`, `/sys/class/thermal/thermal_zone0/temp`, `shutil.disk_usage`).
+Spre deosebire de `capabilities` (combinat/merged la fiecare heartbeat),
+`system_stats` e INLOCUIT integral -- un camp care nu mai e raportat (ex.
+senzor de temperatura indisponibil) dispare, nu ramane cu valoarea veche.
+Niciun camp nu e niciodata 0 inventat cand agentul nu-l poate citi.
+
+**Jurnal compact de debug (`device_log_entries`):** un nou endpoint
+`POST /api/v1/devices/logs` accepta linii COMPACTE (`code` max 64 caractere,
+`detail` optional max 200, niciodata stack trace/payload brut), maxim 50 per
+batch. Pe device, `log_buffer.CompactLogBuffer` e un `logging.Handler` atasat
+la logger-ul `ems_device` (nivel WARNING+), drenat la 60s si trimis best-effort
+(o pierdere la o intrerupere de retea e acceptabila -- spre deosebire de
+telemetrie, NU exista outbox/retry/ACK aici). Server-ul pastreaza doar
+ultimele **10 zile** per device, sterse automat la fiecare ingest nou
+(`device_service.ingest_device_logs`/`DEVICE_LOG_RETENTION`) -- nu exista inca
+un job programat separat pentru device-uri care nu mai raporteaza deloc, dar
+acelea nu mai produc randuri noi oricum, deci cresterea e marginita per
+device activ.
+
+**Nu acopera:** un job Celery beat dedicat de curatare globala (pruning e
+doar per-ingest); autentificare/autorizare separata pentru jurnalul de debug
+fata de restul paginii de configurare (aceleasi reguli `StationAccess`);
+nicio corelare/agregare a jurnalelor intre device-uri (fiecare pagina arata
+doar jurnalul device-ului curent).
+
+**Teste.** `tests/integration/test_device_logs.py` (retentie/prune, batch
+oversized respins 422, `detail` de marime stack-trace respins 422,
+autentificare necesara, afisare pe pagina de configurare inclusiv starea
+goala). `tests/integration/test_device_provisioning_issue44.py` (pagina admin
+noua `/admin/devices`: online/offline, linked/unlinked, stats, RBAC).
+`EMS-device-code`: `tests/test_system_stats.py` (fiecare sursa de citire,
+absenta cand indisponibila), `tests/test_log_buffer.py` (handler-ul de
+logging: nivel, truncare, ring buffer, format string invalid nu crapa),
+extinderi in `tests/test_agent.py` (`upload_logs` best-effort, niciodata nu
+arunca exceptie spre deosebire de `upload()`).

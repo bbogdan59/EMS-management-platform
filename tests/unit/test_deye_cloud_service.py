@@ -416,7 +416,7 @@ def test_import_station_history_creates_rows_deduplicates_and_reaggregates(db, m
                         "generationPower": 1500,
                         "consumptionPower": 700,
                         "batteryPower": -200,
-                        "gridPower": -600,
+                        "wirePower": -600,
                         "batterySOC": 61,
                     },
                     {"generationPower": 1},
@@ -450,7 +450,7 @@ def test_import_station_history_creates_rows_deduplicates_and_reaggregates(db, m
     assert imported.source == TelemetrySource.deye_cloud.value
     assert imported.pv_power_w == Decimal("1500")
     assert imported.load_power_w == Decimal("700")
-    assert imported.battery_power_w == Decimal("-200")
+    assert imported.battery_power_w == Decimal("200")
     assert imported.grid_power_w == Decimal("-600")
     assert imported.battery_soc_percent == Decimal("61")
     assert reaggregated == [(station.id, new_at, new_at + timedelta(minutes=15))]

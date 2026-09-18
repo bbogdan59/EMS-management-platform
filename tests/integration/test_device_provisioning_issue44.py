@@ -405,6 +405,85 @@ def test_admin_assigned_devices_page_renders_with_online_device(client, db):
     assert (device.serial_number or device.installation_uuid) in resp.text
 
 
+# --- Flota completa: dashboard admin cross-statie (online/offline, linked/unlinked, stats) --
+
+
+def test_record_heartbeat_stores_system_stats(db):
+    admin = make_user(db, email="fleetstats1@test.local", password="Password1234", is_platform_admin=True)
+    org = make_org(db, "Fleet Stats Org 1")
+    station = make_station(db, org, admin, name="Fleet Stats Station 1")
+    db.commit()
+    device, _secret = _allocated_device(db, station, admin)
+
+    device_service.record_heartbeat(
+        db, device, "boot-1", "1.0", {},
+        {"cpu_load_1m": 0.42, "memory_used_percent": 51, "temperature_c": 46.5},
+    )
+    db.commit()
+    db.refresh(device)
+    assert device.system_stats == {"cpu_load_1m": 0.42, "memory_used_percent": 51, "temperature_c": 46.5}
+
+
+def test_record_heartbeat_replaces_stale_system_stats(db):
+    """A stat the device stops reporting (e.g. a sensor read failure) must
+    disappear on the next heartbeat, not linger as stale data -- unlike
+    `capabilities`, which IS merged."""
+    admin = make_user(db, email="fleetstats2@test.local", password="Password1234", is_platform_admin=True)
+    org = make_org(db, "Fleet Stats Org 2")
+    station = make_station(db, org, admin, name="Fleet Stats Station 2")
+    db.commit()
+    device, _secret = _allocated_device(db, station, admin)
+
+    device_service.record_heartbeat(db, device, "boot-1", "1.0", {}, {"temperature_c": 50.0, "cpu_load_1m": 1.1})
+    db.commit()
+    device_service.record_heartbeat(db, device, "boot-1", "1.0", {}, {"cpu_load_1m": 0.2})
+    db.commit()
+    db.refresh(device)
+    assert device.system_stats == {"cpu_load_1m": 0.2}
+
+
+def test_admin_fleet_devices_page_shows_online_offline_linked_and_stats(client, db):
+    reset_key("login_attempts:testclient")
+    admin = make_user(db, email="fleetpage1@test.local", password="Password1234", is_platform_admin=True)
+    org = make_org(db, "Fleet Page Org 1")
+    station = make_station(db, org, admin, name="Fleet Page Station 1")
+    db.commit()
+
+    linked_device, _secret = _allocated_device(db, station, admin)
+    device_service.record_heartbeat(
+        db, linked_device, "boot-1", "1.2.3", {}, {"cpu_load_1m": 0.5, "temperature_c": 47.0}
+    )
+    db.commit()
+
+    unlinked_uuid = _uuid()
+    device_service.enroll_device(db, unlinked_uuid, f"secret-{unlinked_uuid}", {})
+    db.commit()
+
+    login(client, admin.email, "Password1234")
+    resp = client.get("/admin/devices")
+    assert resp.status_code == 200
+    assert "online" in resp.text
+    assert "offline" in resp.text
+    assert "linked" in resp.text
+    assert "unlinked" in resp.text
+    assert "1.2.3" in resp.text
+    assert "47.0" in resp.text
+    assert (linked_device.serial_number or linked_device.installation_uuid) in resp.text
+    assert unlinked_uuid in resp.text
+
+
+def test_admin_fleet_devices_page_requires_platform_admin(client, db):
+    reset_key("login_attempts:testclient")
+    user = make_user(db, email="fleetnotadmin1@test.local", password="Password1234")
+    org = make_org(db, "Fleet Not Admin Org 1")
+    make_station(db, org, user, name="Fleet Not Admin Station 1")
+    db.commit()
+
+    login(client, "fleetnotadmin1@test.local", "Password1234")
+    resp = client.get("/admin/devices", follow_redirects=False)
+    assert resp.status_code in (302, 303, 403)
+
+
 # --- Concurenta reala: doua sesiuni Postgres pentru acelasi cod/device -----
 
 
