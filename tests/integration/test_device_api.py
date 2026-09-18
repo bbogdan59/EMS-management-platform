@@ -25,6 +25,10 @@ def test_telemetry_contract_endpoint_is_public_and_declares_ack_semantics(client
     assert body["ack"]["statuses"] == ["accepted", "duplicate", "rejected"]
     assert "future_timestamp" in body["ack"]["retryable_reason_codes"]
     assert "timestamp_too_old" in body["ack"]["permanent_reason_codes"]
+    assert body["extended_metrics"]["storage"] == "raw_payload.extended"
+    assert body["extended_metrics"]["canonical_energy_aggregation"] is False
+    assert body["cumulative_counters"]["unit"] == "kWh"
+    assert "pv_energy_total" in body["cumulative_counters"]["names"]
 
 
 def test_device_claim_and_telemetry_dedup(client, db):
@@ -68,6 +72,51 @@ def test_device_claim_and_telemetry_dedup(client, db):
     assert resp2.json()["accepted"] == 0
     assert resp2.json()["duplicates"] == 1
     assert resp2.json()["results"][0]["status"] == "duplicate"
+
+
+def test_telemetry_accepts_typed_extended_metrics_and_stores_them_under_raw_payload(client, db):
+    from sqlalchemy import select
+
+    from app.models.telemetry import TelemetryRaw
+
+    user = make_user(db, email="dev-extended-telemetry@test.local", password="Password1234")
+    org = make_org(db, "Device Extended Telemetry Org")
+    station = make_station(db, org, user, name="Device Extended Telemetry Station")
+    db.commit()
+    raw_code = _claim_code(db, station, user)
+    claimed = client.post(
+        "/api/v1/devices/claim",
+        json={"claim_code": raw_code, "device_name": "Extended Device", "hardware_info": {}},
+    ).json()
+    headers = {"Authorization": f"Bearer {claimed['device_id']}.{claimed['credential_secret']}"}
+    item = {
+        "boot_id": "extended-boot",
+        "sequence": 1,
+        "measured_at": utcnow().replace(microsecond=0).isoformat(),
+        "pv_power_w": 1200,
+        "mppt": [{"index": 1, "voltage_v": 380.5, "current_a": 3.1, "power_w": 1179.55}],
+        "phases": [{"phase": "L1", "voltage_v": 230, "current_a": 2.5, "active_power_w": 575}],
+        "battery": {"voltage_v": 51.8, "current_a": -8.2, "temperature_c": 27.4, "state": "discharging"},
+        "status": {
+            "inverter_state": "running",
+            "battery_state": "discharging",
+            "faults": [{"code": "grid_warn", "severity": "warning", "message": "voltage high"}],
+        },
+        "counters": [{"name": "pv_energy_total", "value": 1234.567, "unit": "kWh", "reset_id": "meter-a"}],
+        "raw_payload": {"vendor_frame": "kept"},
+    }
+
+    response = client.post("/api/v1/telemetry/batch", json={"items": [item]}, headers=headers)
+
+    assert response.status_code == 200
+    assert response.json()["results"][0]["status"] == "accepted"
+    row = db.scalar(select(TelemetryRaw).where(TelemetryRaw.boot_id == "extended-boot"))
+    assert row.raw_payload["vendor_frame"] == "kept"
+    assert row.raw_payload["extended"]["mppt"][0]["power_w"] == "1179.55"
+    assert row.raw_payload["extended"]["phases"][0]["phase"] == "L1"
+    assert row.raw_payload["extended"]["battery"]["state"] == "discharging"
+    assert row.raw_payload["extended"]["status"]["faults"][0]["severity"] == "warning"
+    assert row.raw_payload["extended"]["counters"][0]["reset_id"] == "meter-a"
 
 
 def test_telemetry_batch_returns_ordered_per_item_ack_with_retryability(client, db):
