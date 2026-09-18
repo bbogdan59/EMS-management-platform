@@ -55,6 +55,7 @@ from app.models.enums import DeviceStatus, DeyeCloudConnectionStatus, TelemetryS
 from app.models.station import Station, StationConfigVersion
 from app.models.telemetry import TelemetryRaw
 from app.models.user import User
+from app.services import aggregation_service
 
 logger = structlog.get_logger(__name__)
 settings = get_settings()
@@ -64,6 +65,9 @@ settings = get_settings()
 # existenta (device_id, boot_id, sequence) de pe `TelemetryRaw` pentru
 # deduplicare, fara sa introduca un mecanism paralel.
 CLOUD_BOOT_ID = "deye_cloud"
+HISTORY_IMPORT_MAX_WINDOW = timedelta(days=7)
+HISTORY_IMPORT_PAGE_SIZE = 200
+HISTORY_IMPORT_MAX_PAGES = 100
 
 # Prag de "dispozitiv local activ" -- cat timp exista telemetrie RS485 mai
 # recenta decat acest interval pentru statie, Deye Cloud NU mai scrie deloc
@@ -222,6 +226,21 @@ def fetch_station_latest(access_token: str, remote_station_id: int) -> dict:
     return _post("/v1.0/station/latest", body={"stationId": remote_station_id}, access_token=access_token)
 
 
+def fetch_station_history_power(
+    access_token: str, remote_station_id: int, start: datetime, end: datetime, *, page: int = 1, size: int = HISTORY_IMPORT_PAGE_SIZE
+) -> dict:
+    return _post(
+        "/v1.0/station/history/power",
+        params={"page": page, "size": size},
+        body={
+            "stationId": remote_station_id,
+            "startTimestamp": int(start.timestamp()),
+            "endTimestamp": int(end.timestamp()),
+        },
+        access_token=access_token,
+    )
+
+
 # --- Mapare Deye -> model canonic -------------------------------------------
 #
 # Cheile de mai jos (`generationPower`, `consumptionPower`, `purchasePower`,
@@ -261,9 +280,13 @@ def map_station_latest_to_telemetry(raw: dict) -> dict:
     battery_w = None
     if charge_w is not None or discharge_w is not None:
         battery_w = (charge_w or Decimal(0)) - (discharge_w or Decimal(0))
+    elif raw.get("batteryPower") is not None:
+        battery_w = _dec(raw.get("batteryPower"))
     grid_w = None
     if purchase_w is not None or export_w is not None:
         grid_w = (purchase_w or Decimal(0)) - (export_w or Decimal(0))
+    elif raw.get("gridPower") is not None:
+        grid_w = _dec(raw.get("gridPower"))
 
     measured_at = None
     last_update_time = raw.get("lastUpdateTime")
@@ -281,6 +304,41 @@ def map_station_latest_to_telemetry(raw: dict) -> dict:
         "battery_soc_percent": soc,
         "measured_at": measured_at,
     }
+
+
+def _history_items(data: dict) -> list[dict]:
+    for key in ("stationDataItems", "data", "dataList", "items", "list"):
+        value = data.get(key)
+        if isinstance(value, list):
+            return [item for item in value if isinstance(item, dict)]
+    return []
+
+
+def _history_item_measured_at(item: dict) -> datetime | None:
+    raw = item.get("timeStamp") or item.get("timestamp") or item.get("lastUpdateTime") or item.get("dateTime")
+    if raw is None:
+        return None
+    if isinstance(raw, int | float):
+        value = float(raw)
+        if value > 10_000_000_000:
+            value = value / 1000
+        try:
+            return datetime.fromtimestamp(value, tz=UTC)
+        except (OverflowError, OSError, ValueError):
+            return None
+    if isinstance(raw, str):
+        clean = raw.strip()
+        if clean.isdigit():
+            return _history_item_measured_at({"timeStamp": int(clean)})
+        try:
+            parsed = datetime.fromisoformat(clean.replace("Z", "+00:00"))
+        except ValueError:
+            try:
+                parsed = datetime.fromisoformat(clean.replace(" ", "T"))
+            except ValueError:
+                return None
+        return parsed.astimezone(UTC) if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+    return None
 
 
 # --- Ciclul de viata al conexiunii -------------------------------------------
@@ -505,6 +563,127 @@ def local_device_active(db: Session, station_id: uuid.UUID, exclude_device_id: u
     if exclude_device_id is not None:
         query = query.where(TelemetryRaw.device_id != exclude_device_id)
     return db.scalar(query.limit(1)) is not None
+
+
+def import_station_history(db: Session, connection: DeyeCloudConnection, start: datetime, end: datetime) -> dict:
+    """Import manual de istoric Deye Cloud la nivel de statie."""
+    if connection.status != DeyeCloudConnectionStatus.connected.value:
+        raise DeyeCloudConfigError("Conexiunea Deye Cloud nu este activa.")
+    if connection.remote_station_id is None or connection.device_id is None:
+        raise DeyeCloudConfigError("Alege mai intai statia Deye Cloud legata.")
+    if start.tzinfo is None or end.tzinfo is None:
+        raise ValueError("Intervalul pentru import trebuie sa aiba fus orar.")
+    start = start.astimezone(UTC)
+    end = end.astimezone(UTC)
+    if end <= start:
+        raise ValueError("Data de final trebuie sa fie dupa data de start.")
+    if end - start > HISTORY_IMPORT_MAX_WINDOW:
+        raise ValueError("Importul istoric Deye Cloud este limitat la 7 zile per rulare.")
+
+    access_token = _valid_access_token(connection)
+    now = utcnow()
+    page = 1
+    created = 0
+    skipped_existing = 0
+    skipped_invalid_timestamp = 0
+    implausible_power_rows = 0
+    first_created_at: datetime | None = None
+    last_created_at: datetime | None = None
+    ceiling_w = _power_plausibility_ceiling_w(db, connection.station_id)
+
+    while page <= HISTORY_IMPORT_MAX_PAGES:
+        data = fetch_station_history_power(
+            access_token,
+            connection.remote_station_id,
+            start,
+            end,
+            page=page,
+            size=HISTORY_IMPORT_PAGE_SIZE,
+        )
+        items = _history_items(data)
+        if not items:
+            break
+
+        for item in items:
+            measured_at = _history_item_measured_at(item)
+            if measured_at is None:
+                skipped_invalid_timestamp += 1
+                continue
+            measured_at = measured_at.astimezone(UTC)
+            if measured_at < start or measured_at > end:
+                skipped_invalid_timestamp += 1
+                continue
+
+            sequence = int(measured_at.timestamp())
+            existing_row = db.scalar(
+                select(TelemetryRaw.id).where(
+                    TelemetryRaw.device_id == connection.device_id,
+                    TelemetryRaw.boot_id == CLOUD_BOOT_ID,
+                    TelemetryRaw.sequence == sequence,
+                )
+            )
+            if existing_row is not None:
+                skipped_existing += 1
+                continue
+
+            raw_for_mapping = {**item, "lastUpdateTime": sequence}
+            mapped = map_station_latest_to_telemetry(raw_for_mapping)
+            mapped.pop("measured_at", None)
+            if _implausible_power_fields(mapped, ceiling_w):
+                implausible_power_rows += 1
+
+            db.add(
+                TelemetryRaw(
+                    device_id=connection.device_id,
+                    station_id=connection.station_id,
+                    boot_id=CLOUD_BOOT_ID,
+                    sequence=sequence,
+                    measured_at=measured_at,
+                    received_at=now,
+                    source=TelemetrySource.deye_cloud.value,
+                    raw_payload=item,
+                    **mapped,
+                )
+            )
+            created += 1
+            first_created_at = measured_at if first_created_at is None else min(first_created_at, measured_at)
+            last_created_at = measured_at if last_created_at is None else max(last_created_at, measured_at)
+            db.flush()
+
+        total = data.get("total")
+        try:
+            total_count = int(total) if total is not None else None
+        except (TypeError, ValueError):
+            total_count = None
+        if total_count is not None and page * HISTORY_IMPORT_PAGE_SIZE >= total_count:
+            break
+        if len(items) < HISTORY_IMPORT_PAGE_SIZE:
+            break
+        page += 1
+
+    if first_created_at is not None and last_created_at is not None:
+        aggregation_service.reaggregate_range(db, connection.station, first_created_at, last_created_at + timedelta(minutes=15))
+
+    connection.last_sync_at = now
+    connection.consecutive_failure_count = 0
+    if implausible_power_rows:
+        connection.last_sync_status = "warning"
+        connection.last_sync_message = f"Import istoric Deye Cloud cu {implausible_power_rows} randuri peste pragul de plauzibilitate."
+    else:
+        connection.last_sync_status = "succeeded"
+        connection.last_sync_message = (
+            f"Import istoric Deye Cloud: {created} randuri noi, {skipped_existing} existente, "
+            f"{skipped_invalid_timestamp} ignorate."
+        )
+    db.add(connection)
+    return {
+        "status": connection.last_sync_status,
+        "created": created,
+        "skipped_existing": skipped_existing,
+        "skipped_invalid_timestamp": skipped_invalid_timestamp,
+        "implausible_power_rows": implausible_power_rows,
+        "pages": page,
+    }
 
 
 def _backoff_seconds(consecutive_failures: int) -> int:

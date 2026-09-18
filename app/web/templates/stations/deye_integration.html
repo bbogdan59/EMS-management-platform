@@ -111,7 +111,26 @@
       </ul>
       {% endif %}
       {% if can_edit %}
-      <form method="post" action="/stations/{{ station.id }}/integrations/deye/disconnect" class="mt-4">
+      <div class="mt-4 border-t border-gray-100 pt-4 dark:border-gray-800">
+        <h3 class="font-medium">Import istoric</h3>
+        <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+          Importa manual date istorice read-only din Deye Cloud pentru maximum {{ history_import_max_days }} zile per rulare.
+          Randurile deja existente sunt pastrate si deduplicate.
+        </p>
+        <form method="post" action="/stations/{{ station.id }}/integrations/deye/import-history" class="mt-3 grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] md:items-end">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}" />
+          <div>
+            <label class="label">De la</label>
+            <input class="input" type="datetime-local" name="start_at" required />
+          </div>
+          <div>
+            <label class="label">Pana la</label>
+            <input class="input" type="datetime-local" name="end_at" required />
+          </div>
+          <button type="submit" class="btn-primary">Importa istoric</button>
+        </form>
+      </div>
+      <form method="post" action="/stations/{{ station.id }}/integrations/deye/disconnect" class="mt-4 border-t border-gray-100 pt-4 dark:border-gray-800">
         <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}" />
         <button type="submit" class="btn-secondary">Deconecteaza</button>
       </form>
