@@ -919,6 +919,30 @@ def audit_log(
     return templates.TemplateResponse(request, "admin/audit.html", context)
 
 
+# --- Flota completa de device-uri, cross-statie (dashboard admin) --------
+#
+# Spre deosebire de /devices/pending (doar enrollment neasociat) si
+# /devices/assigned (doar active+asociate, cu formulare de transfer/factory
+# reset), aceasta pagina arata TOATE device-urile -- orice status, asociate
+# sau nu -- doar ca lista read-only cu online/offline, linked/unlinked,
+# firmware si ultimul instantaneu de resurse (CPU/memorie/temperatura/disk)
+# raportat de dispozitiv. Actiunile ramase specifice ramai in paginile lor.
+
+
+@router.get("/devices")
+def fleet_devices_list(request: Request, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    devices = db.scalars(select(Device).order_by(Device.name)).all()
+    stations = db.scalars(select(Station).order_by(Station.name)).all()
+    stations_by_id = {s.id: s for s in stations}
+    context = {
+        "devices": devices,
+        "stations_by_id": stations_by_id,
+        "now": utcnow(),
+        **build_nav_context(db, user),
+    }
+    return templates.TemplateResponse(request, "admin/devices_fleet.html", context)
+
+
 # --- Enrollment automat: inventar device-uri neasociate (issue #16) ------
 #
 # Alocarea unui device enrollat este restransa la platform_admin (acelasi

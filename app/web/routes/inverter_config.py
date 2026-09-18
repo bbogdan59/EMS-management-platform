@@ -10,10 +10,12 @@ from sqlalchemy.orm import Session
 from app.api.deps import StationAccess, get_current_user, require_platform_admin
 from app.api.v1.inverter_config import envelope
 from app.core.csrf import verify_csrf
+from app.core.security import utcnow
 from app.database import get_db
 from app.models.device import Device
 from app.models.inverter_config import InverterDesired, InverterProfile
 from app.schemas.inverter_config import DesiredRequest, Profile
+from app.services import device_service
 from app.services import inverter_config_service as service
 from app.web.context import build_nav_context
 from app.web.templating import templates
@@ -46,8 +48,11 @@ def page(request: Request, device_id: uuid.UUID, db: Session = Depends(get_db),
     profiles = db.scalars(select(InverterProfile).order_by(InverterProfile.created_at)).all()
     history = db.scalars(select(InverterDesired).where(InverterDesired.device_id == device.id)
                          .order_by(InverterDesired.version.desc()).limit(20)).all()
+    device_logs = device_service.list_recent_device_logs(db, device)
     return templates.TemplateResponse(request, 'stations/inverter_config.html', {
         'station': station, 'device': device, 'state': state, 'profiles': profiles, 'history': history,
+        'device_logs': device_logs, 'log_retention_days': device_service.DEVICE_LOG_RETENTION.days,
+        'now': utcnow(),
         'can_edit': role in ('organization_admin', 'platform_admin'), 'request_id': str(uuid.uuid4()),
         **build_nav_context(db, user, station.id),
     })

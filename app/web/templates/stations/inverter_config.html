@@ -15,6 +15,23 @@
 {% if not device.capabilities.get('inverter_settings_v1') %}<p class="badge-warn">Agentul nu declara executia setarilor. Configuratia ramane in asteptare; nu se emit comenzi fizice.</p>{% endif %}
 {% if state.command %}<p>Comanda: {{ state.command.status }}, expira {{ state.command.expires_at | local_dt(station.timezone) }}. {{ state.command.error or '' }}</p>{% endif %}
 <div class="card">
+<h2>Diagnostic dispozitiv</h2>
+{% set stats = device.system_stats or {} %}
+{% set online = device.last_heartbeat_at and (now - device.last_heartbeat_at).total_seconds() < 900 %}
+<p>
+  {% if online %}<span class="badge-ok">online</span>{% else %}<span class="badge-muted">offline</span>{% endif %}
+  &middot; firmware <span class="font-mono">{{ device.firmware_version or "necunoscut" }}</span>
+  &middot; ultimul heartbeat {{ device.last_heartbeat_at | local_dt(station.timezone) if device.last_heartbeat_at else "niciodata" }}
+</p>
+<p class="text-sm text-gray-500">
+  Instantaneu resurse RAPORTAT de dispozitiv (un camp lipsa = dispozitivul nu l-a putut citi, niciodata 0 inventat):
+  CPU {{ stats.cpu_load_1m if stats.cpu_load_1m is not none else "-" }}
+  &middot; memorie {{ (stats.memory_used_percent ~ "%") if stats.memory_used_percent is not none else "-" }}{% if stats.memory_total_mb is not none %} din {{ stats.memory_total_mb }} MB{% endif %}
+  &middot; temperatura {{ (stats.temperature_c ~ " °C") if stats.temperature_c is not none else "-" }}
+  &middot; disk {{ (stats.disk_used_percent ~ "%") if stats.disk_used_percent is not none else "-" }}
+</p>
+</div>
+<div class="card">
 <h2>Ultima observatie a dispozitivului</h2>
 {% if state.reported %}
 <p>Model {{ state.reported.model }}, firmware {{ state.reported.firmware }} — {{ state.reported.measured_at | local_dt(station.timezone) }}</p>
@@ -48,5 +65,32 @@
 </div>
 {% endif %}
 <div class="card"><h2>Istoric configuratii dorite</h2><ul>{% for item in history %}<li>v{{ item.version }} — {{ item.created_at | local_dt(station.timezone) }} — autor {{ item.created_by }} — {{ item.reason }} — {{ item.digest[:12] }}</li>{% endfor %}</ul></div>
+<div class="card">
+<h2>Jurnal de debug (compact)</h2>
+<p class="text-sm text-gray-500">
+  Linii COMPACTE raportate de dispozitiv (niciodata stack trace-uri/payload brut) -- pentru debugging live, nu un
+  inlocuitor pentru <code>journalctl</code> de pe unitate. Pastrate maxim {{ log_retention_days }} zile.
+</p>
+<div class="max-h-96 overflow-y-auto">
+<table class="w-full text-xs font-mono">
+<tbody>
+{% for entry in device_logs %}
+<tr class="border-t border-gray-100 dark:border-gray-800">
+  <td class="whitespace-nowrap py-0.5 text-gray-500">{{ entry.occurred_at | local_dt(station.timezone) }}</td>
+  <td class="whitespace-nowrap py-0.5">
+    {% if entry.level == "error" %}<span class="badge-error">{{ entry.level }}</span>
+    {% elif entry.level == "warning" %}<span class="badge-warn">{{ entry.level }}</span>
+    {% else %}<span class="badge-muted">{{ entry.level }}</span>{% endif %}
+  </td>
+  <td class="py-0.5">{{ entry.code }}</td>
+  <td class="py-0.5 text-gray-500">{{ entry.detail or "" }}</td>
+</tr>
+{% else %}
+<tr><td class="py-2 text-center text-gray-500" colspan="4">Niciun eveniment in ultimele {{ log_retention_days }} zile.</td></tr>
+{% endfor %}
+</tbody>
+</table>
+</div>
+</div>
 </div>
 {% endblock %}

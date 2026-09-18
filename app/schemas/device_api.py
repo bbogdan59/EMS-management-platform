@@ -33,6 +33,15 @@ class HeartbeatRequest(BaseModel):
             "-- o limita de putere raportata nu devine o capabilitate presupusa."
         ),
     )
+    system_stats: dict = Field(
+        default_factory=dict,
+        description=(
+            "Instantaneu al resurselor sistemului RAPORTAT de dispozitiv (ex. "
+            "cpu_load_1m, memory_used_percent, memory_total_mb, temperature_c, "
+            "disk_used_percent). Un camp necunoscut dispozitivului lipseste, nu "
+            "este 0. Inlocuieste (nu combina) instantaneul anterior."
+        ),
+    )
 
 
 class HeartbeatResponse(BaseModel):
@@ -98,6 +107,34 @@ class TelemetryBatchResult(BaseModel):
     errors: list[str] = Field(default_factory=list)
     # Camp aditiv: clientii v1 care citesc doar contoarele raman compatibili.
     results: list[TelemetryItemAck] = Field(default_factory=list)
+
+
+class DeviceLogEntryIn(BaseModel):
+    """O linie de jurnal COMPACTA (nu un stack trace/payload) -- gandita
+    pentru debugging live pe pagina de configurare a device-ului, cu
+    retentie de 10 zile pe server (vezi device_service.ingest_device_logs)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    occurred_at: datetime
+    level: Literal["info", "warning", "error"]
+    code: str = Field(..., max_length=64)
+    detail: str | None = Field(default=None, max_length=200)
+
+    @field_validator("occurred_at")
+    @classmethod
+    def _tz_aware(cls, v: datetime) -> datetime:
+        if v.tzinfo is None:
+            raise ValueError("occurred_at trebuie sa includa fusul orar (ex. sufix Z sau +02:00).")
+        return v
+
+
+class DeviceLogBatchRequest(BaseModel):
+    entries: list[DeviceLogEntryIn] = Field(default_factory=list, max_length=50)
+
+
+class DeviceLogBatchResponse(BaseModel):
+    accepted: int
 
 
 class TelemetryMetricSpec(BaseModel):

@@ -243,17 +243,22 @@ def fetch_station_history_power(
 
 # --- Mapare Deye -> model canonic -------------------------------------------
 #
-# Cheile de mai jos (`generationPower`, `consumptionPower`, `purchasePower`,
-# `wirePower`, `chargePower`, `dischargePower`, `batterySOC`) reflecta
-# conventia publica documentata a familiei de API-uri Deye/Solarman pentru
-# datele in timp real ale statiei. Unitatea a fost initial presupusa kW
-# (issue #118), neverificata pentru ca fetch-ul HTTP live e blocat in acest
-# mediu de dezvoltare -- CONFIRMATA gresita de un raport real de utilizator
-# (statii afisand valori de ordinul miilor pe un grafic etichetat kW, ex.
-# 2500 in loc de 2.5): API-ul raporteaza de fapt WATI, nu kW, ca restul
-# platformei. Maparea e deliberat DEFENSIVA: o cheie lipsa/necunoscuta
-# produce `None` (necunoscut), niciodata 0 -- consecvent cu restul
-# platformei (vezi docs/CODE_STANDARDS.md, regula 2).
+# Cheile de mai jos (`generationPower`, `consumptionPower`, `batteryPower`,
+# `wirePower`, `batterySOC`) reflecta raspunsul REAL al `/v1.0/station/latest`,
+# verificat live impotriva unui cont Deye Cloud real (nu doar documentatia
+# publica). Unitatea a fost initial presupusa kW (issue #118), neverificata
+# pentru ca fetch-ul HTTP live e in mod normal blocat in acest mediu de
+# dezvoltare -- CONFIRMATA gresita de un raport real de utilizator (statii
+# afisand valori de ordinul miilor pe un grafic etichetat kW, ex. 2500 in loc
+# de 2.5): API-ul raporteaza de fapt WATI, nu kW, ca restul platformei.
+#
+# Verificarea live ulterioara a mai aratat ca `batteryPower` foloseste
+# conventia OPUSA platformei (pozitiv=descarcare/negativ=incarcare, vs.
+# pozitiv=incarcare/negativ=descarcare aici) -- semnul se inverseaza la
+# mapare. `wirePower` foloseste deja conventia platformei (+import/-export)
+# si e mereu prezent -- folosit direct. Maparea e deliberat DEFENSIVA: o
+# cheie lipsa/necunoscuta produce `None` (necunoscut), niciodata 0 --
+# consecvent cu restul platformei (vezi docs/CODE_STANDARDS.md, regula 2).
 def _dec(value) -> Decimal | None:
     if value is None:
         return None
@@ -267,26 +272,22 @@ def _dec(value) -> Decimal | None:
 def map_station_latest_to_telemetry(raw: dict) -> dict:
     generation_w = _dec(raw.get("generationPower"))
     consumption_w = _dec(raw.get("consumptionPower"))
-    charge_w = _dec(raw.get("chargePower"))
-    discharge_w = _dec(raw.get("dischargePower"))
-    purchase_w = _dec(raw.get("purchasePower"))
-    export_w = _dec(raw.get("wirePower"))
+    battery_raw_w = _dec(raw.get("batteryPower"))
+    wire_w = _dec(raw.get("wirePower"))
     soc = _dec(raw.get("batterySOC"))
 
     # Conventia platformei (vezi app/models/telemetry.py): baterie
     # pozitiv=incarcare/negativ=descarcare; retea pozitiv=import/negativ=export.
-    # Deye Cloud raporteaza incarcare/descarcare si import/export ca doua
-    # valori separate, ambele >= 0 -- combinate aici in convenția cu semn.
-    battery_w = None
-    if charge_w is not None or discharge_w is not None:
-        battery_w = (charge_w or Decimal(0)) - (discharge_w or Decimal(0))
-    elif raw.get("batteryPower") is not None:
-        battery_w = _dec(raw.get("batteryPower"))
-    grid_w = None
-    if purchase_w is not None or export_w is not None:
-        grid_w = (purchase_w or Decimal(0)) - (export_w or Decimal(0))
-    elif raw.get("gridPower") is not None:
-        grid_w = _dec(raw.get("gridPower"))
+    # Verificat live impotriva contului real al unui utilizator (nu doar
+    # documentatia OpenAPI): `batteryPower` la Deye e POZITIV la descarcare si
+    # NEGATIV la incarcare -- opusul conventiei platformei, deci semnul se
+    # inverseaza. `wirePower` are deja semnul platformei (+import/-export) si
+    # e mereu prezent (0 la inactivitate) -- folosit direct, fara aritmetica.
+    # (`chargePower`/`dischargePower`/`purchasePower`/`gridPower` sunt doar
+    # oglinzi partiale -- populate doar cand valoarea lor e diferita de zero
+    # -- ale acelorasi doua campuri si NU mai sunt folosite aici.)
+    battery_w = -battery_raw_w if battery_raw_w is not None else None
+    grid_w = wire_w
 
     measured_at = None
     last_update_time = raw.get("lastUpdateTime")

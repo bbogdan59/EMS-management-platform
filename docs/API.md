@@ -188,7 +188,8 @@ POST /api/v1/devices/heartbeat
 {
   "boot_id": "boot-2026-09-10T08:00:00Z",
   "firmware_version": "1.2.0",
-  "capabilities": { "max_charge_power_w": 3000, "max_discharge_power_w": 3000, "supports_export_control": true }
+  "capabilities": { "max_charge_power_w": 3000, "max_discharge_power_w": 3000, "supports_export_control": true },
+  "system_stats": { "cpu_load_1m": 0.42, "memory_used_percent": 51.2, "memory_total_mb": 3819.4, "temperature_c": 46.5, "disk_used_percent": 12.8 }
 }
 ```
 
@@ -196,6 +197,14 @@ POST /api/v1/devices/heartbeat
 transforma automat o limita de putere raportata intr-o capabilitate
 presupusa de comanda -- capabilitatile sunt afisate administratorului
 (sectiunea Operatiuni), nu folosite implicit ca autorizare.
+
+`system_stats` (optional, camp liber) este instantaneul RAPORTAT de
+dispozitiv al resurselor locale -- un camp lipsa inseamna ca dispozitivul nu
+l-a putut citi, niciodata 0 inventat. Spre deosebire de `capabilities`
+(combinat), `system_stats` este INLOCUIT integral la fiecare heartbeat: un
+camp care nu mai e raportat dispare, nu ramane cu valoarea veche. Afisat pe
+pagina admin a flotei de device-uri si pe pagina de configurare a
+device-ului (statie).
 
 Raspuns:
 
@@ -216,6 +225,30 @@ POST /api/v1/devices/credentials/rotate
 
 Necesita autentificare cu credentiala **curenta**. Raspunsul contine noul
 secret; cel vechi e revocat imediat.
+
+## 3b. Jurnal compact de debug
+
+```
+POST /api/v1/devices/logs
+```
+
+```json
+{
+  "entries": [
+    { "occurred_at": "2026-09-18T08:00:01Z", "level": "warning", "code": "cloud_http_error", "detail": "status=503" }
+  ]
+}
+```
+
+Linii COMPACTE (`code` max 64 caractere, `detail` optional max 200), niciodata
+stack trace-uri sau payload brut -- gandite pentru debugging live pe pagina de
+configurare a device-ului (statie), nu ca inlocuitor pentru `journalctl` de pe
+unitate. Maxim 50 de intrari per batch. Server-ul pastreaza doar ultimele **10
+zile** per device (sterse automat la fiecare ingest nou); nu exista
+ACK/outbox ca la telemetrie -- pierderea unui batch la o intrerupere de retea
+e acceptabila, nu necesita retry garantat.
+
+Raspuns: `{"accepted": 1}`.
 
 ## 4. Contract telemetrie
 

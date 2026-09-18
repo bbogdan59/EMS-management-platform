@@ -2045,15 +2045,15 @@ si vedea telemetria statiei importata de acolo, read-only:
   ca restul platformei; afisarea foloseste fusul statiei ca peste tot altundeva
   (nicio conversie speciala adaugata, cea existenta se aplica neschimbat).
 - **Unitati (WATI, confirmate live -- vezi addendumul issue #118 mai jos) si
-  conventii de semn documentate explicit**: `generationPower`/
-  `consumptionPower`/`chargePower`/`dischargePower`/`purchasePower`/
-  `wirePower` sunt tratate ca W si stocate canonic in coloanele `*_power_w`;
-  dashboard-ul converteste explicit W -> kW la afisare. `chargePower`/
-  `dischargePower` (ambele >= 0) sunt combinate in `battery_power_w` cu
-  conventia platformei (pozitiv=incarcare); `purchasePower`/`wirePower` sunt
-  combinate similar in `grid_power_w` (pozitiv=import). O cheie lipsa produce
-  `None` (necunoscut), NICIODATA 0 -- consecvent cu `docs/CODE_STANDARDS.md`
-  regula 2.
+  conventii de semn documentate explicit, verificate live impotriva unui cont
+  real (vezi addendumul de mai jos)**: `generationPower`/`consumptionPower`
+  sunt tratate ca W si stocate canonic in coloanele `*_power_w`; dashboard-ul
+  converteste explicit W -> kW la afisare. `batteryPower` e mapat direct in
+  `battery_power_w` cu semnul INVERSAT (Deye: pozitiv=descarcare/
+  negativ=incarcare; platforma: pozitiv=incarcare/negativ=descarcare);
+  `wirePower` e mapat direct, FARA inversare, in `grid_power_w` (ambele
+  folosesc pozitiv=import/negativ=export). O cheie lipsa produce `None`
+  (necunoscut), NICIODATA 0 -- consecvent cu `docs/CODE_STANDARDS.md` regula 2.
 - **Niciun endpoint de scriere/comanda** -- `device/register`, `order*`,
   `strategy*` din API-ul oficial Deye Cloud raman complet neatinse. Explicit
   in afara scopului acestui PR (controlul prin cloud necesita un review
@@ -2075,16 +2075,15 @@ si Open-Meteo (sectiunea 2):**
   (`{"code": "2101021", "msg": "auth invalid appId", "success": false,
   "requestId": "..."}`) e cel folosit in cod si in testul de contract
   aferent -- NU o presupunere.
-- **Raspunsul de SUCCES al `/v1.0/station/latest` (campurile efective:
-  `generationPower`, `consumptionPower`, `chargePower`, `dischargePower`,
-  `purchasePower`, `wirePower`, `batterySOC`, `lastUpdateTime`) NU a putut fi
-  inspectat direct** (accesul MCP disponibil in aceasta sesiune nu are
-  credentiale reale, iar specificatia OpenAPI bundle-uita expune doar schema
-  REQUEST-urilor) -- dar **unitatea campurilor de putere a fost confirmata
-  indirect, live**: un utilizator cu o statie reala a raportat simptomul
-  exact al ipotezei gresite (valori de ordinul miilor pe un grafic etichetat
-  kW), corectat in cod (vezi addendumul de mai jos). Numele de camp raman
-  neverificate direct impotriva JSON-ului brut -- maparea
+- **Raspunsul de SUCCES al `/v1.0/station/latest` si al
+  `/v1.0/station/history/power` a fost ulterior INSPECTAT DIRECT**, cu un cont
+  Deye Cloud real furnizat temporar de un utilizator prin serverul MCP
+  disponibil in aceasta sesiune (credentialele nu au fost niciodata scrise
+  intr-un fisier/commit din acest repo) -- vezi addendumul de mai jos pentru
+  ce s-a schimbat fata de ipoteza initiala. Campurile confirmate REAL pe
+  raspuns: `generationPower`, `consumptionPower`, `batteryPower`, `wirePower`,
+  `batterySOC`, `lastUpdateTime` (latest) / `timeStamp` (history, per element
+  `stationDataItems`, UNIX seconds). Maparea
   (`map_station_latest_to_telemetry`) ramane deliberat DEFENSIVA (o cheie
   lipsa/neasteptata produce `None`, niciodata o valoare inventata sau 0), ca
   un raspuns real cu alte nume de camp sa degradeze la "date lipsa", nu la
@@ -2130,6 +2129,44 @@ unitate pe un alt camp), nu doar pentru acest bug acum corectat -- vezi
 `_power_plausibility_ceiling_w`/`_implausible_power_fields` si testele
 aferente (`tests/unit/test_deye_cloud_service.py`).
 
+### Addendum: conventia de semn reala pentru baterie/retea, confirmata live (follow-up issue #118)
+
+Investigarea simptomului de mai sus (folosind un cont Deye Cloud real,
+furnizat temporar de un utilizator prin serverul MCP disponibil in aceasta
+sesiune -- credentialele nu au fost niciodata scrise intr-un fisier/commit
+din acest repo) a scos la iveala un al doilea bug, mai grav decat cel de
+unitate: **maparea semnului de baterie/retea era gresita**, deja livrata pe
+`main` la momentul descoperirii.
+
+Ipoteza initiala (neverificata live) presupunea ca Deye raporteaza
+incarcare/descarcare si import/export ca PERECHI de campuri, ambele >= 0
+(`chargePower`/`dischargePower`, `purchasePower`/`wirePower`), combinate in
+cod intr-o singura valoare cu semn. Raspunsul real, verificat pe 60+ probe
+(`/v1.0/station/latest` si `/v1.0/station/history/power`), arata altceva:
+
+- `batteryPower` e campul canonic, mereu prezent -- POZITIV la descarcare,
+  NEGATIV la incarcare. E conventia OPUSA platformei
+  (`TelemetryRaw.battery_power_w`: pozitiv=incarcare/negativ=descarcare).
+  `chargePower`/`dischargePower` exista doar ca oglinzi PARTIALE (populate
+  doar cand valoarea proprie e diferita de zero) ale aceluiasi `batteryPower`
+  -- nu doua marimi independente, ambele >= 0, cum presupunea codul initial.
+- `wirePower` e campul canonic pentru retea, mereu prezent (0 la
+  inactivitate) -- si foloseste DEJA conventia platformei (pozitiv=import,
+  negativ=export), fara nicio combinare necesara. `purchasePower`/`gridPower`
+  sunt aceleasi oglinzi partiale (populate doar cand pozitiv, respectiv
+  negativ) ale lui `wirePower`.
+
+Consecinta practica a bug-ului (deja live pe `main`): `battery_power_w` era
+gresit ca semn de fiecare data cand bateria incarca (afisat ca descarcare);
+`grid_power_w` era fie zero, fie cu semnul intors, de fiecare data cand
+exista import sau export nenul.
+
+**Corectat** in `map_station_latest_to_telemetry`
+(`app/services/deye_cloud_service.py`): `battery_power_w = -batteryPower`,
+`grid_power_w = wirePower` (direct, fara aritmetica). Testele din
+`tests/unit/test_deye_cloud_service.py` au fost actualizate sa foloseasca
+numele reale de camp si sa verifice explicit inversarea de semn.
+
 **Explicit in afara scopului acestui PR:**
 
 - **Telemetrie per-dispozitiv** (nu doar per-statie) -- `/v1.0/device/latest`
@@ -2150,7 +2187,7 @@ aferente (`tests/unit/test_deye_cloud_service.py`).
 - **Orice scriere/comanda catre invertor prin Deye Cloud** -- vezi mai sus,
   explicit in afara scopului, necesita review separat de siguranta.
 
-**Testare.** `tests/unit/test_deye_cloud_service.py` (26 teste: hashing parola,
+**Testare.** `tests/unit/test_deye_cloud_service.py` (39 teste: hashing parola,
 plicul real de eroare de autentificare via `respx`, retry pe 5xx vs. esec
 imediat pe eroare de business, maparea defensiva Deye -> model canonic, regula
 de prioritate fata de un dispozitiv local, idempotenta ingestiei, backoff,
@@ -2602,3 +2639,50 @@ extinderi in `tests/integration/test_web_security.py`): reveal in
 modul `email`, headerele no-store/no-referrer/noindex, RBAC (platform_admin
 pentru ruta de backoffice), CSRF, respingerea rolului global
 `platform_admin` printr-o invitatie, si mesajul neutru de reset de parola.
+
+## Addendum: Flota device-uri (admin) si jurnal compact de debug pe device
+
+Doua cereri legate: (1) un dashboard admin cross-statie cu online/offline,
+linked/unlinked, firmware si stats de sistem (CPU/memorie/temperatura/disk);
+(2) pe pagina de configurare a device-ului (statie), vizibilitate live pentru
+debugging -- firmware, aceleasi stats de sistem, si un jurnal compact de
+loguri recente.
+
+**Stats de sistem (`system_stats`):** camp JSON liber pe `Device`
+(`app/models/device.py`), RAPORTAT de agent in fiecare heartbeat
+(`system_stats.py` in `EMS-device-code`, folosind `os.getloadavg()`,
+`/proc/meminfo`, `/sys/class/thermal/thermal_zone0/temp`, `shutil.disk_usage`).
+Spre deosebire de `capabilities` (combinat/merged la fiecare heartbeat),
+`system_stats` e INLOCUIT integral -- un camp care nu mai e raportat (ex.
+senzor de temperatura indisponibil) dispare, nu ramane cu valoarea veche.
+Niciun camp nu e niciodata 0 inventat cand agentul nu-l poate citi.
+
+**Jurnal compact de debug (`device_log_entries`):** un nou endpoint
+`POST /api/v1/devices/logs` accepta linii COMPACTE (`code` max 64 caractere,
+`detail` optional max 200, niciodata stack trace/payload brut), maxim 50 per
+batch. Pe device, `log_buffer.CompactLogBuffer` e un `logging.Handler` atasat
+la logger-ul `ems_device` (nivel WARNING+), drenat la 60s si trimis best-effort
+(o pierdere la o intrerupere de retea e acceptabila -- spre deosebire de
+telemetrie, NU exista outbox/retry/ACK aici). Server-ul pastreaza doar
+ultimele **10 zile** per device, sterse automat la fiecare ingest nou
+(`device_service.ingest_device_logs`/`DEVICE_LOG_RETENTION`) -- nu exista inca
+un job programat separat pentru device-uri care nu mai raporteaza deloc, dar
+acelea nu mai produc randuri noi oricum, deci cresterea e marginita per
+device activ.
+
+**Nu acopera:** un job Celery beat dedicat de curatare globala (pruning e
+doar per-ingest); autentificare/autorizare separata pentru jurnalul de debug
+fata de restul paginii de configurare (aceleasi reguli `StationAccess`);
+nicio corelare/agregare a jurnalelor intre device-uri (fiecare pagina arata
+doar jurnalul device-ului curent).
+
+**Teste.** `tests/integration/test_device_logs.py` (retentie/prune, batch
+oversized respins 422, `detail` de marime stack-trace respins 422,
+autentificare necesara, afisare pe pagina de configurare inclusiv starea
+goala). `tests/integration/test_device_provisioning_issue44.py` (pagina admin
+noua `/admin/devices`: online/offline, linked/unlinked, stats, RBAC).
+`EMS-device-code`: `tests/test_system_stats.py` (fiecare sursa de citire,
+absenta cand indisponibila), `tests/test_log_buffer.py` (handler-ul de
+logging: nivel, truncare, ring buffer, format string invalid nu crapa),
+extinderi in `tests/test_agent.py` (`upload_logs` best-effort, niciodata nu
+arunca exceptie spre deosebire de `upload()`).
