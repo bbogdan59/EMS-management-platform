@@ -306,7 +306,7 @@ function emsInitDashboard(stationId, initialSummary = null) {
     }
     chart.setOption({
       grid: opts.grid || { left: 48, right: 16, top: 24, bottom: 32 },
-      tooltip: { trigger: "axis" },
+      tooltip: { trigger: "axis", formatter: opts.tooltipFormatter },
       legend: opts.legend !== false ? {} : undefined,
       xAxis: { type: "time" },
       yAxis: opts.yAxis || { type: "value", name: opts.yName || "" },
@@ -499,6 +499,32 @@ function emsInitDashboard(stationId, initialSummary = null) {
     }
   }
 
+  function fmtWeatherValue(value, digits = 0) {
+    return value === null || value === undefined || Number.isNaN(Number(value)) ? "-" : Number(value).toFixed(digits);
+  }
+
+  function averageWeather(points, key) {
+    const values = (points || []).map((point) => point.weather && point.weather[key]).filter((value) => value !== null && value !== undefined && Number.isFinite(Number(value)));
+    if (!values.length) return null;
+    return values.reduce((sum, value) => sum + Number(value), 0) / values.length;
+  }
+
+  function pvWeatherSummary(points) {
+    const withWeather = (points || []).filter((point) => point.weather);
+    if (!withWeather.length) return "";
+    const avgCloud = averageWeather(withWeather, "cloud_cover_percent");
+    const avgGhi = averageWeather(withWeather, "ghi_w_m2");
+    const avgDni = averageWeather(withWeather, "dni_w_m2");
+    const avgDhi = averageWeather(withWeather, "dhi_w_m2");
+    const avgTemp = averageWeather(withWeather, "temperature_c");
+    const avgWind = averageWeather(withWeather, "wind_speed_ms");
+    const totalPrecip = withWeather.reduce((sum, point) => sum + Number((point.weather && point.weather.precipitation_mm) || 0), 0);
+    const source = withWeather[0].weather.source || "meteo";
+    const conclusion = avgGhi === null ? "radiatia solara nu este disponibila in datele meteo" :
+      (avgGhi < 120 ? "productie asteptata slaba" : (avgGhi < 450 ? "productie asteptata moderata" : "productie asteptata buna"));
+    return `Meteo PV (${source}): nori ${fmtWeatherValue(avgCloud)}%, GHI ${fmtWeatherValue(avgGhi)} W/m², DNI ${fmtWeatherValue(avgDni)} W/m², DHI ${fmtWeatherValue(avgDhi)} W/m², temperatura ${fmtWeatherValue(avgTemp, 1)} °C, vant ${fmtWeatherValue(avgWind, 1)} m/s, precipitatii ${fmtWeatherValue(totalPrecip, 1)} mm. Concluzie: ${conclusion}.`;
+  }
+
   function updateForecastQuality(metric, points) {
     const el = $(`forecast-${metric}-quality`);
     if (!el) return;
@@ -510,8 +536,32 @@ function emsInitDashboard(stationId, initialSummary = null) {
     const confidence = { nominal: "incredere nominala", low: "incredere scazuta", high: "incredere ridicata" }[first.forecast_confidence] || first.forecast_confidence || "incredere necunoscuta";
     const source = first.forecast_source ? ` · sursa ${first.forecast_source}` : "";
     const synthetic = first.is_synthetic ? " · date sintetice" : "";
-    el.textContent = `${confidence}${source}${synthetic}`;
+    const weather = metric === "pv" ? pvWeatherSummary(points) : "";
+    el.textContent = weather ? `${confidence}${source}${synthetic}. ${weather}` : `${confidence}${source}${synthetic}`;
     el.hidden = false;
+  }
+
+  function forecastTooltipFormatter(metric, pointsByTime) {
+    return (params) => {
+      const rows = Array.isArray(params) ? params : [params];
+      const ts = rows[0] && rows[0].axisValue;
+      const point = pointsByTime.get(ts);
+      const lines = [`<strong>${new Date(ts).toLocaleString("ro-RO")}</strong>`];
+      for (const row of rows) {
+        const value = Array.isArray(row.value) ? row.value[1] : row.value;
+        lines.push(`${row.marker}${row.seriesName}: ${value === null || value === undefined ? "-" : Number(value).toFixed(3)} kW`);
+      }
+      if (metric === "pv" && point && point.weather) {
+        const w = point.weather;
+        lines.push(
+          `Nori: ${fmtWeatherValue(w.cloud_cover_percent)}%`,
+          `GHI/DNI/DHI: ${fmtWeatherValue(w.ghi_w_m2)}/${fmtWeatherValue(w.dni_w_m2)}/${fmtWeatherValue(w.dhi_w_m2)} W/m²`,
+          `Temp/vant: ${fmtWeatherValue(w.temperature_c, 1)} °C / ${fmtWeatherValue(w.wind_speed_ms, 1)} m/s`,
+          `Precipitatii: ${fmtWeatherValue(w.precipitation_mm, 1)} mm`
+        );
+      }
+      return lines.join("<br/>");
+    };
   }
 
   async function loadForecastChart(metric) {
@@ -527,10 +577,11 @@ function emsInitDashboard(stationId, initialSummary = null) {
       }
       showWidgetState(widget, "ok");
       updateForecastQuality(metric, data);
+      const pointsByTime = new Map(data.map((d) => [d.t, d]));
       lineChart(widget.chartEl, [
         { name: "Prognoza", type: "line", showSymbol: false, data: data.map((d) => [d.t, d.forecast_kw]) },
         { name: "Realizat", type: "line", showSymbol: false, data: data.map((d) => [d.t, d.actual_kw]) },
-      ], { yName: "kW" });
+      ], { yName: "kW", tooltipFormatter: forecastTooltipFormatter(metric, pointsByTime) });
     } catch (e) {
       console.error(e);
       updateForecastQuality(metric, []);
