@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from celery import Celery
 from celery.schedules import crontab
+from celery.signals import task_failure, task_postrun, task_prerun
+from sqlalchemy import select
 
 from app.config import get_settings
 
@@ -74,4 +76,64 @@ celery_app.conf.beat_schedule = {
         "task": "app.workers.tasks.market_revision_retention_task",
         "schedule": crontab(hour=3, minute=30),
     },
+    "task-execution-retention-daily": {
+        "task": "app.workers.tasks.task_execution_retention_task",
+        "schedule": crontab(hour=4, minute=0),
+    },
 }
+
+
+@task_prerun.connect
+def record_task_started(task_id=None, task=None, args=None, kwargs=None, **_):
+    from app.core.security import utcnow
+    from app.database import session_scope
+    from app.models.task_execution import TaskExecution
+
+    with session_scope() as db:
+        execution = db.scalar(select(TaskExecution).where(TaskExecution.celery_task_id == task_id))
+        if execution is None:
+            scheduled_tasks = {entry["task"] for entry in celery_app.conf.beat_schedule.values()}
+            execution = TaskExecution(
+                celery_task_id=task_id,
+                task_name=task.name,
+                source="scheduler" if task.name in scheduled_tasks else "worker",
+                status="running",
+                input={"args": list(args or ()), "kwargs": kwargs or {}},
+                queued_at=utcnow(),
+                started_at=utcnow(),
+            )
+            db.add(execution)
+        else:
+            execution.status = "running"
+            execution.started_at = utcnow()
+
+
+@task_postrun.connect
+def record_task_finished(task_id=None, retval=None, state=None, **_):
+    from app.core.security import utcnow
+    from app.database import session_scope
+    from app.models.task_execution import TaskExecution
+    from app.services.task_execution_service import result_failed, serialize_result
+
+    with session_scope() as db:
+        execution = db.scalar(select(TaskExecution).where(TaskExecution.celery_task_id == task_id))
+        if execution is None:
+            return
+        execution.output = serialize_result(retval)
+        execution.status = "failed" if state == "FAILURE" or result_failed(retval) else "succeeded"
+        execution.finished_at = utcnow()
+
+
+@task_failure.connect
+def record_task_failure(task_id=None, exception=None, **_):
+    from app.core.security import utcnow
+    from app.database import session_scope
+    from app.models.task_execution import TaskExecution
+
+    with session_scope() as db:
+        execution = db.scalar(select(TaskExecution).where(TaskExecution.celery_task_id == task_id))
+        if execution is None:
+            return
+        execution.status = "failed"
+        execution.error_message = f"{type(exception).__name__}: executia a esuat"[:500]
+        execution.finished_at = utcnow()

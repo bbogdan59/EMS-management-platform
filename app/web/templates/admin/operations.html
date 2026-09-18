@@ -24,6 +24,10 @@
   {% elif request.query_params.get("error") == "optimization_run_not_found" %}
   <div class="badge-error rounded p-2">Rularea de optimizare nu a fost gasita.</div>
   {% endif %}
+  {% if request.query_params.get("error") == "invalid_csv_file" %}<div class="badge-error rounded p-2">Fisierul trebuie sa aiba extensia .csv.</div>{% endif %}
+  {% if request.query_params.get("error") == "invalid_csv_size" %}<div class="badge-error rounded p-2">CSV-ul este gol sau depaseste 2 MB.</div>{% endif %}
+  {% if request.query_params.get("status") == "csv_imported" %}<div class="badge-ok rounded p-2">CSV-ul PZU a fost importat.</div>{% endif %}
+  {% if request.query_params.get("status") == "csv_import_failed" %}<div class="badge-error rounded p-2">CSV-ul nu a putut fi importat. Verificati ultima rulare de import.</div>{% endif %}
 
   <div class="card">
     <h2 class="mb-2 font-medium">Joburi admin (asincrone)</h2>
@@ -72,6 +76,12 @@
           <input class="input" type="date" name="delivery_date" required />
         </div>
         <button type="submit" class="btn-primary">Importa</button>
+      </form>
+      <form method="post" action="/admin/operations/import-opcom-csv" enctype="multipart/form-data" class="mt-4 flex flex-wrap items-end gap-3">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}" />
+        <div><label class="label">Data CSV PZU</label><input class="input" type="date" name="delivery_date" required /></div>
+        <div><label class="label">Fisier CSV (max. 2 MB)</label><input class="input" type="file" name="csv_file" accept=".csv,text/csv" required /></div>
+        <button type="submit" class="btn-secondary">Importa CSV manual</button>
       </form>
       <table class="mt-4 w-full text-sm">
         <thead class="text-left text-gray-500"><tr><th class="py-1">Data</th><th>Rev.</th><th>Status</th><th>Intervale</th></tr></thead>

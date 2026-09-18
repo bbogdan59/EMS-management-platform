@@ -4,7 +4,7 @@ import uuid
 from datetime import timedelta
 
 import structlog
-from fastapi import APIRouter, Depends, Form, Query, Request
+from fastapi import APIRouter, Depends, File, Form, Query, Request, UploadFile
 from fastapi.responses import RedirectResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -26,6 +26,7 @@ from app.models.optimization import OptimizationRun, Plan
 from app.models.organization import Membership, Organization
 from app.models.preference import PreferenceVersion
 from app.models.station import Station, StationConfigVersion
+from app.models.task_execution import TaskExecution
 from app.models.user import Invitation, User
 from app.services import (
     auth_service,
@@ -36,6 +37,7 @@ from app.services import (
     optimization_view,
     organization_service,
     station_service,
+    task_execution_service,
 )
 from app.web.context import build_nav_context
 from app.web.invitation_ui import invitation_reveal, should_reveal_invitation_link
@@ -511,6 +513,91 @@ def operations(request: Request, db: Session = Depends(get_db), user: User = Dep
         **build_nav_context(db, user),
     }
     return templates.TemplateResponse(request, "admin/operations.html", context)
+
+
+@router.post("/operations/import-opcom-csv", dependencies=[Depends(verify_csrf)])
+async def import_opcom_csv_upload(
+    request: Request,
+    delivery_date: str = Form(...),
+    csv_file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    from datetime import date as date_cls
+
+    from app.services import opcom_service
+
+    try:
+        parsed_date = date_cls.fromisoformat(delivery_date)
+    except ValueError:
+        return RedirectResponse("/admin/operations?error=invalid_delivery_date", status_code=303)
+    filename = csv_file.filename or "upload.csv"
+    if not filename.lower().endswith(".csv"):
+        return RedirectResponse("/admin/operations?error=invalid_csv_file", status_code=303)
+    raw = await csv_file.read(2_000_001)
+    if not raw or len(raw) > 2_000_000:
+        return RedirectResponse("/admin/operations?error=invalid_csv_size", status_code=303)
+    run = opcom_service.import_opcom_csv(
+        db, parsed_date, raw, filename=filename, triggered_by_user_id=user.id
+    )
+    record_audit(
+        db,
+        action="opcom_csv_uploaded",
+        resource_type="import_run",
+        resource_id=str(run.id),
+        actor_user_id=user.id,
+        actor_label=user.email,
+        metadata={"delivery_date": delivery_date, "filename": filename, "status": run.status},
+        outcome="success" if run.status in ("succeeded", "unchanged") else "failure",
+    )
+    db.commit()
+    suffix = "csv_imported" if run.status in ("succeeded", "unchanged") else "csv_import_failed"
+    return RedirectResponse(f"/admin/operations?status={suffix}", status_code=303)
+
+
+@router.get("/task-audit")
+def task_audit(
+    request: Request,
+    status: str | None = Query(default=None),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    stmt = select(TaskExecution).order_by(TaskExecution.created_at.desc()).limit(300)
+    if status in {"queued", "running", "succeeded", "failed"}:
+        stmt = stmt.where(TaskExecution.status == status)
+    context = {
+        "executions": db.scalars(stmt).all(),
+        "available_tasks": task_execution_service.available_manual_tasks(),
+        "filter_status": status or "",
+        **build_nav_context(db, user),
+    }
+    return templates.TemplateResponse(request, "admin/task_audit.html", context)
+
+
+@router.post("/task-audit/run", dependencies=[Depends(verify_csrf)])
+def run_scheduled_task(
+    task_name: str = Form(...),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    try:
+        execution, _ = task_execution_service.queue_manual_task(db, task_name, user.id)
+    except ValueError:
+        return RedirectResponse("/admin/task-audit?error=task_not_allowed", status_code=303)
+    except Exception as exc:
+        logger.error("manual_task.enqueue_failed", task_name=task_name, exception_type=type(exc).__name__)
+        return RedirectResponse("/admin/task-audit?error=enqueue_failed", status_code=303)
+    record_audit(
+        db,
+        action="scheduled_task_triggered_manually",
+        resource_type="task_execution",
+        resource_id=str(execution.id),
+        actor_user_id=user.id,
+        actor_label=user.email,
+        metadata={"task_name": task_name},
+    )
+    db.commit()
+    return RedirectResponse("/admin/task-audit", status_code=303)
 
 
 _ACTIVE_ADMIN_JOB_STATUSES = (AdminJobStatus.queued.value, AdminJobStatus.running.value)

@@ -520,3 +520,71 @@ def import_opcom_day(db: Session, delivery_date: date, triggered_by_user_id=None
     db.add(run)
     db.flush()
     return run
+
+
+def import_opcom_csv(
+    db: Session, delivery_date: date, raw_bytes: bytes, *, filename: str, triggered_by_user_id=None
+) -> ImportRun:
+    source = "opcom_pzu"
+    _lock_import_day(db, source, delivery_date)
+    existing_max = db.scalar(
+        select(ImportRun.revision)
+        .where(ImportRun.source == source, ImportRun.delivery_date == delivery_date)
+        .order_by(ImportRun.revision.desc())
+        .limit(1)
+    )
+    revision = (existing_max or 0) + 1
+    raw_hash = hashlib.sha256(raw_bytes).hexdigest()
+    unchanged_from = _find_successful_import_by_hash(db, delivery_date, raw_hash, source)
+    run = ImportRun(
+        source=source,
+        delivery_date=delivery_date,
+        revision=revision,
+        status=ImportRunStatus.running.value,
+        source_url=f"manual-upload:{filename[:120]}",
+        triggered_by_user_id=triggered_by_user_id,
+        fetched_at=utcnow(),
+        attempt_count=1,
+        raw_response_hash=raw_hash,
+        is_synthetic_fixture=False,
+    )
+    raw_text = _decode(raw_bytes, DEFAULT_SCHEMA)
+    run.raw_response = raw_text[:200_000]
+    db.add(run)
+    db.flush()
+    if unchanged_from is not None:
+        run.status = ImportRunStatus.unchanged.value
+        run.interval_count = unchanged_from.interval_count
+        run.error_message = f"Continut identic cu revizia {unchanged_from.revision}; intervalele curente au fost pastrate."
+        return run
+    try:
+        intervals = parse_csv(raw_text, delivery_date)
+    except OpcomParseError as exc:
+        run.status = ImportRunStatus.failed.value
+        run.error_message = str(exc)[:500]
+        return run
+    db.execute(
+        update(MarketPriceInterval)
+        .where(MarketPriceInterval.source == source, MarketPriceInterval.delivery_date == delivery_date)
+        .values(is_current=False)
+    )
+    for item in intervals:
+        db.add(
+            MarketPriceInterval(
+                import_run_id=run.id,
+                source=source,
+                delivery_date=delivery_date,
+                revision=revision,
+                interval_index=item["interval_index"],
+                interval_start=item["interval_start"],
+                interval_end=item["interval_end"],
+                currency=item["currency"],
+                price_lei_per_mwh=item["price_lei_per_mwh"],
+                price_lei_per_kwh=item["price_lei_per_kwh"],
+                is_negative=item["is_negative"],
+                is_current=True,
+            )
+        )
+    run.interval_count = len(intervals)
+    run.status = ImportRunStatus.succeeded.value
+    return run
