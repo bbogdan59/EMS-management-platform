@@ -264,11 +264,15 @@ a descoperi contractul masinabil al telemetriei acceptate de schema v1:
   `late_after_seconds`);
 - lista de metrici canonice, cu unitate, nullable, calitate si conventie de
   semn;
+- schema extensiilor tipizate acceptate (`mppt`, `phases`, `battery`,
+  `status`, `counters`) si unitatile lor;
 - statuturile ACK si codurile de motiv retryable/permanent.
 
 `raw_payload` ramane doar diagnostic/source payload. Metricile extinse
-neacceptate explicit in schema v1 nu devin telemetrie canonica doar fiindca
-apar in `raw_payload`.
+acceptate explicit in schema v1 sunt validate ca structura si pastrate in
+`raw_payload.extended`; ele nu intra in agregarea energetica canonica pana nu
+exista o regula de promovare separata. Metricile neacceptate explicit nu devin
+telemetrie canonica doar fiindca apar in `raw_payload`.
 
 ## 5. Telemetrie (batch)
 
@@ -291,6 +295,21 @@ POST /api/v1/telemetry/batch
       "battery_soc_percent": 62.5,
       "ev_connected": false,
       "ev_power_w": 0,
+      "mppt": [
+        {"index": 1, "voltage_v": 390.2, "current_a": 4.8, "power_w": 1873.0, "quality": "measured"}
+      ],
+      "phases": [
+        {"phase": "L1", "voltage_v": 230.1, "current_a": 3.4, "active_power_w": 782.0}
+      ],
+      "battery": {"voltage_v": 51.8, "current_a": -5.8, "temperature_c": 28.4, "state": "discharging"},
+      "status": {
+        "inverter_state": "running",
+        "battery_state": "discharging",
+        "faults": []
+      },
+      "counters": [
+        {"name": "pv_energy_total", "value": 12345.678, "unit": "kWh", "reset_id": "meter-boot-7"}
+      ],
       "quality_flags": {},
       "raw_payload": {}
     }
@@ -310,6 +329,13 @@ POST /api/v1/telemetry/batch
   `100`; `0` este valoare masurata valida, nu lipsa.
 - Maxim `DEVICE_TELEMETRY_BATCH_MAX_ITEMS` (implicit 500) elemente per cerere.
 - Payload maxim `DEVICE_MAX_PAYLOAD_BYTES` (implicit 256 KiB).
+- `mppt`, `phases`, `battery`, `status` si `counters` sunt extensii tipizate,
+  cu unitati explicite si `quality` per segment (`measured`, `derived`,
+  `simulated`, `stale`). Serverul le valideaza si le pastreaza sub
+  `raw_payload.extended`, dar nu le foloseste la agregari energetice in schema
+  v1. Contoarele cumulative sunt in `kWh`; daca un contor fizic se reseteaza
+  sau face rollover, device-ul trebuie sa schimbe `reset_id`, astfel incat un
+  backfill viitor sa nu interpreteze diferenta ca spike de energie.
 
 Raspuns:
 

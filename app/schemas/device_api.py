@@ -9,6 +9,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+TelemetryQuality = Literal["measured", "derived", "simulated", "stale"]
+
 
 class ClaimRequest(BaseModel):
     claim_code: str = Field(..., description="Codul afisat de operator in UI, ex: EMS-7F3K-9QRT")
@@ -81,6 +83,12 @@ class TelemetryItem(BaseModel):
     ev_connected: bool | None = None
     ev_power_w: Decimal | None = Field(default=None, description="W, >=0. Respingere semantica per item daca este negativa.")
 
+    mppt: list[MpptTelemetry] = Field(default_factory=list, max_length=8)
+    phases: list[PhaseTelemetry] = Field(default_factory=list, max_length=3)
+    battery: BatteryTelemetry | None = None
+    status: DeviceStatusTelemetry | None = None
+    counters: list[CumulativeCounterTelemetry] = Field(default_factory=list, max_length=32)
+
     quality_flags: dict = Field(default_factory=dict)
     raw_payload: dict = Field(default_factory=dict)
 
@@ -90,6 +98,78 @@ class TelemetryItem(BaseModel):
         if v.tzinfo is None:
             raise ValueError("measured_at trebuie sa includa fusul orar (ex. sufix Z sau +02:00).")
         return v
+
+
+class MpptTelemetry(BaseModel):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+
+    index: int = Field(..., ge=1, description="Indexul MPPT raportat de device, 1-based.")
+    voltage_v: Decimal | None = Field(default=None, ge=0)
+    current_a: Decimal | None = Field(default=None, ge=0)
+    power_w: Decimal | None = Field(default=None, ge=0)
+    quality: TelemetryQuality = "measured"
+
+
+class PhaseTelemetry(BaseModel):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+
+    phase: Literal["L1", "L2", "L3"]
+    voltage_v: Decimal | None = Field(default=None, ge=0)
+    current_a: Decimal | None = Field(default=None, ge=0)
+    active_power_w: Decimal | None = Field(
+        default=None,
+        description="W; aceeasi conventie de semn ca metrica pe care o detaliaza, cand este aplicabil.",
+    )
+    quality: TelemetryQuality = "measured"
+
+
+class BatteryTelemetry(BaseModel):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+
+    voltage_v: Decimal | None = Field(default=None, ge=0)
+    current_a: Decimal | None = Field(default=None)
+    temperature_c: Decimal | None = None
+    state: Literal["idle", "charging", "discharging", "fault", "unknown"] | None = None
+    quality: TelemetryQuality = "measured"
+
+
+class FaultTelemetry(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    code: str = Field(..., min_length=1, max_length=64)
+    severity: Literal["info", "warning", "error", "critical"]
+    message: str | None = Field(default=None, max_length=200)
+
+
+class DeviceStatusTelemetry(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    inverter_state: Literal["offline", "standby", "running", "fault", "unknown"] | None = None
+    battery_state: Literal["idle", "charging", "discharging", "fault", "unknown"] | None = None
+    faults: list[FaultTelemetry] = Field(default_factory=list, max_length=32)
+    quality: TelemetryQuality = "reported"
+
+
+class CumulativeCounterTelemetry(BaseModel):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+
+    name: Literal[
+        "pv_energy_total",
+        "load_energy_total",
+        "grid_import_energy_total",
+        "grid_export_energy_total",
+        "battery_charge_energy_total",
+        "battery_discharge_energy_total",
+        "ev_energy_total",
+    ]
+    value: Decimal = Field(..., ge=0)
+    unit: Literal["kWh"]
+    reset_id: str | None = Field(
+        default=None,
+        max_length=64,
+        description="Schimbat de device cand contorul a fost resetat sau a facut rollover.",
+    )
+    quality: TelemetryQuality = "measured"
 
 
 class TelemetryBatchRequest(BaseModel):
@@ -161,6 +241,8 @@ class TelemetryContractResponse(BaseModel):
     time: dict
     metrics: list[TelemetryMetricSpec]
     quality_flags: dict
+    extended_metrics: dict
+    cumulative_counters: dict
     provenance: dict
     raw_payload: dict
     ack: dict

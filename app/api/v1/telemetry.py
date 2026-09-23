@@ -93,6 +93,63 @@ TELEMETRY_CONTRACT_V1 = {
         "type": "object",
         "purpose": "diagnostic flags reported by the device; flags do not create numeric values.",
     },
+    "extended_metrics": {
+        "storage": "raw_payload.extended",
+        "canonical_energy_aggregation": False,
+        "purpose": "Typed diagnostics for MPPT, per-phase AC, battery details and status/faults.",
+        "quality_values": ["measured", "derived", "simulated", "stale"],
+        "mppt": {
+            "max_items": 8,
+            "fields": {
+                "index": {"unit": None, "min_value": 1},
+                "voltage_v": {"unit": "V", "nullable": True, "min_value": 0},
+                "current_a": {"unit": "A", "nullable": True, "min_value": 0},
+                "power_w": {"unit": "W", "nullable": True, "min_value": 0},
+                "quality": {"unit": None, "default": "measured"},
+            },
+        },
+        "phases": {
+            "max_items": 3,
+            "fields": {
+                "phase": {"values": ["L1", "L2", "L3"]},
+                "voltage_v": {"unit": "V", "nullable": True, "min_value": 0},
+                "current_a": {"unit": "A", "nullable": True, "min_value": 0},
+                "active_power_w": {"unit": "W", "nullable": True},
+                "quality": {"unit": None, "default": "measured"},
+            },
+        },
+        "battery": {
+            "fields": {
+                "voltage_v": {"unit": "V", "nullable": True, "min_value": 0},
+                "current_a": {"unit": "A", "nullable": True},
+                "temperature_c": {"unit": "degC", "nullable": True},
+                "state": {"values": ["idle", "charging", "discharging", "fault", "unknown"], "nullable": True},
+                "quality": {"unit": None, "default": "measured"},
+            },
+        },
+        "status": {
+            "fields": {
+                "inverter_state": {"values": ["offline", "standby", "running", "fault", "unknown"], "nullable": True},
+                "battery_state": {"values": ["idle", "charging", "discharging", "fault", "unknown"], "nullable": True},
+                "faults": {"max_items": 32, "fields": ["code", "severity", "message"]},
+                "quality": {"unit": None, "default": "reported"},
+            },
+        },
+    },
+    "cumulative_counters": {
+        "storage": "raw_payload.extended.counters",
+        "unit": "kWh",
+        "names": [
+            "pv_energy_total",
+            "load_energy_total",
+            "grid_import_energy_total",
+            "grid_export_energy_total",
+            "battery_charge_energy_total",
+            "battery_discharge_energy_total",
+            "ev_energy_total",
+        ],
+        "reset_rollover": "Device changes reset_id when the physical counter resets or rolls over; server does not derive interval energy from counters in schema v1.",
+    },
     "provenance": {
         "numeric_values_default": "measured",
         "categories": ["measured", "derived", "simulated", "stale"],

@@ -80,3 +80,12 @@ def test_daily_export_energy_chart_preserves_missing_values_as_gaps():
 
     assert "d.grid_export_kwh == null ? null : -d.grid_export_kwh" in dashboard_js
     assert "data: daily.map((d) => -d.grid_export_kwh)" not in dashboard_js
+
+
+def test_pv_forecast_chart_exposes_weather_summary_and_tooltip_context():
+    dashboard_js = Path("app/web/static/js/dashboard.js").read_text()
+
+    assert "function pvWeatherSummary(points)" in dashboard_js
+    assert "Meteo PV" in dashboard_js
+    assert "GHI/DNI/DHI" in dashboard_js
+    assert "tooltipFormatter: forecastTooltipFormatter(metric, pointsByTime)" in dashboard_js
