@@ -294,15 +294,25 @@ function emsInitDashboard(stationId, initialSummary = null) {
       showSymbol: Array.isArray(item.data) && item.data.length <= EMS_CHART_SYMBOL_THRESHOLD,
       ...item,
     }));
-    if (opts.markAreas && opts.markAreas.length && configuredSeries.length) {
-      configuredSeries[0] = {
-        ...configuredSeries[0],
-        markArea: {
+    if (configuredSeries.length && ((opts.markAreas && opts.markAreas.length) || opts.nowLine)) {
+      const decorations = {};
+      if (opts.markAreas && opts.markAreas.length) {
+        decorations.markArea = {
           silent: true,
           itemStyle: { opacity: 0.14 },
           data: opts.markAreas,
-        },
-      };
+        };
+      }
+      if (opts.nowLine) {
+        decorations.markLine = {
+          symbol: "none",
+          silent: true,
+          lineStyle: { color: "#6b7280", type: "dashed" },
+          label: { formatter: "acum", position: "insideEndTop" },
+          data: [{ xAxis: new Date().toISOString() }],
+        };
+      }
+      configuredSeries[0] = { ...configuredSeries[0], ...decorations };
     }
     chart.setOption({
       grid: opts.grid || { left: 48, right: 16, top: 24, bottom: 32 },
@@ -372,6 +382,20 @@ function emsInitDashboard(stationId, initialSummary = null) {
     return data;
   }
 
+  // Doua zecimale peste tot in acest grafic -- tooltip si axe -- ca sa nu se
+  // vada precizia bruta a float-urilor JS (ex. 3.455999999999) (cerere client).
+  function powerChartTooltipFormatter(params) {
+    const rows = Array.isArray(params) ? params : [params];
+    const ts = rows[0] && rows[0].axisValue;
+    const lines = [`<strong>${new Date(ts).toLocaleString("ro-RO")}</strong>`];
+    for (const row of rows) {
+      const value = Array.isArray(row.value) ? row.value[1] : row.value;
+      const unit = row.seriesName === "SOC baterie" ? "%" : "kW";
+      lines.push(`${row.marker}${row.seriesName}: ${value === null || value === undefined ? "-" : Number(value).toFixed(2)} ${unit}`);
+    }
+    return lines.join("<br/>");
+  }
+
   function describeResolution(data) {
     const pct = data.coverage !== null && data.coverage !== undefined ? Math.round(data.coverage * 100) : null;
     const method = (data.aggregation && data.aggregation.pv_kw) || (data.aggregation && data.aggregation.soc_pct) || "medie";
@@ -414,10 +438,11 @@ function emsInitDashboard(stationId, initialSummary = null) {
       lineChart(widget.chartEl, [soc, ...powerSeries], {
         grid: { left: 48, right: 54, top: 28, bottom: 32 },
         yAxis: [
-          { type: "value", name: "%", min: 0, max: 100 },
-          { type: "value", name: "kW" },
+          { type: "value", name: "%", min: 0, max: 100, axisLabel: { formatter: (v) => Number(v).toFixed(2) } },
+          { type: "value", name: "kW", axisLabel: { formatter: (v) => Number(v).toFixed(2) } },
         ],
         markAreas: qualityMarkAreas(points),
+        tooltipFormatter: powerChartTooltipFormatter,
       });
     } catch (e) {
       if (controller !== powerChartController) return; // inlocuita/anulata intre timp, nu e o eroare de afisat
@@ -541,9 +566,9 @@ function emsInitDashboard(stationId, initialSummary = null) {
     el.hidden = false;
   }
 
-  function forecastTooltipFormatter(metric, pointsByTime) {
+  function forecastTooltipFormatter(metric, pointsByTime, allowedSeries = null) {
     return (params) => {
-      const rows = Array.isArray(params) ? params : [params];
+      const rows = (Array.isArray(params) ? params : [params]).filter((row) => !allowedSeries || allowedSeries.includes(row.seriesName));
       const ts = rows[0] && rows[0].axisValue;
       const point = pointsByTime.get(ts);
       const lines = [`<strong>${new Date(ts).toLocaleString("ro-RO")}</strong>`];
@@ -564,12 +589,34 @@ function emsInitDashboard(stationId, initialSummary = null) {
     };
   }
 
-  async function loadForecastChart(metric) {
+  // Zonele colorate dintre "Prognoza" si "Realizat" (issue client: consum
+  // sub/peste asteptat trebuie sa se vada dintr-o privire, nu doar comparand
+  // doua linii). Tehnica: doua stack-uri ECharts separate, fiecare cu un
+  // strat de baza invizibil si un strat de umplere vizibil DOAR cand
+  // diferenta e pozitiva -- "under" umple intre Realizat si Prognoza cand
+  // Realizat < Prognoza, "over" cand Realizat > Prognoza. Punctele fara
+  // Realizat (viitor, sau acoperire insuficienta) raman null -> gol, nu
+  // interpolat.
+  function forecastAreaFillSeries(data) {
+    const hasActual = (d) => d.actual_kw !== null && d.actual_kw !== undefined;
+    const baseUnder = data.map((d) => [d.t, hasActual(d) ? d.actual_kw : null]);
+    const underFill = data.map((d) => [d.t, hasActual(d) ? Math.max(d.forecast_kw - d.actual_kw, 0) : null]);
+    const baseOver = data.map((d) => [d.t, hasActual(d) ? d.forecast_kw : null]);
+    const overFill = data.map((d) => [d.t, hasActual(d) ? Math.max(d.actual_kw - d.forecast_kw, 0) : null]);
+    return [
+      { name: "_base_under", type: "line", stack: "under", symbol: "none", lineStyle: { opacity: 0 }, itemStyle: { opacity: 0 }, silent: true, z: 1, data: baseUnder },
+      { name: "Consum sub prognoza", type: "line", stack: "under", symbol: "none", lineStyle: { opacity: 0 }, areaStyle: { color: "rgba(16, 185, 129, 0.35)" }, silent: true, z: 1, data: underFill },
+      { name: "_base_over", type: "line", stack: "over", symbol: "none", lineStyle: { opacity: 0 }, itemStyle: { opacity: 0 }, silent: true, z: 1, data: baseOver },
+      { name: "Consum peste prognoza", type: "line", stack: "over", symbol: "none", lineStyle: { opacity: 0 }, areaStyle: { color: "rgba(239, 68, 68, 0.35)" }, silent: true, z: 1, data: overFill },
+    ];
+  }
+
+  async function loadForecastChart(metric, horizonHours = 0) {
     const widget = widgetCard("chart-forecast-" + metric);
     if (!widget) return;
-    wireRetry(widget, () => loadForecastChart(metric));
+    wireRetry(widget, () => loadForecastChart(metric, horizonHours));
     try {
-      const data = await fetchJson(`/stations/${stationId}/data/forecast-vs-actual?metric=${metric}&range=24h`);
+      const data = await fetchJson(`/stations/${stationId}/data/forecast-vs-actual?metric=${metric}&range=24h&horizon_hours=${horizonHours}`);
       if (!data.length) {
         updateForecastQuality(metric, []);
         showWidgetState(widget, "empty");
@@ -578,10 +625,27 @@ function emsInitDashboard(stationId, initialSummary = null) {
       showWidgetState(widget, "ok");
       updateForecastQuality(metric, data);
       const pointsByTime = new Map(data.map((d) => [d.t, d]));
-      lineChart(widget.chartEl, [
-        { name: "Prognoza", type: "line", showSymbol: false, data: data.map((d) => [d.t, d.forecast_kw]) },
-        { name: "Realizat", type: "line", showSymbol: false, data: data.map((d) => [d.t, d.actual_kw]) },
-      ], { yName: "kW", tooltipFormatter: forecastTooltipFormatter(metric, pointsByTime) });
+      const lineSeries = [
+        { name: "Prognoza", type: "line", showSymbol: false, z: 3, data: data.map((d) => [d.t, d.forecast_kw]) },
+        { name: "Realizat", type: "line", showSymbol: false, z: 3, data: data.map((d) => [d.t, d.actual_kw]) },
+      ];
+      if (metric === "load") {
+        const chart = echarts.init(widget.chartEl, emsChartTheme());
+        chart.setOption({
+          grid: { left: 48, right: 16, top: 24, bottom: 32 },
+          tooltip: { trigger: "axis", formatter: forecastTooltipFormatter(metric, pointsByTime, ["Prognoza", "Realizat"]) },
+          legend: { data: ["Prognoza", "Realizat", "Consum sub prognoza", "Consum peste prognoza"] },
+          xAxis: { type: "time" },
+          yAxis: { type: "value", name: "kW" },
+          series: [...forecastAreaFillSeries(data), ...lineSeries],
+        });
+      } else {
+        lineChart(widget.chartEl, lineSeries, {
+          yName: "kW",
+          tooltipFormatter: forecastTooltipFormatter(metric, pointsByTime),
+          nowLine: horizonHours > 0,
+        });
+      }
     } catch (e) {
       console.error(e);
       updateForecastQuality(metric, []);
@@ -911,7 +975,11 @@ function emsInitDashboard(stationId, initialSummary = null) {
   lazyLoadWidget("chart-power", () => loadPowerChart("24h"));
   lazyLoadWidget("chart-prices", loadPricesChart);
   lazyLoadWidget("chart-plan", loadPlanChart);
-  lazyLoadWidget("chart-forecast-pv", () => loadForecastChart("pv"));
+  // Orizont extins doar la PV (cerere client): 36h acopera intotdeauna cel
+  // putin o dimineata intreaga inainte, indiferent de ora curenta, ca sa se
+  // vada din timp la ce ora incepe productia. Consumul ramane pe fereastra
+  // istorica -- utila mai ales pentru compararea cu prognoza deja realizata.
+  lazyLoadWidget("chart-forecast-pv", () => loadForecastChart("pv", 36));
   lazyLoadWidget("chart-forecast-load", () => loadForecastChart("load"));
   lazyLoadWidget("chart-heatmap", loadHeatmap);
   loadEnergyPeriodKpis();

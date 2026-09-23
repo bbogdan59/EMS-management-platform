@@ -2686,3 +2686,49 @@ absenta cand indisponibila), `tests/test_log_buffer.py` (handler-ul de
 logging: nivel, truncare, ring buffer, format string invalid nu crapa),
 extinderi in `tests/test_agent.py` (`upload_logs` best-effort, niciodata nu
 arunca exceptie spre deosebire de `upload()`).
+
+## Addendum: Orizont extins la prognoza PV, precizie fixa la graficul de putere, zone colorate la prognoza de consum
+
+Trei imbunatatiri client-facing pe dashboard-ul statiei (`dashboard/station.html`
++ `dashboard.js`), fara schimbari de model/schema:
+
+**Orizont extins -- "Prognoza vs. realizat - PV".** Ruta
+`/stations/{id}/data/forecast-vs-actual` accepta acum `horizon_hours`
+(implicit 0 = comportamentul vechi, doar trecut; maxim 72, plafonat la
+fereastra meteo Open-Meteo `forecast_days=3` din `weather_service.py` -- peste
+asta nu exista deja prognoza PV generata). Graficul PV cere explicit 36h in
+fata (`loadForecastChart("pv", 36)`) -- suficient sa acopere intotdeauna cel
+putin o dimineata intreaga inainte, indiferent de ora curenta la care se
+incarca pagina, plus o linie punctata "acum" (echarts `markLine`) care separa
+vizual trecutul de prognoza pura. Graficul de consum ramane neschimbat
+(`horizon_hours=0`) -- clientul nu a cerut extinderea acestuia, iar
+"prognoza vs. realizat" pentru consum e utila in principal ca istoric.
+
+**Doua zecimale -- "PV, consum, baterie, retea + SOC baterie".** Tooltip-ul
+si etichetele celor doua axe Y (`%` si `kW`) formateaza acum explicit cu
+`.toFixed(2)`, in loc de precizia bruta a float-urilor JS.
+
+**Zone colorate -- "Prognoza vs. realizat - consum".** Zona dintre linia de
+prognoza si cea realizata e umpluta cu doua culori distincte: verde
+(`rgba(16, 185, 129, 0.35)`) cand consumul real a fost SUB prognoza, rosu
+(`rgba(239, 68, 68, 0.35)`) cand a fost PESTE. Tehnic: doua stack-uri echarts
+separate, fiecare cu un strat de baza invizibil si un strat de umplere vizibil
+doar cand diferenta relevanta e pozitiva (`forecastAreaFillSeries` in
+`dashboard.js`). Punctele fara valoare reala (acoperire telemetrie
+insuficienta, sau portiuni viitoare daca s-ar cere vreodata orizont extins si
+pentru consum) raman `null`, nu 0 -- nu se coloreaza nicio zona acolo unde nu
+exista o comparatie reala.
+
+**Nu acopera:** extinderea orizontului si pentru graficul de consum (scop
+explicit doar PV); un al doilea marker orar (ex. "prima ora cu productie
+peste un prag configurabil") -- utilizatorul citeste momentul direct de pe
+grafic/tooltip, nu exista inca o cifra KPI dedicata "ora de start productie".
+
+**Teste.** `tests/integration/test_dashboard_forecast_vs_actual_route.py`
+(`horizon_hours=0` pastreaza fereastra veche, extindere in viitor cu actual
+`null` pentru intervalele care inca nu au telemetrie, plafon 72h respins cu
+422). `tests/unit/test_dashboard_forecast_chart_enhancements.py` (wiring-ul
+orizontului si al liniei "acum" pentru PV, cele doua culori si stack-urile
+pentru zonele de consum, filtrarea seriilor ajutatoare din tooltip).
+`tests/unit/test_dashboard_lazy_loading.py` (formatarea cu doua zecimale pe
+axele graficului principal de putere).
