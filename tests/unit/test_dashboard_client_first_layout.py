@@ -24,3 +24,20 @@ def test_dashboard_kpi_placeholders_are_explanatory_not_false_zeroes():
     assert "fara date" in script
     assert "comparatie cu ${label}: indisponibila" in script
     assert "comparison_label" in script
+
+
+def test_dashboard_today_month_kpis_group_related_metrics_visually():
+    """Cerere client: import/export, incarcare/descarcare baterie si
+    productie PV trebuie grupate vizual, nu intr-un grid plat de 6 casute
+    fara nicio legatura intre ele. Reutilizeaza componenta existenta
+    `field_group` (issue #48), aceeasi ca la gruparea campurilor de
+    configurare -- fara elemente de UI noi, doar reorganizare."""
+    template = Path("app/web/templates/dashboard/station.html").read_text()
+
+    assert '{% from "partials/_field_group.html" import group as field_group %}' in template
+    assert '{% call field_group("Productie / consum") %}' in template
+    assert '{% call field_group("Retea: import / export") %}' in template
+    assert '{% call field_group("Baterie: incarcare / descarcare") %}' in template
+    # ID-urile folosite de JS raman neschimbate -- doar reorganizare vizuala.
+    for suffix in ("pv", "load", "grid-import", "grid-export", "battery-charge", "battery-discharge"):
+        assert f'id="kpi-{{{{ period_key }}}}-{suffix}"' in template
