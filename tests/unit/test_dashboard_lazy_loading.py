@@ -50,7 +50,15 @@ def test_dashboard_power_chart_overlays_faded_soc_on_left_axis():
     assert 'lazyLoadWidget("chart-soc"' not in dashboard_js
     assert 'name: "SOC baterie"' in dashboard_js
     assert "yAxisIndex: 0" in dashboard_js
-    assert 'yAxis: [\n          { type: "value", name: "%", min: 0, max: 100 },\n          { type: "value", name: "kW" },\n        ]' in dashboard_js
+    assert (
+        'yAxis: [\n'
+        '          { type: "value", name: "%", min: 0, max: 100, axisLabel: { formatter: (v) => Number(v).toFixed(2) } },\n'
+        '          { type: "value", name: "kW", axisLabel: { formatter: (v) => Number(v).toFixed(2) } },\n'
+        '        ]'
+    ) in dashboard_js
+    # doua zecimale peste tot in acest grafic (cerere client) -- tooltip si axe
+    assert "tooltipFormatter: powerChartTooltipFormatter" in dashboard_js
+    assert "function powerChartTooltipFormatter(params)" in dashboard_js
     assert "lineStyle: { width: 1.5, opacity: 0.38 }" in dashboard_js
     assert "areaStyle: { opacity: 0.04 }" in dashboard_js
 
@@ -88,4 +96,4 @@ def test_pv_forecast_chart_exposes_weather_summary_and_tooltip_context():
     assert "function pvWeatherSummary(points)" in dashboard_js
     assert "Meteo PV" in dashboard_js
     assert "GHI/DNI/DHI" in dashboard_js
-    assert "tooltipFormatter: forecastTooltipFormatter(metric, pointsByTime)" in dashboard_js
+    assert 'formatter: forecastTooltipFormatter(metric, pointsByTime, ["Prognoza", "Realizat"])' in dashboard_js

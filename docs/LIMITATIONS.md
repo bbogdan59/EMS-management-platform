@@ -2778,3 +2778,116 @@ expirate). `tests/integration/test_firmware_api.py` (RBAC pe rutele admin,
 autentificare device pe rutele de fleet, oferta prin enrollment).
 Migratia (`8132ff168bd4`) verificata manual cu upgrade/downgrade/re-upgrade
 pe Postgres local (nu doar `--sql`).
+
+## Addendum: Orizont extins la prognoza PV, precizie fixa la graficul de putere, zone colorate la prognoza de consum
+
+Trei imbunatatiri client-facing pe dashboard-ul statiei (`dashboard/station.html`
++ `dashboard.js`), fara schimbari de model/schema:
+
+**Orizont extins -- "Prognoza vs. realizat - PV".** Ruta
+`/stations/{id}/data/forecast-vs-actual` accepta acum `horizon_hours`
+(implicit 0 = comportamentul vechi, doar trecut; maxim 72, plafonat la
+fereastra meteo Open-Meteo `forecast_days=3` din `weather_service.py` -- peste
+asta nu exista deja prognoza PV generata). Graficul PV cere explicit 36h in
+fata (`loadForecastChart("pv", 36)`) -- suficient sa acopere intotdeauna cel
+putin o dimineata intreaga inainte, indiferent de ora curenta la care se
+incarca pagina, plus o linie punctata "acum" (echarts `markLine`) care separa
+vizual trecutul de prognoza pura. Graficul de consum ramane neschimbat
+(`horizon_hours=0`) -- clientul nu a cerut extinderea acestuia, iar
+"prognoza vs. realizat" pentru consum e utila in principal ca istoric.
+
+**Doua zecimale -- "PV, consum, baterie, retea + SOC baterie".** Tooltip-ul
+si etichetele celor doua axe Y (`%` si `kW`) formateaza acum explicit cu
+`.toFixed(2)`, in loc de precizia bruta a float-urilor JS.
+
+**Zone colorate -- "Prognoza vs. realizat - consum".** Zona dintre linia de
+prognoza si cea realizata e umpluta cu doua culori distincte: verde
+(`rgba(16, 185, 129, 0.35)`) cand consumul real a fost SUB prognoza, rosu
+(`rgba(239, 68, 68, 0.35)`) cand a fost PESTE. Tehnic: doua stack-uri echarts
+separate, fiecare cu un strat de baza invizibil si un strat de umplere vizibil
+doar cand diferenta relevanta e pozitiva (`forecastAreaFillSeries` in
+`dashboard.js`). Punctele fara valoare reala (acoperire telemetrie
+insuficienta, sau portiuni viitoare daca s-ar cere vreodata orizont extins si
+pentru consum) raman `null`, nu 0 -- nu se coloreaza nicio zona acolo unde nu
+exista o comparatie reala.
+
+**Nu acopera:** extinderea orizontului si pentru graficul de consum (scop
+explicit doar PV); un al doilea marker orar (ex. "prima ora cu productie
+peste un prag configurabil") -- utilizatorul citeste momentul direct de pe
+grafic/tooltip, nu exista inca o cifra KPI dedicata "ora de start productie".
+
+**Teste.** `tests/integration/test_dashboard_forecast_vs_actual_route.py`
+(`horizon_hours=0` pastreaza fereastra veche, extindere in viitor cu actual
+`null` pentru intervalele care inca nu au telemetrie, plafon 72h respins cu
+422). `tests/unit/test_dashboard_forecast_chart_enhancements.py` (wiring-ul
+orizontului si al liniei "acum" pentru PV, cele doua culori si stack-urile
+pentru zonele de consum, filtrarea seriilor ajutatoare din tooltip).
+`tests/unit/test_dashboard_lazy_loading.py` (formatarea cu doua zecimale pe
+axele graficului principal de putere).
+
+## Addendum: Prag de toleranta si procent de acuratete pentru cele doua grafice de prognoza
+
+Extensie a addendumului anterior, la cererea clientului: coloratul in doua
+culori (sub/peste) nu distingea o diferenta minora (ex. 0.05 kW) de una
+reala -- orice abatere, oricat de mica, aparea colorata la fel. Acum ambele
+grafice (`Prognoza vs. realizat - PV` si `- consum`) clasifica fiecare
+interval de 15 minute in una din trei stari, cu o toleranta explicita:
+
+- **Corect** (albastru) -- `|realizat - prognoza| <= 0.25 kW`.
+- **Sub prognoza** (verde) -- `realizat - prognoza < -0.25 kW`.
+- **Peste prognoza** (rosu) -- `realizat - prognoza > 0.25 kW`.
+
+Pragul (`EMS_FORECAST_ACCURACY_THRESHOLD_KW = 0.25` in `dashboard.js`) e
+aplicat IDENTIC la ambele grafice -- clientul a cerut aceleasi conditii, nu
+o semantica inversata pentru PV (unde "peste prognoza" ar putea parea o
+veste buna, nu una rea; etichetele text clarifica totusi contextul:
+"Productie peste prognoza" vs. "Consum peste prognoza"). Zona colorata
+dintre cele doua linii foloseste acum TREI stack-uri ECharts (nu doua ca
+inainte), fiecare cu propriul strat de baza invizibil si strat de umplere
+vizibil doar pentru punctele clasificate in acea stare
+(`forecastAreaFillSeries(metric, data, thresholdKw)`); niciun punct nu
+poate fi activ in mai mult de un stack simultan.
+
+**Procent de timp + tooltip la hover.** Sub titlul fiecarui grafic apare un
+rand cu procentul de intervale (din cele cu date reale disponibile, NU si
+orizontul viitor al PV) clasificate corect/sub/peste, cu un punct colorat
+identic cu zona din grafic. Randul intreg poarta un atribut `title` (hover
+nativ de browser, fara element nou de UI) care explica pragul si ce
+inseamna fiecare culoare (`updateForecastAccuracy` in `dashboard.js`).
+Tooltip-ul de pe grafic (la hover pe un punct) afiseaza acum si starea
+punctului respectiv plus diferenta exacta in kW.
+
+**Bug real gasit la verificarea manuala in browser** (nu doar o presupunere
+teoretica): randul de clasificare din tooltip nu aparea deloc initial.
+Cauza: codul folosea `params[i].axisValue` ca cheie pentru a gasi punctul
+original in harta `pointsByTime`, dar pe un `xAxis: { type: "time" }`
+ECharts intoarce `axisValue` ca timestamp NUMERIC, nu string-ul ISO original
+din `d.t` folosit ca cheie -- cautarea nu se potrivea NICIODATA. Acelasi bug
+exista dinainte (addendumul anterior) pentru contextul meteo afisat in
+tooltip-ul graficului PV, dar nu fusese observat pentru ca datele de test
+folosite atunci nu aveau `weather` atasat prognozelor. Fix: se foloseste
+`params[i].value[0]` (tuplul original `[d.t, valoare]` pastrat de ECharts),
+nu `axisValue`. Verificat manual in browser cu date semanate care produc
+toate cele trei stari -- tooltip-ul arata acum corect, de exemplu,
+"Consum peste prognoza (+0.42 kW fata de prognoza)".
+
+**Culori explicite, nu paleta implicita ECharts.** Odata ce umplerea are 6
+serii (3 stari x baza+umplere) inaintea liniilor "Prognoza"/"Realizat",
+paleta implicita le-ar fi asignat culori identice sau apropiate de cele ale
+zonelor de stare (verificat vizual -- liniile deveneau rosu/albastru
+deschis, indistincte de zonele rosii/albastre). Fix: `itemStyle.color`
+explicit atat pe seriile de umplere (identic cu culoarea zonei, pentru ca
+legenda sa arate exact ce e pe grafic), cat si pe liniile Prognoza
+(portocaliu) si Realizat (violet).
+
+**Nu acopera:** un prag configurabil per statie/utilizator (0.25 kW e fix,
+in cod, la cererea clientului); un KPI agregat separat cu procentul de
+acuratete pe o fereastra mai lunga (30 zile) -- procentele afisate sunt
+limitate la fereastra de 24h afisata pe grafic (plus orizontul viitor pentru
+PV, care oricum nu se claseaza inca).
+
+**Teste.** `tests/unit/test_dashboard_forecast_chart_enhancements.py`
+(clasificarea in cele trei stari cu pragul explicit, umplerea in trei
+stack-uri aplicata identic la ambele grafice, etichetele si legenda
+specifice per metrica, randul de procente cu tooltip la hover, fix-ul
+`axisValue` vs. `value[0]`, culorile explicite ale liniilor/zonelor).

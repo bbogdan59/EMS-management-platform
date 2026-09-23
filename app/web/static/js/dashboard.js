@@ -372,6 +372,20 @@ function emsInitDashboard(stationId, initialSummary = null) {
     return data;
   }
 
+  // Doua zecimale peste tot in acest grafic -- tooltip si axe -- ca sa nu se
+  // vada precizia bruta a float-urilor JS (ex. 3.455999999999) (cerere client).
+  function powerChartTooltipFormatter(params) {
+    const rows = Array.isArray(params) ? params : [params];
+    const ts = rows[0] && rows[0].axisValue;
+    const lines = [`<strong>${new Date(ts).toLocaleString("ro-RO")}</strong>`];
+    for (const row of rows) {
+      const value = Array.isArray(row.value) ? row.value[1] : row.value;
+      const unit = row.seriesName === "SOC baterie" ? "%" : "kW";
+      lines.push(`${row.marker}${row.seriesName}: ${value === null || value === undefined ? "-" : Number(value).toFixed(2)} ${unit}`);
+    }
+    return lines.join("<br/>");
+  }
+
   function describeResolution(data) {
     const pct = data.coverage !== null && data.coverage !== undefined ? Math.round(data.coverage * 100) : null;
     const method = (data.aggregation && data.aggregation.pv_kw) || (data.aggregation && data.aggregation.soc_pct) || "medie";
@@ -414,10 +428,11 @@ function emsInitDashboard(stationId, initialSummary = null) {
       lineChart(widget.chartEl, [soc, ...powerSeries], {
         grid: { left: 48, right: 54, top: 28, bottom: 32 },
         yAxis: [
-          { type: "value", name: "%", min: 0, max: 100 },
-          { type: "value", name: "kW" },
+          { type: "value", name: "%", min: 0, max: 100, axisLabel: { formatter: (v) => Number(v).toFixed(2) } },
+          { type: "value", name: "kW", axisLabel: { formatter: (v) => Number(v).toFixed(2) } },
         ],
         markAreas: qualityMarkAreas(points),
+        tooltipFormatter: powerChartTooltipFormatter,
       });
     } catch (e) {
       if (controller !== powerChartController) return; // inlocuita/anulata intre timp, nu e o eroare de afisat
@@ -541,15 +556,53 @@ function emsInitDashboard(stationId, initialSummary = null) {
     el.hidden = false;
   }
 
-  function forecastTooltipFormatter(metric, pointsByTime) {
+  // Toleranta ceruta de client: diferente de cel mult 0.25 kW intre prognoza
+  // si realizat conteaza drept "prognoza corecta", nu doar "usor diferita" --
+  // aplicata identic la PV si la consum.
+  const EMS_FORECAST_ACCURACY_THRESHOLD_KW = 0.25;
+
+  const FORECAST_STATE_LABELS = {
+    pv: { correct: "Productie in limita prognozei", under: "Productie sub prognoza", over: "Productie peste prognoza" },
+    load: { correct: "Consum in limita prognozei", under: "Consum sub prognoza", over: "Consum peste prognoza" },
+  };
+  const FORECAST_STATE_AREA_COLORS = {
+    correct: "rgba(59, 130, 246, 0.35)",
+    under: "rgba(16, 185, 129, 0.35)",
+    over: "rgba(239, 68, 68, 0.35)",
+  };
+  const FORECAST_STATE_DOT_COLORS = { correct: "#3b82f6", under: "#16a34a", over: "#dc2626" };
+
+  // null cand nu exista Realizat (viitor, sau acoperire insuficienta) -- nu
+  // clasificam un punct fara date reale de comparat.
+  function classifyForecastPoint(point, thresholdKw) {
+    if (point.actual_kw === null || point.actual_kw === undefined) return null;
+    const diff = point.actual_kw - point.forecast_kw;
+    if (diff > thresholdKw) return "over";
+    if (diff < -thresholdKw) return "under";
+    return "correct";
+  }
+
+  function forecastTooltipFormatter(metric, pointsByTime, allowedSeries = null) {
     return (params) => {
-      const rows = Array.isArray(params) ? params : [params];
-      const ts = rows[0] && rows[0].axisValue;
+      const rows = (Array.isArray(params) ? params : [params]).filter((row) => !allowedSeries || allowedSeries.includes(row.seriesName));
+      // `axisValue` pe un xAxis de tip "time" e un timestamp numeric, NU
+      // string-ul ISO original din `d.t` -- cheia din `pointsByTime` nu s-ar
+      // potrivi niciodata. `row.value` insa pastreaza tuplul original
+      // `[d.t, ...]` asa cum a fost dat la construirea seriei.
+      const ts = rows[0] && (Array.isArray(rows[0].value) ? rows[0].value[0] : rows[0].axisValue);
       const point = pointsByTime.get(ts);
       const lines = [`<strong>${new Date(ts).toLocaleString("ro-RO")}</strong>`];
       for (const row of rows) {
         const value = Array.isArray(row.value) ? row.value[1] : row.value;
         lines.push(`${row.marker}${row.seriesName}: ${value === null || value === undefined ? "-" : Number(value).toFixed(3)} kW`);
+      }
+      if (point) {
+        const state = classifyForecastPoint(point, EMS_FORECAST_ACCURACY_THRESHOLD_KW);
+        if (state) {
+          const labels = FORECAST_STATE_LABELS[metric] || FORECAST_STATE_LABELS.load;
+          const diff = point.actual_kw - point.forecast_kw;
+          lines.push(`${labels[state]} (${diff >= 0 ? "+" : ""}${diff.toFixed(2)} kW fata de prognoza)`);
+        }
       }
       if (metric === "pv" && point && point.weather) {
         const w = point.weather;
@@ -564,27 +617,125 @@ function emsInitDashboard(stationId, initialSummary = null) {
     };
   }
 
-  async function loadForecastChart(metric) {
+  // Zonele colorate dintre "Prognoza" si "Realizat" (cerere client: procentul
+  // de timp in care prognoza a fost corecta/sub/peste trebuie sa se vada
+  // dintr-o privire, nu doar comparand doua linii, cu o toleranta explicita
+  // in loc de a colora orice diferenta oricat de mica). Tehnica: TREI
+  // stack-uri ECharts separate (corect/sub/peste), fiecare cu un strat de
+  // baza invizibil si un strat de umplere vizibil DOAR pentru punctele
+  // clasificate in acea stare -- niciodata mai mult de o stare activa per
+  // punct. Punctele fara Realizat (viitor, sau acoperire insuficienta) raman
+  // null -> gol, nu interpolat si nu clasificat.
+  function forecastAreaFillSeries(metric, data, thresholdKw) {
+    const labels = FORECAST_STATE_LABELS[metric] || FORECAST_STATE_LABELS.load;
+    const hasActual = (d) => d.actual_kw !== null && d.actual_kw !== undefined;
+    const fillFor = (state) => data.map((d) => [
+      d.t,
+      hasActual(d) ? (classifyForecastPoint(d, thresholdKw) === state ? Math.abs(d.actual_kw - d.forecast_kw) : 0) : null,
+    ]);
+    const baseUnder = data.map((d) => [d.t, hasActual(d) ? d.actual_kw : null]);
+    const baseOver = data.map((d) => [d.t, hasActual(d) ? d.forecast_kw : null]);
+    const baseCorrect = data.map((d) => [d.t, hasActual(d) ? Math.min(d.actual_kw, d.forecast_kw) : null]);
+    const stackLayer = (state, base) => [
+      { name: `_base_${state}`, type: "line", stack: state, symbol: "none", lineStyle: { opacity: 0 }, itemStyle: { opacity: 0 }, silent: true, z: 1, data: base },
+      { name: labels[state], type: "line", stack: state, symbol: "none", lineStyle: { opacity: 0 }, itemStyle: { color: FORECAST_STATE_DOT_COLORS[state] }, areaStyle: { color: FORECAST_STATE_AREA_COLORS[state] }, silent: true, z: 1, data: fillFor(state) },
+    ];
+    return [...stackLayer("under", baseUnder), ...stackLayer("over", baseOver), ...stackLayer("correct", baseCorrect)];
+  }
+
+  function forecastAccuracyStats(data, thresholdKw) {
+    let correct = 0;
+    let over = 0;
+    let under = 0;
+    let total = 0;
+    for (const d of data) {
+      const state = classifyForecastPoint(d, thresholdKw);
+      if (state === null) continue;
+      total += 1;
+      if (state === "correct") correct += 1;
+      else if (state === "over") over += 1;
+      else under += 1;
+    }
+    if (!total) return null;
+    return { total, correctPct: (correct / total) * 100, overPct: (over / total) * 100, underPct: (under / total) * 100 };
+  }
+
+  // Randul de procente sub titlul graficului, cu un `title` nativ (hover)
+  // care explica pragul si ce inseamna fiecare culoare -- cerere client.
+  function updateForecastAccuracy(metric, data) {
+    const el = $(`forecast-${metric}-accuracy`);
+    if (!el) return;
+    const stats = forecastAccuracyStats(data, EMS_FORECAST_ACCURACY_THRESHOLD_KW);
+    if (!stats) {
+      el.hidden = true;
+      return;
+    }
+    const labels = FORECAST_STATE_LABELS[metric] || FORECAST_STATE_LABELS.load;
+    el.replaceChildren();
+    const addBadge = (state, pct) => {
+      const dot = document.createElement("span");
+      dot.className = "inline-block h-2 w-2 rounded-full";
+      dot.style.backgroundColor = FORECAST_STATE_DOT_COLORS[state];
+      el.appendChild(dot);
+      el.appendChild(document.createTextNode(` ${labels[state]}: ${pct.toFixed(0)}% `));
+    };
+    addBadge("correct", stats.correctPct);
+    addBadge("under", stats.underPct);
+    addBadge("over", stats.overPct);
+    const subject = metric === "pv" ? "productia PV reala" : "consumul real";
+    el.title = `Comparam ${subject} cu prognoza pentru fiecare interval de 15 minute din fereastra afisata (nu si orizontul viitor, care inca nu are date reale). Diferente de cel mult ${EMS_FORECAST_ACCURACY_THRESHOLD_KW} kW sunt considerate prognoza corecta (albastru). Peste acest prag: ${subject} sub prognoza (verde) sau peste prognoza (rosu). Procentele de mai sus sunt calculate pe cele ${stats.total} intervale cu date reale disponibile.`;
+    el.hidden = false;
+  }
+
+  async function loadForecastChart(metric, horizonHours = 0) {
     const widget = widgetCard("chart-forecast-" + metric);
     if (!widget) return;
-    wireRetry(widget, () => loadForecastChart(metric));
+    wireRetry(widget, () => loadForecastChart(metric, horizonHours));
     try {
-      const data = await fetchJson(`/stations/${stationId}/data/forecast-vs-actual?metric=${metric}&range=24h`);
+      const data = await fetchJson(`/stations/${stationId}/data/forecast-vs-actual?metric=${metric}&range=24h&horizon_hours=${horizonHours}`);
       if (!data.length) {
         updateForecastQuality(metric, []);
+        updateForecastAccuracy(metric, []);
         showWidgetState(widget, "empty");
         return;
       }
       showWidgetState(widget, "ok");
       updateForecastQuality(metric, data);
+      updateForecastAccuracy(metric, data);
       const pointsByTime = new Map(data.map((d) => [d.t, d]));
-      lineChart(widget.chartEl, [
-        { name: "Prognoza", type: "line", showSymbol: false, data: data.map((d) => [d.t, d.forecast_kw]) },
-        { name: "Realizat", type: "line", showSymbol: false, data: data.map((d) => [d.t, d.actual_kw]) },
-      ], { yName: "kW", tooltipFormatter: forecastTooltipFormatter(metric, pointsByTime) });
+      const labels = FORECAST_STATE_LABELS[metric] || FORECAST_STATE_LABELS.load;
+      // Culori fixe (nu paleta implicita echarts) -- altfel cele doua linii ar
+      // putea pica pe aceleasi nuante de rosu/albastru/verde folosite pentru
+      // zonele de stare, greu de distins de acestea.
+      const lineSeries = [
+        { name: "Prognoza", type: "line", showSymbol: false, z: 3, itemStyle: { color: "#f59e0b" }, lineStyle: { color: "#f59e0b" }, data: data.map((d) => [d.t, d.forecast_kw]) },
+        { name: "Realizat", type: "line", showSymbol: false, z: 3, itemStyle: { color: "#7c3aed" }, lineStyle: { color: "#7c3aed" }, data: data.map((d) => [d.t, d.actual_kw]) },
+      ];
+      if (horizonHours > 0) {
+        lineSeries[0] = {
+          ...lineSeries[0],
+          markLine: {
+            symbol: "none",
+            silent: true,
+            lineStyle: { color: "#6b7280", type: "dashed" },
+            label: { formatter: "acum", position: "insideEndTop" },
+            data: [{ xAxis: new Date().toISOString() }],
+          },
+        };
+      }
+      const chart = echarts.init(widget.chartEl, emsChartTheme());
+      chart.setOption({
+        grid: { left: 48, right: 16, top: 24, bottom: 32 },
+        tooltip: { trigger: "axis", formatter: forecastTooltipFormatter(metric, pointsByTime, ["Prognoza", "Realizat"]) },
+        legend: { data: ["Prognoza", "Realizat", labels.correct, labels.under, labels.over] },
+        xAxis: { type: "time" },
+        yAxis: { type: "value", name: "kW" },
+        series: [...forecastAreaFillSeries(metric, data, EMS_FORECAST_ACCURACY_THRESHOLD_KW), ...lineSeries],
+      });
     } catch (e) {
       console.error(e);
       updateForecastQuality(metric, []);
+      updateForecastAccuracy(metric, []);
       showWidgetState(widget, "error");
     }
   }
@@ -911,7 +1062,11 @@ function emsInitDashboard(stationId, initialSummary = null) {
   lazyLoadWidget("chart-power", () => loadPowerChart("24h"));
   lazyLoadWidget("chart-prices", loadPricesChart);
   lazyLoadWidget("chart-plan", loadPlanChart);
-  lazyLoadWidget("chart-forecast-pv", () => loadForecastChart("pv"));
+  // Orizont extins doar la PV (cerere client): 36h acopera intotdeauna cel
+  // putin o dimineata intreaga inainte, indiferent de ora curenta, ca sa se
+  // vada din timp la ce ora incepe productia. Consumul ramane pe fereastra
+  // istorica -- utila mai ales pentru compararea cu prognoza deja realizata.
+  lazyLoadWidget("chart-forecast-pv", () => loadForecastChart("pv", 36));
   lazyLoadWidget("chart-forecast-load", () => loadForecastChart("load"));
   lazyLoadWidget("chart-heatmap", loadHeatmap);
   loadEnergyPeriodKpis();
