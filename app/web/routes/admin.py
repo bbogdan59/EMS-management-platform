@@ -490,8 +490,30 @@ def users_list(request: Request, db: Session = Depends(get_db), user: User = Dep
                 "memberships": [{"org": org_map.get(m.organization_id, "?"), "role": m.role} for m in memberships],
             }
         )
-    context = {"rows": rows, **build_nav_context(db, user)}
+    context = {"rows": rows, "errors": request.query_params.getlist("error"), **build_nav_context(db, user)}
     return templates.TemplateResponse(request, "admin/users.html", context)
+
+
+@router.post("/users/platform-admins", dependencies=[Depends(verify_csrf)])
+def create_platform_admin(
+    email: str = Form(...),
+    full_name: str = Form(...),
+    password: str = Form(...),
+    password_confirm: str = Form(...),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    if password != password_confirm:
+        return RedirectResponse("/admin/users?error=Parolele+nu+coincid.", status_code=303)
+    if len(password) < 10:
+        return RedirectResponse("/admin/users?error=Parola+trebuie+sa+aiba+cel+putin+10+caractere.", status_code=303)
+    try:
+        auth_service.create_platform_admin(db, user, email, full_name, password)
+    except auth_service.AuthError as exc:
+        db.rollback()
+        return RedirectResponse(f"/admin/users?error={exc}", status_code=303)
+    db.commit()
+    return RedirectResponse("/admin/users", status_code=303)
 
 
 @router.get("/operations")
