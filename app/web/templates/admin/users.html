@@ -4,6 +4,40 @@
 <div class="space-y-6">
   <h1 class="text-xl font-semibold">Utilizatori</h1>
   {% include "admin/_tabs.html" %}
+
+  {% for error in errors %}
+  <p class="badge-error">{{ error }}</p>
+  {% endfor %}
+
+  <div class="card">
+    <h2 class="mb-3 font-medium">Adauga utilizator platform admin</h2>
+    <p class="mb-3 text-xs text-gray-500">
+      Un platform admin are acces de administrare la TOATA platforma (toate organizatiile/statiile), nu doar la una singura -- foloseste cu atentie.
+    </p>
+    <form method="post" action="/admin/users/platform-admins" class="grid gap-3 sm:grid-cols-2">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}" />
+      <div>
+        <label class="label">E-mail</label>
+        <input class="input" type="email" name="email" required />
+      </div>
+      <div>
+        <label class="label">Nume complet</label>
+        <input class="input" name="full_name" required />
+      </div>
+      <div>
+        <label class="label">Parola (min. 10 caractere)</label>
+        <input class="input" type="password" name="password" minlength="10" required />
+      </div>
+      <div>
+        <label class="label">Confirma parola</label>
+        <input class="input" type="password" name="password_confirm" minlength="10" required />
+      </div>
+      <div class="sm:col-span-2">
+        <button type="submit" class="btn-primary">Creeaza platform admin</button>
+      </div>
+    </form>
+  </div>
+
   <div class="card">
     <table class="w-full text-sm">
       <thead class="text-left text-gray-500"><tr><th class="py-1">Email</th><th>Nume</th><th>Platform admin</th><th>Membru in</th><th>Ultima autentificare</th></tr></thead>

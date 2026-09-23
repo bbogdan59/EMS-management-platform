@@ -6,6 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
+from app.core.audit import record_audit
 from app.core.email import get_email_adapter
 from app.core.security import (
     constant_time_eq,
@@ -152,6 +153,38 @@ def bootstrap_first_admin(db: Session, provided_token: str, email: str, password
     )
     db.add(user)
     db.flush()
+    return user
+
+
+def create_platform_admin(db: Session, actor: User, email: str, full_name: str, password: str) -> User:
+    """Creeaza un utilizator NOU cu acces platform_admin (admin panel), din
+    admin panel -- distinct de `bootstrap_first_admin` (folosit o singura
+    data, cu token dedicat, cand NU exista inca niciun platform_admin).
+    Un platform_admin nu are nevoie de membership intr-o organizatie -- acces
+    la toata platforma vine direct din `User.is_platform_admin`, verificat de
+    `require_platform_admin`."""
+    normalized_email = email.lower().strip()
+    if db.scalar(select(User).where(User.email == normalized_email)) is not None:
+        raise AuthError(f"Exista deja un cont cu emailul '{normalized_email}'.")
+
+    user = User(
+        email=normalized_email,
+        full_name=full_name,
+        password_hash=hash_password(password),
+        is_platform_admin=True,
+    )
+    db.add(user)
+    db.flush()
+
+    record_audit(
+        db,
+        action="platform_admin_created",
+        resource_type="user",
+        resource_id=str(user.id),
+        actor_user_id=actor.id,
+        actor_label=actor.email,
+        metadata={"email": user.email},
+    )
     return user
 
 

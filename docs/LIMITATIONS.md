@@ -2953,3 +2953,108 @@ INTREGI cand portiunea scursa e complet acoperita, ramane indisponibila cand
 portiunea scursa chiar nu are date, acelasi comportament la granularitatea
 lunii). `tests/unit/test_dashboard_client_first_layout.py` (gruparea
 vizuala foloseste `field_group`, ID-urile ramane neschimbate).
+
+## Addendum: Contaminare istorica a `grid_power_w` din regresia de semn -- corectata cu `scripts/fix_deye_cloud_grid_sign_regression.py`
+
+Dupa fixul de mai sus (regresia de semn `wirePower`, reparata la
+2026-09-23 11:46 CEST), clientul a raportat CA import/export ramasesera
+inversate pe "Astazi"/"Luna curenta" -- desi codul de ingestie era deja
+corect pe `main`. Cauza: semnul `grid_power_w` e persistat DEFINITIV in
+`TelemetryRaw` la momentul ingestiei (`poll_connection`/
+`import_station_history` din `deye_cloud_service.py`); platforma nu
+recalculeaza NICIODATA aceasta valoare la citire. Fixul de mapare corecteaza
+doar ingestia VIITOARE -- orice rand `source=deye_cloud` scris in fereastra
+regresiei (intre mergerea PR #173, 2026-09-18 16:17 CEST, si mergerea
+PR #178, 2026-09-23 11:46 CEST) a ramas cu `grid_power_w` inversat, ca
+inregistrare istorica. `TelemetryAggregate` (import/export "Astazi"/"Luna
+curenta") e derivat prin integrare in timp din exact aceste randuri brute,
+deci mostenea eroarea: "Astazi" amesteca ore corecte cu ore contaminate
+(dupa ora la care s-a facut mergeul de azi), iar "Luna curenta" era dominata
+de cele ~5 zile contaminate din luna in curs.
+
+**Nu s-a presupus fereastra UTC exacta** (risc de eroare de conversie fus
+orar CEST/UTC) -- in loc sa se inverseze orbeste randurile dintr-un interval
+calculat manual, `scripts/fix_deye_cloud_grid_sign_regression.py`
+recalculeaza `grid_power_w` din `raw_payload["wirePower"]` (raspunsul brut
+original Deye Cloud, stocat neschimbat la fiecare ingestie) folosind EXACT
+functia de decodare curenta si corecta (`deye_cloud_service._dec`). Auto-
+vindecator si idempotent: un rand deja corect (in afara ferestrei, sau scris
+dupa fix) nu se modifica; rulat de mai multe ori, a doua rulare nu mai
+gaseste nimic de corectat. Scop STRICT limitat la `grid_power_w` -- regresia
+PR #173 nu a atins `battery_power_w`/`pv_power_w`/`load_power_w` (verificat
+in diff-ul PR #173), deci acestea raman neatinse. Telemetria de la
+dispozitivul local (`source=device_rs485`) nu foloseste `deye_cloud_service`
+si nu a fost niciodata afectata -- filtrata explicit din interogare.
+
+Dupa corectarea randurilor `TelemetryRaw`, scriptul reagregheaza
+(`aggregation_service.reaggregate_range`, deja idempotent prin UPSERT)
+fiecare statie/interval atins, ca `TelemetryAggregate` (si deci cardurile
+dashboard) sa reflecte datele corectate. Rulare (o singura data, contra
+bazei de date populate -- nu face parte din migrarea Alembic, e o corectie
+de date, nu de schema):
+
+```
+python -m scripts.fix_deye_cloud_grid_sign_regression --dry-run
+python -m scripts.fix_deye_cloud_grid_sign_regression
+```
+
+**Nu acopera:** o migrare Alembic automata la deploy -- scriptul ramane un
+instrument manual, rulat o singura data per mediu contaminat (dev/staging/
+productie), documentat aici pentru viitor daca aceeasi clasa de regresie
+(mapare de semn corectata in cod, dar semn deja persistat gresit in date)
+apare din nou pe alt camp.
+
+**Teste.** `tests/unit/test_fix_deye_cloud_grid_sign_regression.py`:
+corecteaza doar randurile cu semn efectiv gresit (nu si un rand deja corect
+scris in afara ferestrei); `battery_power_w` si randurile `device_rs485`
+raman neatinse; a doua rulare e no-op (idempotenta); dupa corectie,
+`TelemetryAggregate.grid_import_energy_kwh`/`grid_export_energy_kwh` pentru
+intervalul `interval_15m` atins reflecta valoarea corecta (nu doar
+`TelemetryRaw`, fara efect vizibil pe dashboard).
+
+## Addendum: Creare utilizatori platform_admin din admin panel + regrupare meniu admin
+
+Cerere client: posibilitatea de a adauga utilizatori `platform_admin` (acces
+de administrare la TOATA platforma, nu doar la o organizatie) direct din
+admin panel, plus regruparea meniului de admin, deja incarcat cu 12 intrari
+plate fara nicio structura.
+
+**1. Creare platform_admin.** Pana acum singura cale de a obtine un
+`platform_admin` era `bootstrap_first_admin` (`/bootstrap-admin`, token
+`BOOTSTRAP_ADMIN_TOKEN`, functioneaza o SINGURA data, doar cand nu exista
+inca niciun platform_admin) -- fara nicio cale ulterioara de a mai adauga
+unul. Adaugat `auth_service.create_platform_admin(db, actor, email,
+full_name, password)`, distinct de bootstrap: apelabil oricand, de orice
+platform_admin autentificat (`POST /admin/users/platform-admins`, in
+routerul `admin.py` deja protejat in intregime de `require_platform_admin`).
+Nu necesita membership intr-o organizatie -- accesul global vine direct din
+`User.is_platform_admin`, verificat de `require_platform_admin` pe toate
+rutele `/admin/*`. Respinge explicit email deja existent (`AuthError`, nu o
+exceptie SQL de constrangere unica netratata). Parola validata la nivel de
+ruta (potrivire + minim 10 caractere), acelasi contract ca
+`/accept-invitation`/`/reset-password`. Actiune audiata
+(`platform_admin_created`, `resource_type="user"`, actor = adminul care a
+creat contul, metadata cu emailul noului cont -- NICIODATA parola).
+
+**Nu acopera:** revocarea `is_platform_admin` de pe un cont existent (doar
+CREARE de conturi noi, cerut explicit de client) -- si nicio protectie
+speciala impotriva "ultimul platform_admin ramas" pentru ca aceasta
+operatie nu poate reduce numarul de platform_admin (doar il creste).
+
+**2. Regrupare meniu admin.** `admin/_tabs.html` avea 12 linkuri plate,
+fara nicio ierarhie. Regrupat in 3 categorii, cerute explicit de client:
+"Organizatii si utilizatori" (Sumar, Organizatii, Utilizatori), "Flota
+EMS-device" (Flota device-uri, Device-uri neasociate/asociate, Firmware
+release-uri/rollout-uri), "Administrare platforma" (Operatiuni, Scheduler
+&amp; worker, Catalog echipamente, Jurnal de audit) -- exact gruparea
+ceruta ("audit, schedulers, catalog"). Pur reorganizare vizuala (grupuri cu
+`<span>` de eticheta + separator) -- niciun URL/ruta nu s-a schimbat, deci
+niciun test/link existent care tinteste o ruta `/admin/*` nu a fost afectat.
+
+**Teste.** `tests/integration/test_admin_users_platform_admin_routes.py`
+(RBAC -- doar platform_admin poate crea altul; CSRF; validare parola;
+email duplicat respins; contul nou creat chiar functioneaza -- verificat
+printr-un GET real pe o ruta admin protejata, nu doar flag-ul din DB;
+intrare de audit scrisa). `tests/unit/test_admin_nav_grouping.py`
+(cele 3 categorii prezente, toate cele 12 linkuri de ruta existente inca
+prezente undeva in nav, ordinea grupurilor).
