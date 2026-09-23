@@ -201,11 +201,18 @@ def data_forecast_vs_actual(
     station_id: uuid.UUID,
     metric: str = Query(default="pv"),
     range: str = Query(default="24h"),
+    horizon_hours: int = Query(default=0, ge=0, le=72),
     db: Session = Depends(get_db),
     station_role: tuple = Depends(StationAccess(min_role="viewer")),
 ):
+    """`horizon_hours` extinde fereastra dincolo de "acum" (implicit 0 =
+    comportamentul vechi, doar trecut). Limita de 72h corespunde ferestrei
+    meteo Open-Meteo (`forecast_days=3` in weather_service.py) -- peste asta
+    nu exista deja prognoza PV generata, indiferent de valoarea ceruta."""
     station, _role = station_role
     start, end = _parse_range(range)
+    if horizon_hours:
+        end = end + timedelta(hours=horizon_hours)
     return JSONResponse(dashboard_service.get_forecast_vs_actual(db, station, metric, start, end))
 
 
