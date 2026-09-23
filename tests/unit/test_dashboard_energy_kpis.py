@@ -43,24 +43,47 @@ def test_energy_kpi_value_marks_partial_coverage_without_dropping_value():
     }
 
 
-def test_energy_kpi_value_adds_context_only_with_comparable_coverage():
+def test_energy_kpi_value_adds_comparison_only_with_comparable_elapsed_coverage():
+    """`current_elapsed_coverage` (acoperirea PORTIUNII DEJA SCURSE din
+    perioada curenta), NU `row.coverage` (relativa la perioada INTREAGA),
+    e cea care decide daca se arata comparatia -- vezi regresia din
+    `test_dashboard_service.py::test_energy_kpi_today_comparison_uses_elapsed_window_not_full_previous_day`
+    pentru simptomul concret pe care aceasta distinctie il repara."""
     row = SimpleNamespace(
         pv_energy_kwh=Decimal("15.0000"),
         coverage={"pv": 1.0},
         data_quality="measured",
     )
-    previous = SimpleNamespace(
-        pv_energy_kwh=Decimal("10.0000"),
-        coverage={"pv": 1.0},
-        data_quality="measured",
-    )
+    comparison_totals = {"pv_energy_kwh": Decimal("10.0000")}
 
-    assert _energy_kpi_value(row, "pv_energy_kwh", "pv", previous)["comparison"] == {
+    assert _energy_kpi_value(
+        row, "pv_energy_kwh", "pv",
+        current_elapsed_coverage={"pv": 1.0},
+        comparison_totals=comparison_totals,
+        comparison_coverage={"pv": 1.0},
+    )["comparison"] == {
         "previous_value": 10.0,
         "delta": 5.0,
         "delta_percent": 50.0,
-        "quality": "measured",
     }
 
-    previous.coverage = {"pv": 0.2}
-    assert _energy_kpi_value(row, "pv_energy_kwh", "pv", previous)["comparison"] is None
+    # Perioada curenta nu are inca destule date in portiunea scursa.
+    assert _energy_kpi_value(
+        row, "pv_energy_kwh", "pv",
+        current_elapsed_coverage={"pv": 0.2},
+        comparison_totals=comparison_totals,
+        comparison_coverage={"pv": 1.0},
+    )["comparison"] is None
+
+    # Perioada curenta e ok, dar fereastra anterioara comparabila nu are
+    # destule date.
+    assert _energy_kpi_value(
+        row, "pv_energy_kwh", "pv",
+        current_elapsed_coverage={"pv": 1.0},
+        comparison_totals=comparison_totals,
+        comparison_coverage={"pv": 0.2},
+    )["comparison"] is None
+
+    # Fara argumente de comparatie deloc (echivalentul vechiului
+    # `previous_row=None`) -- comparatia ramane indisponibila, nu eroare.
+    assert _energy_kpi_value(row, "pv_energy_kwh", "pv")["comparison"] is None

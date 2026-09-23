@@ -802,3 +802,139 @@ def test_plan_chart_exposes_observed_fields_distinctly_from_planned(db):
     assert second["observed_grid_kw"] is None
     assert second["observed_soc_pct"] is None
     assert second["deviation_notes"] is None
+
+
+# --- get_energy_period_kpis: comparatie "aceeasi durata scursa" ---------
+
+
+def test_energy_kpi_today_comparison_uses_elapsed_window_not_full_previous_day(db):
+    """Regression (raport client): 'comparatie cu ieri: indisponibila' aparea
+    aproape tot timpul zilei, pentru ca pragul de acoperire (90%) se aplica
+    fata de coverage-ul agregatului `day`, relativ la ziua INTREAGA (24h),
+    nu fata de cat a trecut deja din ea -- la pranz, o zi in curs cu date
+    PERFECTE are coverage=0.5, deci nu putea trece niciodata pragul inainte
+    de seara. Fix: comparatia foloseste fereastra "aceeasi durata scursa"
+    din ziua anterioara (`_elapsed_window_totals`), nu randul `day` complet
+    al zilei anterioare."""
+    from freezegun import freeze_time
+
+    station = _station(db, "kpi-elapsed")
+    tz = ZoneInfo(station.timezone)
+    local_noon = datetime(2026, 1, 15, 12, 0, tzinfo=tz)
+    now_utc = local_noon.astimezone(UTC)
+    today_start = datetime(2026, 1, 15, 0, 0, tzinfo=tz).astimezone(UTC)
+    today_end = datetime(2026, 1, 16, 0, 0, tzinfo=tz).astimezone(UTC)
+    yesterday_start = datetime(2026, 1, 14, 0, 0, tzinfo=tz).astimezone(UTC)
+    yesterday_noon = datetime(2026, 1, 14, 12, 0, tzinfo=tz).astimezone(UTC)
+
+    # "Astazi", exact simptomul raportat: date PERFECTE pentru jumatatea de
+    # zi deja scursa, dar coverage=0.5 fata de ziua INTREAGA (24h).
+    db.add(TelemetryAggregate(
+        station_id=station.id, period_type="day", period_start=today_start, period_end=today_end,
+        pv_energy_kwh=Decimal("6.0"), load_energy_kwh=Decimal("4.0"),
+        grid_import_energy_kwh=Decimal("1.0"), grid_export_energy_kwh=Decimal("0.5"),
+        battery_charge_energy_kwh=Decimal("0.5"), battery_discharge_energy_kwh=Decimal("0.2"),
+        sample_count=48, data_quality="measured",
+        coverage={"pv": 0.5, "load": 0.5, "grid": 0.5, "battery": 0.5},
+    ))
+    # Ieri, aceeasi fereastra scursa (00:00-12:00): complet acoperita.
+    db.add(TelemetryAggregate(
+        station_id=station.id, period_type="interval_15m", period_start=yesterday_start, period_end=yesterday_noon,
+        pv_energy_kwh=Decimal("5.0"), load_energy_kwh=Decimal("3.5"),
+        grid_import_energy_kwh=Decimal("0.8"), grid_export_energy_kwh=Decimal("0.4"),
+        battery_charge_energy_kwh=Decimal("0.3"), battery_discharge_energy_kwh=Decimal("0.1"),
+        sample_count=48, data_quality="measured",
+        coverage={"pv": 1.0, "load": 1.0, "grid": 1.0, "battery": 1.0},
+    ))
+    db.commit()
+
+    with freeze_time(now_utc):
+        result = dashboard.get_energy_period_kpis(db, station)
+
+    today = result["today"]["metrics"]
+    assert today["pv"]["comparison"] is not None
+    assert abs(today["pv"]["comparison"]["previous_value"] - 5.0) < 0.001
+    assert abs(today["pv"]["comparison"]["delta"] - 1.0) < 0.001
+    assert today["grid_import"]["comparison"] is not None
+    assert abs(today["grid_import"]["comparison"]["previous_value"] - 0.8) < 0.001
+
+
+def test_energy_kpi_comparison_stays_unavailable_when_elapsed_window_itself_lacks_data(db):
+    """Fix-ul de mai sus schimba BAZA pragului de acoperire, nu il elimina:
+    daca portiunea deja scursa din ziua curenta chiar nu are date suficiente,
+    comparatia trebuie sa ramana indisponibila, nu sa arate o cifra
+    inventata."""
+    from freezegun import freeze_time
+
+    station = _station(db, "kpi-elapsed-insufficient")
+    tz = ZoneInfo(station.timezone)
+    local_noon = datetime(2026, 1, 15, 12, 0, tzinfo=tz)
+    now_utc = local_noon.astimezone(UTC)
+    today_start = datetime(2026, 1, 15, 0, 0, tzinfo=tz).astimezone(UTC)
+    today_end = datetime(2026, 1, 16, 0, 0, tzinfo=tz).astimezone(UTC)
+
+    # coverage=0.1 fata de ziua intreaga -> rescalat la portiunea scursa
+    # (12h din 24h), tot sub pragul de 90%.
+    db.add(TelemetryAggregate(
+        station_id=station.id, period_type="day", period_start=today_start, period_end=today_end,
+        pv_energy_kwh=Decimal("1.0"), load_energy_kwh=Decimal("1.0"),
+        grid_import_energy_kwh=Decimal("0.1"), grid_export_energy_kwh=Decimal("0.1"),
+        battery_charge_energy_kwh=Decimal("0.1"), battery_discharge_energy_kwh=Decimal("0.1"),
+        sample_count=5, data_quality="estimated",
+        coverage={"pv": 0.1, "load": 0.1, "grid": 0.1, "battery": 0.1},
+    ))
+    db.commit()
+
+    with freeze_time(now_utc):
+        result = dashboard.get_energy_period_kpis(db, station)
+
+    today = result["today"]["metrics"]
+    assert today["pv"]["comparison"] is None
+    assert today["pv"]["value"] == 1.0  # valoarea ramane afisata, doar comparatia lipseste
+
+
+def test_energy_kpi_month_comparison_uses_elapsed_window_not_full_previous_month(db):
+    """Acelasi fix, la granularitatea lunii: comparatia cu luna anterioara
+    foloseste zilele agregate ale lunii trecute corespunzatoare portiunii
+    deja scurse din luna curenta, nu randul `month` complet, incheiat."""
+    from freezegun import freeze_time
+
+    station = _station(db, "kpi-elapsed-month")
+    tz = ZoneInfo(station.timezone)
+    # 10 zile scurse din luna curenta (ianuarie).
+    now_local = datetime(2026, 1, 11, 0, 0, tzinfo=tz)
+    now_utc = now_local.astimezone(UTC)
+    month_start = datetime(2026, 1, 1, tzinfo=tz).astimezone(UTC)
+    month_end = datetime(2026, 2, 1, tzinfo=tz).astimezone(UTC)
+    prev_month_start = datetime(2025, 12, 1, tzinfo=tz).astimezone(UTC)
+    prev_month_elapsed_end = datetime(2025, 12, 11, 0, 0, tzinfo=tz).astimezone(UTC)
+
+    # Coverage=1/3 fata de luna intreaga (31 zile), desi cele 10 zile scurse
+    # au date complete -- exact acelasi simptom structural ca la "azi".
+    db.add(TelemetryAggregate(
+        station_id=station.id, period_type="month", period_start=month_start, period_end=month_end,
+        pv_energy_kwh=Decimal("50.0"), load_energy_kwh=Decimal("40.0"),
+        grid_import_energy_kwh=None, grid_export_energy_kwh=None,
+        battery_charge_energy_kwh=None, battery_discharge_energy_kwh=None,
+        sample_count=10, data_quality="measured",
+        coverage={"pv": 10 / 31, "load": 10 / 31, "grid": 0.0, "battery": 0.0},
+    ))
+    # Luna trecuta (decembrie), primele 10 zile: un singur rand `day`
+    # agregat pentru simplitate, insumand cele 10 zile.
+    db.add(TelemetryAggregate(
+        station_id=station.id, period_type="day", period_start=prev_month_start, period_end=prev_month_elapsed_end,
+        pv_energy_kwh=Decimal("45.0"), load_energy_kwh=Decimal("38.0"),
+        grid_import_energy_kwh=None, grid_export_energy_kwh=None,
+        battery_charge_energy_kwh=None, battery_discharge_energy_kwh=None,
+        sample_count=10, data_quality="measured",
+        coverage={"pv": 1.0, "load": 1.0, "grid": 0.0, "battery": 0.0},
+    ))
+    db.commit()
+
+    with freeze_time(now_utc):
+        result = dashboard.get_energy_period_kpis(db, station)
+
+    month = result["month"]["metrics"]
+    assert month["pv"]["comparison"] is not None
+    assert abs(month["pv"]["comparison"]["previous_value"] - 45.0) < 0.001
+    assert abs(month["pv"]["comparison"]["delta"] - 5.0) < 0.001

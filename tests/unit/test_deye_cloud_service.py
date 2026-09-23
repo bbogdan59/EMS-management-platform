@@ -186,13 +186,16 @@ def test_map_station_latest_inverts_battery_and_grid_power_signs():
     raport real de utilizator -- valori de ordinul miilor pe un grafic
     etichetat kW), nu kW -- maparea NU mai inmulteste cu 1000.
 
-    Verificat pe date reale: `batteryPower` si `wirePower` sunt opuse
-    conventiei platformei, deci semnul se inverseaza pentru ambele."""
+    `batteryPower` e opus conventiei platformei -- semnul se inverseaza.
+    `wirePower` foloseste DEJA conventia platformei si NU se inverseaza: o
+    inversare gresita adaugata anterior aici a produs exact simptomul opus
+    celui reparat (import/export afisate inversat pe dashboard), confirmat
+    direct de proprietarul contului Deye Cloud pe date reale."""
     mapped = svc.map_station_latest_to_telemetry(
         {"batteryPower": -1500, "generationPower": 2000, "consumptionPower": 1000, "wirePower": -500, "batterySOC": 80}
     )
     assert mapped["battery_power_w"] == 1500  # incarcare (Deye: negativ) -> pozitiv, conventia platformei
-    assert mapped["grid_power_w"] == 500  # Deye wirePower negativ -> import pozitiv in platforma
+    assert mapped["grid_power_w"] == -500  # Deye wirePower foloseste deja conventia platformei, nu se inverseaza
     assert mapped["pv_power_w"] == 2000
     assert mapped["load_power_w"] == 1000
     assert mapped["battery_soc_percent"] == 80
@@ -215,7 +218,7 @@ def test_map_station_latest_treats_deye_power_fields_as_watts_not_kw():
 
     assert mapped["pv_power_w"] == Decimal("1263")
     assert mapped["load_power_w"] == Decimal("1110")
-    assert mapped["grid_power_w"] == Decimal("-20")  # wirePower Deye pozitiv -> export negativ in platforma
+    assert mapped["grid_power_w"] == Decimal("20")  # wirePower foloseste deja conventia platformei
     assert mapped["battery_power_w"] == Decimal("-500")  # batteryPower descarcare (+) -> semn inversat
 
 
@@ -449,7 +452,7 @@ def test_import_station_history_creates_rows_deduplicates_and_reaggregates(db, m
     assert imported.pv_power_w == Decimal("1500")
     assert imported.load_power_w == Decimal("700")
     assert imported.battery_power_w == Decimal("200")
-    assert imported.grid_power_w == Decimal("600")
+    assert imported.grid_power_w == Decimal("-600")
     assert imported.battery_soc_percent == Decimal("61")
     assert reaggregated == [(station.id, new_at, new_at + timedelta(minutes=15))]
     assert conn.last_sync_status == "succeeded"
@@ -602,7 +605,7 @@ def test_deye_watt_ingest_feeds_dashboard_kpis_and_aggregates_in_kw_kwh(db, monk
 
     assert abs(summary["pv_power_kw"] - 1.263) < 0.001
     assert abs(summary["load_power_kw"] - 1.11) < 0.001
-    assert abs(summary["grid_power_kw"] + 0.02) < 0.001  # Deye wirePower pozitiv -> export negativ in platforma
+    assert abs(summary["grid_power_kw"] - 0.02) < 0.001  # Deye wirePower foloseste deja conventia platformei
     raw_row = db.scalar(
         select(TelemetryRaw).where(
             TelemetryRaw.device_id == cloud_device.id,
@@ -622,7 +625,7 @@ def test_deye_watt_ingest_feeds_dashboard_kpis_and_aggregates_in_kw_kwh(db, monk
     assert interval is not None
     assert interval.pv_energy_kwh == Decimal("0.1053")
     assert interval.load_energy_kwh == Decimal("0.0925")
-    assert interval.grid_export_energy_kwh == Decimal("0.0017")
+    assert interval.grid_import_energy_kwh == Decimal("0.0017")
 
 
 # --- Ciclul de viata al conexiunii: connect/select/disconnect ---------------

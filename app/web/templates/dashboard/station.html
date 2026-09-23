@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% from "partials/_breadcrumb.html" import trail as breadcrumb %}
+{% from "partials/_field_group.html" import group as field_group %}
 {% block title %}{{ station.name }} - {{ app_name }}{% endblock %}
 {% block content %}
 <div class="space-y-6">
@@ -113,7 +114,8 @@
         <h2 id="energy-{{ period_key }}-title" class="font-medium">{{ period_label }}</h2>
         <span id="kpi-{{ period_key }}-quality" class="badge-muted">fara date</span>
       </div>
-      <div class="grid grid-cols-2 gap-3 sm:grid-cols-3">
+      <div class="grid grid-cols-1 gap-3 md:grid-cols-3">
+        {% call field_group("Productie / consum") %}
         <div>
           <p class="label !mb-1">PV</p>
           <p id="kpi-{{ period_key }}-pv" class="text-sm font-semibold">Se incarca...</p>
@@ -126,6 +128,8 @@
           <p id="kpi-{{ period_key }}-load-context" class="text-xs text-gray-500 dark:text-gray-400"></p>
           <p id="kpi-{{ period_key }}-load-coverage" class="text-xs text-gray-500 dark:text-gray-400"></p>
         </div>
+        {% endcall %}
+        {% call field_group("Retea: import / export") %}
         <div>
           <p class="label !mb-1">Import</p>
           <p id="kpi-{{ period_key }}-grid-import" class="text-sm font-semibold">Se incarca...</p>
@@ -138,18 +142,21 @@
           <p id="kpi-{{ period_key }}-grid-export-context" class="text-xs text-gray-500 dark:text-gray-400"></p>
           <p id="kpi-{{ period_key }}-grid-export-coverage" class="text-xs text-gray-500 dark:text-gray-400"></p>
         </div>
+        {% endcall %}
+        {% call field_group("Baterie: incarcare / descarcare") %}
         <div>
-          <p class="label !mb-1">Baterie incarcata</p>
+          <p class="label !mb-1">Incarcata</p>
           <p id="kpi-{{ period_key }}-battery-charge" class="text-sm font-semibold">Se incarca...</p>
           <p id="kpi-{{ period_key }}-battery-charge-context" class="text-xs text-gray-500 dark:text-gray-400"></p>
           <p id="kpi-{{ period_key }}-battery-charge-coverage" class="text-xs text-gray-500 dark:text-gray-400"></p>
         </div>
         <div>
-          <p class="label !mb-1">Baterie descarcata</p>
+          <p class="label !mb-1">Descarcata</p>
           <p id="kpi-{{ period_key }}-battery-discharge" class="text-sm font-semibold">Se incarca...</p>
           <p id="kpi-{{ period_key }}-battery-discharge-context" class="text-xs text-gray-500 dark:text-gray-400"></p>
           <p id="kpi-{{ period_key }}-battery-discharge-coverage" class="text-xs text-gray-500 dark:text-gray-400"></p>
         </div>
+        {% endcall %}
       </div>
       <details class="mt-3 text-xs text-gray-500 dark:text-gray-400">
         <summary class="cursor-pointer select-none text-gray-600 dark:text-gray-300">Cum se calculeaza?</summary>

@@ -2891,3 +2891,65 @@ PV, care oricum nu se claseaza inca).
 stack-uri aplicata identic la ambele grafice, etichetele si legenda
 specifice per metrica, randul de procente cu tooltip la hover, fix-ul
 `axisValue` vs. `value[0]`, culorile explicite ale liniilor/zonelor).
+
+## Addendum: Regresie semn Deye grid corectata, grupare vizuala KPI, comparatie "aceeasi durata scursa"
+
+Trei corectii pe cardurile "Astazi"/"Luna curenta" ale dashboard-ului,
+raportate direct de proprietarul unui cont Deye Cloud real.
+
+**1. Regresie de semn la `wirePower` (import/export inversate).** Addendumul
+"conventia de semn reala pentru baterie/retea" de mai sus (verificat pe 60+
+probe live) stabilise deja corect: `wirePower` foloseste DEJA conventia
+platformei (pozitiv=import/negativ=export), `grid_power_w = wirePower`
+DIRECT, fara aritmetica. Un PR ulterior ("Fix dashboard forecast and Deye
+grid signs") a introdus din nou o inversare (`grid_power_w = -wirePower`),
+FARA sa actualizeze acest fisier si FARA sa citeze o noua verificare live --
+o regresie simpla, nu o corectie. Consecinta: import si export afisate
+inversat pe cardurile "Astazi"/"Luna curenta" (si pe graficul de putere),
+exact simptomul deja documentat si reparat anterior. Corectat din nou:
+`grid_power_w = wire_w`, fara inversare, in
+`map_station_latest_to_telemetry` (`app/services/deye_cloud_service.py`).
+Bateria NU a fost afectata (`battery_power_w = -batteryPower` a ramas
+neschimbata si corecta pe tot parcursul). Testele din
+`tests/unit/test_deye_cloud_service.py` au fost actualizate sa reflecte
+maparea corecta, cu comentarii care explica de ce (nu doar ce).
+
+**2. Comparatia "cu ieri"/"cu luna anterioara" era practic mereu
+indisponibila.** Pragul de acoperire (90%) se aplica pe `coverage`-ul
+randului `day`/`month`, calculat fata de perioada INTREAGA (24h / luna
+intreaga) -- o zi in curs, la pranz, are `coverage=0.5` chiar cu date
+perfecte, deci pragul de 90% era practic inatins inainte de ~21:30.
+Simptomul raportat ("comparatie cu ieri: indisponibila -- acoperire 50%")
+era deci starea NORMALA pentru majoritatea zilei, nu un caz marginal rar.
+Fix: pragul se aplica acum pe acoperirea PORTIUNII DEJA SCURSE din perioada
+curenta (derivata prin rescalare din `coverage`-ul existent al randului --
+nicio interogare noua pentru partea curenta), iar valoarea de comparatie se
+calculeaza dintr-o fereastra "aceeasi durata scursa" din perioada anterioara
+(`_elapsed_window_totals` in `app/services/dashboard_service.py`, citind
+agregate `interval_15m` pentru "azi" si `day` pentru "luna", nu randul
+complet, INCHEIAT, al perioadei anterioare). "Acoperire" afisata pentru
+VALOARE (badge-ul de calitate) ramane neschimbata -- e corect sa arate "cat
+din ziua intreaga are deja date", doar baza pragului pentru COMPARATIE s-a
+schimbat.
+
+**3. Grupare vizuala a metricilor corelate.** Cele 6 metrici (PV, Consum,
+Import, Export, Baterie incarcata/descarcata) erau intr-un grid plat de 6
+casute fara nicio legatura vizuala intre ele. Regrupate in 3 seturi
+corelate -- Productie/consum, Retea (import/export), Baterie
+(incarcare/descarcare) -- reutilizand componenta EXISTENTA `field_group`
+(issue #48, `partials/_field_group.html`), aceeasi folosita pentru gruparea
+campurilor de configurare (ex. putere incarcare/descarcare baterie). Pur
+reorganizare de template -- niciun ID de element JS nu s-a schimbat, deci
+`dashboard.js` nu a necesitat nicio modificare pentru asta.
+
+**Teste.** `tests/unit/test_deye_cloud_service.py` (maparea corecta
+`wirePower` -> `grid_power_w` fara inversare, in toate cele 3 puncte
+testate: mapare directa, import istoric, KPI-uri dashboard din telemetrie
+Deye). `tests/unit/test_dashboard_energy_kpis.py` (`_energy_kpi_value`
+foloseste acoperirea elapsed, nu cea a randului intreg, pentru pragul de
+comparatie). `tests/unit/test_dashboard_service.py`
+(`get_energy_period_kpis`: comparatie disponibila la 50% acoperire a zilei
+INTREGI cand portiunea scursa e complet acoperita, ramane indisponibila cand
+portiunea scursa chiar nu are date, acelasi comportament la granularitatea
+lunii). `tests/unit/test_dashboard_client_first_layout.py` (gruparea
+vizuala foloseste `field_group`, ID-urile ramane neschimbate).

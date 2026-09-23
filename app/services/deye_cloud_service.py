@@ -252,12 +252,20 @@ def fetch_station_history_power(
 # afisand valori de ordinul miilor pe un grafic etichetat kW, ex. 2500 in loc
 # de 2.5): API-ul raporteaza de fapt WATI, nu kW, ca restul platformei.
 #
-# Verificarea live ulterioara a mai aratat ca `batteryPower` si `wirePower`
-# folosesc conventia OPUSA platformei pentru semn -- semnul se inverseaza la
-# mapare: platforma pastreaza baterie pozitiv=incarcare si retea
-# pozitiv=import. Maparea e deliberat DEFENSIVA: o
-# cheie lipsa/necunoscuta produce `None` (necunoscut), niciodata 0 --
-# consecvent cu restul platformei (vezi docs/CODE_STANDARDS.md, regula 2).
+# Verificarea live ulterioara a mai aratat ca `batteryPower` foloseste
+# conventia OPUSA platformei pentru semn -- semnul se inverseaza la mapare:
+# platforma pastreaza baterie pozitiv=incarcare.
+#
+# `wirePower` a fost la randul lui inversat pe o iteratie anterioara (pe
+# baza unei "verificari live" care s-a dovedit GRESITA), ceea ce a produs
+# exact simptomul opus celui reparat: import si export afisate inversat pe
+# dashboard, confirmat direct de proprietarul contului Deye Cloud pe date
+# reale. `wirePower` foloseste de fapt DEJA conventia platformei
+# (pozitiv=import/negativ=export) si nu trebuie inversat -- vezi
+# `test_map_station_latest_inverts_battery_and_grid_power_signs`. Maparea e
+# deliberat DEFENSIVA: o cheie lipsa/necunoscuta produce `None` (necunoscut),
+# niciodata 0 -- consecvent cu restul platformei (vezi
+# docs/CODE_STANDARDS.md, regula 2).
 def _dec(value) -> Decimal | None:
     if value is None:
         return None
@@ -277,13 +285,15 @@ def map_station_latest_to_telemetry(raw: dict) -> dict:
 
     # Conventia platformei (vezi app/models/telemetry.py): baterie
     # pozitiv=incarcare/negativ=descarcare; retea pozitiv=import/negativ=export.
-    # Verificat pe date reale Deye: `batteryPower` si `wirePower` sunt opuse
-    # conventiei platformei, deci ambele isi inverseaza semnul la ingestie.
+    # `batteryPower` e opus conventiei platformei si isi inverseaza semnul la
+    # ingestie. `wirePower` foloseste DEJA conventia platformei -- NU se
+    # inverseaza (o inversare gresita aici a fost reparata dupa un raport
+    # direct de utilizator: import/export afisate inversat pe dashboard).
     # (`chargePower`/`dischargePower`/`purchasePower`/`gridPower` sunt doar
     # oglinzi partiale -- populate doar cand valoarea lor e diferita de zero
     # -- ale acelorasi doua campuri si NU mai sunt folosite aici.)
     battery_w = -battery_raw_w if battery_raw_w is not None else None
-    grid_w = -wire_w if wire_w is not None else None
+    grid_w = wire_w
 
     measured_at = None
     last_update_time = raw.get("lastUpdateTime")

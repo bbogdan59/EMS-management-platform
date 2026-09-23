@@ -583,12 +583,76 @@ def _previous_period_start_utc(station: Station, period: str, now: datetime) -> 
     raise ValueError(f"Unsupported dashboard KPI period: {period}")
 
 
+def _period_end_utc(station: Station, period: str, now: datetime) -> datetime:
+    tz = _station_tz(station)
+    local_now = now.astimezone(tz)
+    if period == "today":
+        next_day = date(local_now.year, local_now.month, local_now.day) + timedelta(days=1)
+        return datetime.combine(next_day, datetime.min.time(), tzinfo=tz).astimezone(UTC)
+    if period == "month":
+        year, month = local_now.year, local_now.month
+        next_year, next_month = (year + 1, 1) if month == 12 else (year, month + 1)
+        return datetime(next_year, next_month, 1, tzinfo=tz).astimezone(UTC)
+    raise ValueError(f"Unsupported dashboard KPI period: {period}")
+
+
+_ENERGY_KPI_ENERGY_FIELDS = (
+    "pv_energy_kwh", "load_energy_kwh", "grid_import_energy_kwh", "grid_export_energy_kwh",
+    "battery_charge_energy_kwh", "battery_discharge_energy_kwh",
+)
+_ENERGY_KPI_COVERAGE_KEYS = ("pv", "load", "grid", "battery")
+
+
+def _elapsed_window_totals(
+    db: Session, station_id: uuid.UUID, source_period_type: str, window_start: datetime, window_end: datetime
+) -> tuple[dict[str, Decimal | None], dict[str, float]]:
+    """Suma + acoperirea fiecarei metrici energetice intr-o fereastra
+    arbitrara [window_start, window_end), citita din agregatele de
+    granularitate `source_period_type` -- o treapta mai fina decat perioada
+    tinta (`interval_15m` pentru o fereastra de-o zi, `day` pentru o
+    fereastra de-o luna). Folosita pentru comparatia "aceeasi durata scursa"
+    ieri/luna trecuta: comparatia impotriva RANDULUI COMPLET al perioadei
+    anterioare (comportamentul vechi) facea pragul de acoperire de 90%
+    practic inatins pentru "azi" pana aproape de miezul noptii, pentru ca
+    acoperirea unei zile in curs se calculeaza fata de ziua INTREAGA (24h),
+    nu fata de cat a trecut deja din ea -- "comparatie cu ieri: indisponibila"
+    aparea permanent, nu doar cand chiar lipseau date."""
+    if window_end <= window_start:
+        return {}, dict.fromkeys(_ENERGY_KPI_COVERAGE_KEYS, 0.0)
+    rows = db.scalars(
+        select(TelemetryAggregate).where(
+            TelemetryAggregate.station_id == station_id,
+            TelemetryAggregate.period_type == source_period_type,
+            TelemetryAggregate.period_start >= window_start,
+            TelemetryAggregate.period_start < window_end,
+        )
+    ).all()
+    total_seconds = (window_end - window_start).total_seconds()
+    totals: dict[str, Decimal | None] = {}
+    for field in _ENERGY_KPI_ENERGY_FIELDS:
+        values = [getattr(r, field) for r in rows if getattr(r, field) is not None]
+        totals[field] = Decimal(str(round(sum(float(v) for v in values), 6))) if values else None
+    coverage: dict[str, float] = {}
+    for key in _ENERGY_KPI_COVERAGE_KEYS:
+        covered_seconds = sum(
+            (min(r.period_end, window_end) - max(r.period_start, window_start)).total_seconds() * (r.coverage or {}).get(key, 0.0)
+            for r in rows
+        )
+        coverage[key] = round(min(covered_seconds / total_seconds, 1.0), 4) if total_seconds > 0 else 0.0
+    return totals, coverage
+
+
 def _energy_kpi_value(
     row: TelemetryAggregate | None,
     field: str,
     coverage_key: str,
-    previous_row: TelemetryAggregate | None = None,
+    current_elapsed_coverage: dict[str, float] | None = None,
+    comparison_totals: dict[str, Decimal | None] | None = None,
+    comparison_coverage: dict[str, float] | None = None,
 ) -> dict:
+    current_elapsed_coverage = current_elapsed_coverage or {}
+    comparison_totals = comparison_totals or {}
+    comparison_coverage = comparison_coverage or {}
     if row is None:
         return {"value": None, "coverage": 0.0, "quality": "missing", "comparison": None}
     value = getattr(row, field)
@@ -597,16 +661,18 @@ def _energy_kpi_value(
         return {"value": None, "coverage": coverage, "quality": "missing", "comparison": None}
     quality = "partial" if coverage < ENERGY_KPI_COVERAGE_PARTIAL_BELOW else row.data_quality
     comparison = None
-    if coverage >= ENERGY_KPI_COVERAGE_PARTIAL_BELOW and previous_row is not None:
-        previous_value = getattr(previous_row, field)
-        previous_coverage = float((previous_row.coverage or {}).get(coverage_key, 0) or 0)
+    # Pragul se aplica pe acoperirea PORTIUNII DEJA SCURSE din perioada
+    # curenta (nu pe `coverage`, relativa la perioada INTREAGA) -- altfel
+    # "azi" nu ar trece niciodata pragul inainte de sfarsitul zilei.
+    if current_elapsed_coverage.get(coverage_key, 0.0) >= ENERGY_KPI_COVERAGE_PARTIAL_BELOW:
+        previous_value = comparison_totals.get(field)
+        previous_coverage = comparison_coverage.get(coverage_key, 0.0)
         if previous_value is not None and previous_coverage >= ENERGY_KPI_COVERAGE_PARTIAL_BELOW:
             delta = value - previous_value
             comparison = {
                 "previous_value": float(previous_value),
                 "delta": float(delta),
                 "delta_percent": float((delta / previous_value) * Decimal("100")) if previous_value != 0 else None,
-                "quality": previous_row.data_quality,
             }
     return {"value": float(value), "coverage": round(coverage, 4), "quality": quality, "comparison": comparison}
 
@@ -617,11 +683,19 @@ def get_energy_period_kpis(db: Session, station: Station) -> dict:
     Agregatele sunt cautate dupa inceputul perioadei in calendarul statiei.
     Valoarea ramane `null` cand randul sau metrica lipseste: lipsa de date nu
     devine niciodata zero, iar acoperirea ramane atasata fiecarei metrici.
+
+    Comparatia cu perioada anterioara ("ieri"/"luna anterioara") foloseste
+    fereastra "aceeasi durata scursa" (vezi `_elapsed_window_totals`), NU
+    randul complet al perioadei anterioare -- o zi/luna in curs nu poate fi
+    comparata corect cu una INCHEIATA fara sa alunece pragul de acoperire
+    dincolo de orice moment realist inainte de finalul perioadei.
     """
     now = utcnow()
+    # (period_type-ul propriului rand, granularitatea sursa mai fina pentru
+    # fereastra "aceeasi durata scursa")
     periods = {
-        "today": ("day", _period_start_utc(station, "today", now)),
-        "month": ("month", _period_start_utc(station, "month", now)),
+        "today": ("day", "interval_15m", _period_start_utc(station, "today", now), _period_end_utc(station, "today", now)),
+        "month": ("month", "day", _period_start_utc(station, "month", now), _period_end_utc(station, "month", now)),
     }
     rows = {
         name: db.scalar(
@@ -631,21 +705,11 @@ def get_energy_period_kpis(db: Session, station: Station) -> dict:
                 TelemetryAggregate.period_start == period_start,
             )
         )
-        for name, (period_type, period_start) in periods.items()
+        for name, (period_type, _source_period_type, period_start, _period_end) in periods.items()
     }
     previous_starts = {
         "today": _previous_period_start_utc(station, "today", now),
         "month": _previous_period_start_utc(station, "month", now),
-    }
-    previous_rows = {
-        name: db.scalar(
-            select(TelemetryAggregate).where(
-                TelemetryAggregate.station_id == station.id,
-                TelemetryAggregate.period_type == period_type,
-                TelemetryAggregate.period_start == previous_starts[name],
-            )
-        )
-        for name, (period_type, _period_start) in periods.items()
     }
     metric_fields = {
         "pv": ("pv_energy_kwh", "pv"),
@@ -655,18 +719,32 @@ def get_energy_period_kpis(db: Session, station: Station) -> dict:
         "battery_charge": ("battery_charge_energy_kwh", "battery"),
         "battery_discharge": ("battery_discharge_energy_kwh", "battery"),
     }
-    return {
-        name: {
+    out = {}
+    for name, (period_type, source_period_type, period_start, period_end) in periods.items():
+        row = rows[name]
+        elapsed_seconds = max((now - period_start).total_seconds(), 0.0)
+        period_seconds = (period_end - period_start).total_seconds()
+        current_elapsed_coverage = {
+            key: (
+                min((float((row.coverage or {}).get(key, 0) or 0) * period_seconds) / elapsed_seconds, 1.0)
+                if row is not None and elapsed_seconds > 0
+                else 0.0
+            )
+            for key in _ENERGY_KPI_COVERAGE_KEYS
+        }
+        comparison_totals, comparison_coverage = _elapsed_window_totals(
+            db, station.id, source_period_type, previous_starts[name], previous_starts[name] + timedelta(seconds=elapsed_seconds)
+        )
+        out[name] = {
             "period_start": period_start.isoformat(),
             "period_type": period_type,
             "comparison_label": "ieri" if name == "today" else "luna anterioara",
             "metrics": {
-                metric: _energy_kpi_value(rows[name], field, coverage_key, previous_rows[name])
+                metric: _energy_kpi_value(row, field, coverage_key, current_elapsed_coverage, comparison_totals, comparison_coverage)
                 for metric, (field, coverage_key) in metric_fields.items()
             },
         }
-        for name, (period_type, period_start) in periods.items()
-    }
+    return out
 
 
 def get_heatmap(db: Session, station: Station, weeks: int = 8) -> list[dict]:
