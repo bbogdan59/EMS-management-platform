@@ -19,6 +19,23 @@ def test_production_rejects_synthetic_market_prices():
         )
 
 
+def test_production_rejects_local_dev_only_firmware_storage():
+    """issue #168: firmware artifacts must never land on Railway's ephemeral
+    disk -- production requires an explicit object storage backend."""
+    with pytest.raises(RuntimeError, match="FIRMWARE_STORAGE_BACKEND"):
+        Settings(
+            _env_file=None,
+            environment="production",
+            secret_key="test-only-explicit-key",
+            session_cookie_secure=True,
+            demo_mode_enabled=False,
+            opcom_use_synthetic_fixture_on_failure=False,
+            legacy_claim_code_enabled=False,
+            invitation_delivery_mode="manual_link",
+            firmware_storage_backend="local_dev_only",
+        )
+
+
 def _production_kwargs(**overrides):
     base = {
         "_env_file": None,
@@ -28,6 +45,9 @@ def _production_kwargs(**overrides):
         "demo_mode_enabled": False,
         "opcom_use_synthetic_fixture_on_failure": False,
         "legacy_claim_code_enabled": False,
+        # issue #168: local_dev_only is refused in production (see below).
+        "firmware_storage_backend": "s3",
+        "firmware_s3_bucket": "test-bucket",
     }
     base.update(overrides)
     return base

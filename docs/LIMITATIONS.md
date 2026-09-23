@@ -2686,3 +2686,95 @@ absenta cand indisponibila), `tests/test_log_buffer.py` (handler-ul de
 logging: nivel, truncare, ring buffer, format string invalid nu crapa),
 extinderi in `tests/test_agent.py` (`upload_logs` best-effort, niciodata nu
 arunca exceptie spre deosebire de `upload()`).
+
+## Addendum: OTA firmware fleet management (issue #168)
+
+Scop: inventar de versiune per device (`firmware_version` -- pastreaza numele
+de camp existent, dar documentat aici ca "versiune agent", nu firmware DEYE
+sau OS Raspberry Pi), registru de release-uri semnate (Ed25519) si hash-uite
+(SHA-256), o masina de stari per-device pentru rollout
+(`FirmwareDeployment`), si grupare optionala in campanii (`FirmwareRollout`)
+cu control de concurenta/pauza/auto-stop. Coordonat cu contractul din
+`EMS-device-code#13` (partea de agent, NEimplementata aici).
+
+**In scop:** actualizarea agentului Python care ruleaza pe device
+(`EMS-device-code`), NU firmware-ul invertorului DEYE, NU kernel/OS-ul
+Raspberry Pi, NU shell remote, NU scrieri RS485. Nicio comanda shell sau URL
+arbitrar nu e trimisa vreodata catre device -- tinta e strict tipizata
+(`release_id` + hash + semnatura), verificata de agent inainte de instalare.
+
+**Stocare artefacte:** NICIODATA pe discul efemer Railway.
+`ReleaseStorage` e o abstractie pluggabila
+(`app/services/firmware_storage.py`) cu doua implementari: `S3ReleaseStorage`
+(boto3, compatibil orice endpoint S3) si `LocalDevReleaseStorage` (disc local,
+doar pentru dezvoltare). `Settings.model_post_init` (`app/config.py`) respinge
+explicit pornirea in productie cu `FIRMWARE_STORAGE_BACKEND=local_dev_only`
+(`RuntimeError`, testat in `test_production_rejects_local_dev_only_firmware_storage`).
+**`S3ReleaseStorage` nu a fost verificat impotriva unui bucket S3 real** --
+doar teste unitare cu boto3 mock-uit (`tests/unit/test_firmware_storage.py`);
+inainte de primul release in productie, verifica manual upload + presigned
+URL + delete pe bucket-ul real configurat.
+
+**Semnare si integritate:** fiecare release e semnat Ed25519
+(`app/services/firmware_signing.py`, cheie privata PEM/PKCS8 din
+`FIRMWARE_SIGNING_PRIVATE_KEY_PEM`, niciodata in DB/loguri) si hash-uit
+SHA-256 la upload. Fara cheie configurata, `create_release()` refuza explicit
+(`FirmwareServiceError`), nu creeaza tacit un release nesemnat. Un release e
+IMUTABIL dupa publicare -- nu exista update in-place al artefactului/hash-
+ului/semnaturii, doar `revoke_release()` (marcheaza indisponibil pentru
+rollout-uri noi, nu sterge istoricul deployment-urilor deja pornite).
+
+**Masina de stari (`FirmwareDeployment`):**
+`requested -> offered -> downloading -> verified -> installing -> restarting
+-> awaiting_confirmation -> succeeded`, cu alternative terminale
+`rejected`/`failed`/`timed_out`/`rolled_back`/`cancelled`. Tranzitiile sunt
+raportate de device (autentificat, `POST /firmware/deployments/{id}/events`)
+si validate contra unui tabel explicit de tranzitii inainte permise
+(`_FORWARD_EVENTS` in `firmware_service.py`) -- un device nu poate sari peste
+stari sau merge inapoi. **Succesul se marcheaza NUMAI dupa confirmarea proprie
+a device-ului, post-repornire**: versiunea raportata trebuie sa fie exact cea
+asteptata, `boot_id`-ul trebuie sa fie diferit de cel capturat la evenimentul
+de `restarting` (dovada ca a avut loc o repornire reala, nu doar un raport
+fals), si apelul de confirmare trece prin acelasi `get_authenticated_device`
+ca un heartbeat (echivalent cu dovada de "device viu"). La confirmare,
+`Device.firmware_version`/`firmware_version_source="ota_confirmation"`/
+`firmware_reported_at`/`last_boot_id` sunt actualizate din payload-ul
+device-ului, niciodata din formularul admin care a cerut deployment-ul --
+salvarea unui rollout in UI NU e dovada de aplicare pe hardware.
+
+**Rollout (`FirmwareRollout`):** limita de concurenta (deployment-uri
+`IN_FLIGHT_STATUSES` simultane), pauza/reluare manuala, auto-pauza cand rata
+de esec trece `failure_threshold_percent`, si downgrade blocat implicit
+(`is_downgrade()`) -- necesita motiv explicit pentru a forta un downgrade
+(ex. rollback de urgenta). `preview_rollout()`/`create_rollout()` e un flow in
+doi pasi (previzualizare cate device-uri/ce versiuni inainte de confirmare),
+nu un singur POST care porneste imediat productia catre flota.
+
+**RBAC:** creare/publicare/revocare release si majoritatea actiunilor de
+rollout necesita `platform_admin` (nu doar acces la statie) -- un fleet-wide
+push de firmware e o operatie globala, nu per-statie.
+
+**Livrare oferta catre device pending:** pentru un device inca neinrolat
+complet, oferta de firmware e livrata prin raspunsul idempotent al
+`POST /devices/enroll` (camp nou `firmware_offer`), reutilizand aceleasi
+`offer_payload()`/`get_current_offer()` ca endpoint-ul autentificat
+`GET /firmware/pending` -- nu exista un canal separat, nesigur, pentru
+device-uri pending.
+
+**Nu acopera:** firmware DEYE, upgrade OS/kernel Raspberry Pi, shell remote,
+scrieri RS485 (explicit in afara scopului issue #168); un job dedicat de
+notificare/alerting cand un rollout se auto-pauzeaza (starea e vizibila in UI
+admin, dar nu exista inca push activ); testare end-to-end cu un device
+fizic parcurgand intreg flow-ul download -> verify -> install -> restart ->
+confirm (vezi verificarea manuala pentru `S3ReleaseStorage` de mai sus).
+
+**Teste.** `tests/unit/test_firmware_signing.py` (semnare/verificare,
+cheie lipsa/gresita). `tests/unit/test_firmware_storage.py` (path traversal
+pe `LocalDevReleaseStorage`, S3 mock-uit). `tests/integration/test_firmware_service.py`
+(masina de stari completa inclusiv happy path cu update pe `Device`,
+tranzitii invalide respinse, boot_id neschimbat respins, downgrade blocat
+fara motiv, concurenta/auto-pauza/prag de esec, sweep pentru deployment-uri
+expirate). `tests/integration/test_firmware_api.py` (RBAC pe rutele admin,
+autentificare device pe rutele de fleet, oferta prin enrollment).
+Migratia (`8132ff168bd4`) verificata manual cu upgrade/downgrade/re-upgrade
+pe Postgres local (nu doar `--sql`).

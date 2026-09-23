@@ -52,7 +52,11 @@
             {% elif d.status == "revoked" %}<span class="badge-error">{{ d.status }}</span>
             {% else %}<span class="badge-warn">{{ d.status }}</span>{% endif %}
           </td>
-          <td class="font-mono text-xs">{{ d.firmware_version or "-" }}</td>
+          <td class="font-mono text-xs">
+            {{ d.firmware_version or "necunoscut" }}
+            {% if d.firmware_version_source %}<span class="text-gray-500">({{ d.firmware_version_source }})</span>{% endif %}
+            {% if d.id in deployment_by_device_id %}<span class="badge-warn">update disponibil</span>{% endif %}
+          </td>
           <td>{{ d.last_heartbeat_at | local_dt(None) if d.last_heartbeat_at else "niciodata" }}</td>
           <td>{{ stats.cpu_load_1m if stats.cpu_load_1m is not none else "-" }}</td>
           <td>

@@ -60,6 +60,10 @@ celery_app.conf.beat_schedule = {
         "task": "app.workers.tasks.alerts_task",
         "schedule": crontab(minute="*/5"),
     },
+    "firmware-deployment-sweep-every-5-min": {
+        "task": "app.workers.tasks.firmware_deployment_sweep_task",
+        "schedule": crontab(minute="*/5"),
+    },
     # Interval ales conservator (nu verificat impotriva unui rate limit real
     # Deye Cloud -- vezi docs/LIMITATIONS.md); backoff-ul per-conexiune din
     # `deye_cloud_service.poll_connection` reduce oricum frecventa reala dupa

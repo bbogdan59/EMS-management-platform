@@ -136,11 +136,28 @@ def record_heartbeat(
     firmware_version: str | None,
     capabilities: dict,
     system_stats: dict | None = None,
+    *,
+    build_id: str | None = None,
+    hardware_platform: str | None = None,
+    architecture: str | None = None,
+    os_version: str | None = None,
 ) -> Device:
-    device.last_heartbeat_at = utcnow()
+    now = utcnow()
+    device.last_heartbeat_at = now
+    device.last_seen_at = now
     device.last_boot_id = boot_id
     if firmware_version:
         device.firmware_version = firmware_version
+        device.firmware_version_source = "heartbeat"
+        device.firmware_reported_at = now
+    if build_id:
+        device.build_id = build_id
+    if hardware_platform:
+        device.hardware_platform = hardware_platform
+    if architecture:
+        device.architecture = architecture
+    if os_version:
+        device.os_version = os_version
     if capabilities:
         device.capabilities = {**(device.capabilities or {}), **capabilities}
     # Wholesale replace, not merged: a stat the device stops reporting (e.g.
@@ -545,6 +562,30 @@ def _enrollment_status_payload(device: Device) -> dict:
     }
 
 
+def _apply_inventory_fields(
+    device: Device, *, agent_version: str | None, build_id: str | None, hardware_platform: str | None,
+    architecture: str | None, os_version: str | None,
+) -> None:
+    """Issue #168: an idempotent enrollment call can update the last-OBSERVED
+    version/inventory of a device (including one still `pending_claim`,
+    unassigned) without touching its tenant/allocation state -- always safe,
+    since these are purely descriptive fields, never authorization."""
+    now = utcnow()
+    device.last_seen_at = now
+    if agent_version:
+        device.firmware_version = agent_version
+        device.firmware_version_source = "enrollment"
+        device.firmware_reported_at = now
+    if build_id:
+        device.build_id = build_id
+    if hardware_platform:
+        device.hardware_platform = hardware_platform
+    if architecture:
+        device.architecture = architecture
+    if os_version:
+        device.os_version = os_version
+
+
 def enroll_device(
     db: Session,
     installation_uuid: str,
@@ -553,6 +594,11 @@ def enroll_device(
     *,
     serial_number: str | None = None,
     activation_code: str | None = None,
+    agent_version: str | None = None,
+    build_id: str | None = None,
+    hardware_platform: str | None = None,
+    architecture: str | None = None,
+    os_version: str | None = None,
 ) -> dict:
     """Idempotenta: un `installation_uuid` necunoscut creeaza un device nou
     `pending_claim` fara statie; unul cunoscut verifica secretul de
@@ -571,6 +617,11 @@ def enroll_device(
     if existing is not None:
         if not existing.provisioning_secret_hash or not verify_password(provisioning_secret, existing.provisioning_secret_hash):
             raise DeviceServiceError("Identitate de enrollment invalida pentru acest installation_uuid.")
+        _apply_inventory_fields(
+            existing, agent_version=agent_version, build_id=build_id, hardware_platform=hardware_platform,
+            architecture=architecture, os_version=os_version,
+        )
+        db.add(existing)
         if serial_number is not None:
             assert activation_code is not None  # pair validated above
             expected_activation_hash = hash_token(activation_code.strip().upper())
@@ -607,6 +658,10 @@ def enroll_device(
         provisioning_secret_hash=hash_password(provisioning_secret),
         enrolled_at=utcnow(),
         enrollment_expires_at=expires_in(hours=settings.device_enrollment_ttl_hours),
+    )
+    _apply_inventory_fields(
+        device, agent_version=agent_version, build_id=build_id, hardware_platform=hardware_platform,
+        architecture=architecture, os_version=os_version,
     )
     db.add(device)
     try:

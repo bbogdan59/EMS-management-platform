@@ -1,0 +1,93 @@
+{% extends "base.html" %}
+{% block title %}Firmware: rollout-uri - {{ app_name }}{% endblock %}
+{% block content %}
+<div class="space-y-6">
+  <h1 class="text-xl font-semibold">Rollout-uri firmware</h1>
+  {% include "admin/_tabs.html" %}
+
+  {% if errors %}
+  <div class="rounded-lg bg-red-50 p-3 text-sm text-red-800 dark:bg-red-900/30 dark:text-red-200">
+    {% for e in errors %}<p>{{ e }}</p>{% endfor %}
+  </div>
+  {% endif %}
+
+  <div class="card">
+    <h2 class="mb-2 font-medium">Rollout nou</h2>
+    {% if not published_releases %}
+    <p class="text-sm text-gray-500">Niciun release publicat inca -- publica unul mai intai.</p>
+    {% else %}
+    <form method="post" action="/admin/firmware/rollouts/preview" class="space-y-3">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}" />
+      <div>
+        <label class="label">Release</label>
+        <select class="input" name="release_id" required>
+          {% for r in published_releases %}<option value="{{ r.id }}">{{ r.version }} ({{ r.channel }}, {{ r.hardware_platform }}/{{ r.architecture }})</option>{% endfor %}
+        </select>
+      </div>
+      <div class="grid gap-3 sm:grid-cols-3">
+        <div>
+          <label class="label">Concurenta maxima</label>
+          <input class="input" type="number" name="max_concurrent" min="1" value="5" required />
+        </div>
+        <div>
+          <label class="label">Prag oprire automata (%)</label>
+          <input class="input" type="number" name="failure_threshold_percent" min="0" max="100" value="20" required />
+        </div>
+        <div class="flex items-end gap-2">
+          <label class="flex items-center gap-2"><input type="checkbox" name="allow_downgrade" value="1" /> Permite downgrade</label>
+        </div>
+      </div>
+      <div>
+        <label class="label">Motiv downgrade (obligatoriu daca e bifat mai sus)</label>
+        <input class="input w-full" name="downgrade_reason" maxlength="500" />
+      </div>
+      <div>
+        <label class="label">Device-uri tinta</label>
+        <div class="max-h-64 overflow-y-auto rounded border border-gray-200 p-2 dark:border-gray-800">
+          {% for d in devices %}
+          <label class="flex items-center gap-2 py-0.5 text-sm">
+            <input type="checkbox" name="device_id" value="{{ d.id }}" />
+            {{ d.name }}
+            <span class="font-mono text-xs text-gray-500">{{ d.firmware_version or "necunoscut" }} · {{ d.hardware_platform or "?" }}/{{ d.architecture or "?" }}</span>
+          </label>
+          {% endfor %}
+        </div>
+      </div>
+      <button type="submit" class="btn-primary">Previzualizeaza</button>
+    </form>
+    {% endif %}
+  </div>
+
+  <div class="card">
+    <table class="w-full text-sm">
+      <thead class="text-left text-gray-500">
+        <tr>
+          <th class="py-1">Release</th>
+          <th>Status</th>
+          <th>Concurenta</th>
+          <th>Creat</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for ro in rollouts %}
+        <tr class="border-t border-gray-100 dark:border-gray-800">
+          <td class="py-1 font-mono">{{ releases_by_id[ro.release_id].version if ro.release_id in releases_by_id else "?" }}</td>
+          <td>
+            {% if ro.status == "active" %}<span class="badge-ok">active</span>
+            {% elif ro.status == "paused" %}<span class="badge-warn">paused{% if ro.auto_paused_at %} (auto){% endif %}</span>
+            {% elif ro.status == "cancelled" %}<span class="badge-error">cancelled</span>
+            {% else %}<span class="badge-muted">{{ ro.status }}</span>{% endif %}
+          </td>
+          <td>{{ ro.max_concurrent }}</td>
+          <td>{{ ro.created_at | local_dt(None) }}</td>
+          <td><a class="underline" href="/admin/firmware/rollouts/{{ ro.id }}">Detalii</a></td>
+        </tr>
+        {% else %}
+        <tr><td colspan="5" class="py-4 text-center text-gray-500">Niciun rollout inca.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

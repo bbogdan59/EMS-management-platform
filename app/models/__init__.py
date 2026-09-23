@@ -8,9 +8,15 @@ from app.models.admin_job import AdminJob
 from app.models.alert import Alert
 from app.models.audit import AuditLog
 from app.models.command import Command, CommandEvent
-from app.models.device import ClaimCode, Device, DeviceCredential
+from app.models.device import ClaimCode, Device, DeviceCredential, DeviceLogEntry
 from app.models.deye_integration import DeyeCloudConnection, DeyeCloudDeviceLink
 from app.models.equipment_catalog import EquipmentManufacturer, EquipmentModel
+from app.models.firmware import (
+    FirmwareDeployment,
+    FirmwareDeploymentEvent,
+    FirmwareRelease,
+    FirmwareRollout,
+)
 from app.models.forecast import ConsumptionForecast, PvForecast, WeatherForecast
 from app.models.inverter_config import InverterDesired, InverterProfile, InverterReport
 from app.models.market import ImportRun, MarketPriceInterval
@@ -40,10 +46,15 @@ __all__ = [
     "ConsumptionForecast",
     "Device",
     "DeviceCredential",
+    "DeviceLogEntry",
     "DeyeCloudConnection",
     "DeyeCloudDeviceLink",
     "EquipmentManufacturer",
     "EquipmentModel",
+    "FirmwareDeployment",
+    "FirmwareDeploymentEvent",
+    "FirmwareRelease",
+    "FirmwareRollout",
     "ImportRun",
     "InverterDesired",
     "InverterProfile",

@@ -463,6 +463,74 @@ O comanda cu `expires_at` depasit e marcata automat `expired` si nu mai
 poate fi confirmata/respinsa -- dispozitivul trebuie sa astepte urmatoarea
 comanda din plan.
 
+## 8. Firmware OTA (issue #168)
+
+"Firmware" inseamna strict versiunea aplicatiei EMS-device-code instalate pe
+Raspberry Pi -- niciodata firmware-ul invertorului DEYE, niciodata un
+upgrade de Raspberry Pi OS. Verificarea criptografica/instalarea atomica/
+restart-ul/rollback-ul sunt implementate device-side (EMS-device-code#13);
+platforma emite doar o TINTA structurata (`release_id`), niciodata o comanda
+shell sau un URL arbitrar.
+
+Campuri tipizate noi la enrollment (`POST /devices/enroll`, toate opționale
+pentru compatibilitate cu device-uri vechi): `agent_version`, `build_id`,
+`hardware_platform`, `architecture`, `os_version`. Un enrollment idempotent
+poate actualiza aceste campuri + `last_seen_at` pe un device inca `pending`,
+fara sa schimbe tenantul/alocarea. Heartbeat-ul accepta acum aceleasi campuri
+(`build_id`/`hardware_platform`/`architecture`/`os_version`), optionale.
+
+```
+GET /api/v1/firmware/pending
+```
+
+Returneaza `null` sau oferta curenta (nu doar `offered` -- si o implementare
+la mijlocul fluxului, ca device-ul sa poata relua dupa o reconectare):
+
+```json
+{
+  "deployment_id": "d1a2...", "release_id": "r5b6...", "target_version": "1.4.0",
+  "channel": "stable", "status": "offered", "is_downgrade": false,
+  "offer_expires_at": "2026-09-18T09:00:00Z",
+  "download_url": "https://...presemnata, durata limitata...",
+  "sha256_hex": "...", "signature_ed25519_hex": "...", "signing_key_id": "prod-key-1",
+  "artifact_size_bytes": 12345678
+}
+```
+
+Progresul se raporteaza exclusiv de pe device:
+
+```
+POST /api/v1/firmware/deployments/{deployment_id}/events
+{ "event_type": "downloading" | "verified" | "installing" | "restarting" | "confirmed" | "failed" | "rejected",
+  "payload": {...}, "message": "..." }
+```
+
+Stare (`FirmwareDeploymentStatus`): `requested -> offered -> downloading ->
+verified -> installing -> awaiting_confirmation -> succeeded`, cu
+alternative terminale `rejected | failed | timed_out | rolled_back |
+cancelled`. Evenimentul `restarting` cere `payload.boot_id` (boot_id-ul
+CURENT, dinainte de repornire) si muta starea direct la
+`awaiting_confirmation`. Evenimentul `confirmed`, dupa repornire, cere
+`payload.boot_id` (NOU, diferit de cel dinainte) si `payload.version` --
+succesul (`succeeded`) se marcheaza NUMAI aici, niciodata la oferta/dispatch;
+`payload.rolled_back=true` sau o versiune diferita de tinta produce
+`rolled_back`. Acest apel `confirmed` este el insusi un contact autentificat
+in direct -- versiunea/boot_id-ul device-ului se actualizeaza imediat, fara
+sa astepte urmatorul heartbeat.
+
+Un device `pending` (neasociat, fara credentiala Bearer inca) primeste
+oferta prin campul optional `firmware_offer` din raspunsul `EnrollResponse`
+(acelasi format ca mai sus), livrata NUMAI dupa verificarea reusita a
+identitatii de provisioning.
+
+Backoffice (`platform_admin`, `/admin/firmware/releases` si
+`/admin/firmware/rollouts`): registrul de release-uri e imutabil dupa
+publicare (o corectie produce un release nou), semnat Ed25519 si hash-uit
+SHA-256, cu artifactul intr-un backend de object storage configurabil
+(niciodata pe discul efemer Railway -- vezi `FIRMWARE_STORAGE_BACKEND` in
+`.env.example`). Un rollout controleaza concurenta, downgrade (blocat
+implicit, necesita motiv explicit) si se opreste automat la un prag de esec.
+
 ## Coduri de eroare relevante
 
 | Cod | Semnificatie |

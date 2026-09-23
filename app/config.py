@@ -145,6 +145,32 @@ class Settings(BaseSettings):
     telemetry_aggregate_retention_days: int = 730
     audit_log_retention_days: int = 365
 
+    # --- Firmware OTA fleet management (issue #168) ---
+    # "Firmware" is strictly the EMS-device-code AGENT installed on the
+    # Raspberry Pi -- never DEYE inverter firmware, never Raspberry Pi OS.
+    # Artifacts are never stored on Railway's ephemeral disk: `local_dev_only`
+    # mirrors `email_backend="console"` (safe for local dev, refused at
+    # startup in production -- see model_post_init below); `s3` targets any
+    # S3-compatible provider via `firmware_s3_endpoint_url`.
+    firmware_storage_backend: Literal["s3", "local_dev_only"] = "local_dev_only"
+    firmware_s3_bucket: str | None = None
+    firmware_s3_region: str | None = None
+    firmware_s3_endpoint_url: str | None = None
+    firmware_s3_access_key_id: str | None = None
+    firmware_s3_secret_access_key: str | None = None
+    firmware_local_storage_dir: str = "./.data/firmware-releases-dev-only"
+    firmware_download_url_ttl_seconds: int = 300
+    firmware_max_artifact_bytes: int = 200 * 1024 * 1024  # 200 MiB
+    # Ed25519 signing key (PEM PKCS8 private key), provided ONLY via
+    # environment -- never stored in the DB, never logged. Publishing a
+    # release without this configured is refused explicitly (see
+    # app/services/firmware_signing.py), so most of the app/tests never
+    # need it set.
+    firmware_signing_private_key_pem: str | None = None
+    firmware_signing_key_id: str = "dev-unconfigured"
+    firmware_deployment_offer_ttl_minutes: int = 60
+    firmware_deployment_confirmation_timeout_minutes: int = 15
+
     # --- Demo mode ---
     demo_mode_enabled: bool = False
 
@@ -213,6 +239,12 @@ class Settings(BaseSettings):
                 "Fluxul legacy de asociere prin cod manual (15 minute) nu poate fi activat in productie. "
                 "Seteaza LEGACY_CLAIM_CODE_ENABLED=false (implicit dezactivat trebuie confirmat explicit "
                 "doar pentru medii non-productie)."
+            )
+        if self.is_production and self.firmware_storage_backend == "local_dev_only":
+            raise RuntimeError(
+                "FIRMWARE_STORAGE_BACKEND=local_dev_only nu poate fi folosit in productie -- artifactele "
+                "de firmware nu pot fi pastrate pe discul efemer Railway. Seteaza FIRMWARE_STORAGE_BACKEND=s3 "
+                "si variabilele FIRMWARE_S3_*."
             )
 
 

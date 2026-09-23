@@ -66,6 +66,31 @@
 {% endif %}
 <div class="card"><h2>Istoric configuratii dorite</h2><ul>{% for item in history %}<li>v{{ item.version }} — {{ item.created_at | local_dt(station.timezone) }} — autor {{ item.created_by }} — {{ item.reason }} — {{ item.digest[:12] }}</li>{% endfor %}</ul></div>
 <div class="card">
+<h2>Istoric firmware (OTA)</h2>
+<table class="w-full text-sm">
+<thead class="text-left text-gray-500"><tr><th>Versiune tinta</th><th>Stare</th><th>Solicitat</th><th>Eroare</th></tr></thead>
+<tbody>
+{% for d in firmware_deployments %}
+<tr class="border-t border-gray-100 dark:border-gray-800">
+  <td class="py-1 font-mono text-xs">{{ d.from_version or "necunoscut" }} → {{ d.target_version }}</td>
+  <td>
+    {% if d.status == "succeeded" %}<span class="badge-ok">la zi</span>
+    {% elif d.status in ("requested", "offered") %}<span class="badge-muted">update disponibil</span>
+    {% elif d.status in ("downloading", "verified", "installing") %}<span class="badge-warn">in curs</span>
+    {% elif d.status == "awaiting_confirmation" %}<span class="badge-warn">neconfirmat</span>
+    {% elif d.status in ("failed", "rolled_back", "timed_out") %}<span class="badge-error">{{ d.status }}</span>
+    {% else %}<span class="badge-muted">{{ d.status }}</span>{% endif %}
+  </td>
+  <td class="text-xs text-gray-500">{{ d.requested_at | local_dt(station.timezone) }}</td>
+  <td class="text-xs text-gray-500">{{ d.last_error or "" }}</td>
+</tr>
+{% else %}
+<tr><td colspan="4" class="py-2 text-center text-gray-500">Niciun update OTA pentru acest device.</td></tr>
+{% endfor %}
+</tbody>
+</table>
+</div>
+<div class="card">
 <h2>Jurnal de debug (compact)</h2>
 <p class="text-sm text-gray-500">
   Linii COMPACTE raportate de dispozitiv (niciodata stack trace-uri/payload brut) -- pentru debugging live, nu un

@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block title %}Confirma rollout firmware - {{ app_name }}{% endblock %}
+{% block content %}
+<div class="space-y-6">
+  <h1 class="text-xl font-semibold">Confirma rollout: {{ release.version }} ({{ release.channel }})</h1>
+  {% include "admin/_tabs.html" %}
+
+  <div class="card">
+    <p>
+      <strong>{{ preview.eligible | length }}</strong> device-uri eligibile,
+      <strong>{{ preview.skipped | length }}</strong> excluse (incompatibile sau blocate de downgrade).
+    </p>
+    <p class="text-sm text-gray-500">Concurenta maxima {{ max_concurrent }} · prag oprire automata {{ failure_threshold_percent }}% · downgrade {{ "PERMIS" if allow_downgrade else "blocat" }}</p>
+
+    {% if preview.eligible %}
+    <h2 class="mt-4 font-medium">Eligibile</h2>
+    <table class="w-full text-sm">
+      <thead class="text-left text-gray-500"><tr><th>Device</th><th>Versiune curenta</th><th>Versiune tinta</th><th></th></tr></thead>
+      <tbody>
+        {% for row in preview.eligible %}
+        <tr class="border-t border-gray-100 dark:border-gray-800">
+          <td class="py-1">{{ row.device.name }}</td>
+          <td class="font-mono text-xs">{{ row.from_version or "necunoscut" }}</td>
+          <td class="font-mono text-xs">{{ release.version }}</td>
+          <td>{% if row.is_downgrade %}<span class="badge-warn">downgrade</span>{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+
+    {% if preview.skipped %}
+    <h2 class="mt-4 font-medium">Excluse</h2>
+    <table class="w-full text-sm">
+      <thead class="text-left text-gray-500"><tr><th>Device</th><th>Motiv</th></tr></thead>
+      <tbody>
+        {% for device_id, reason in preview.skipped.items() %}
+        <tr class="border-t border-gray-100 dark:border-gray-800">
+          <td class="py-1">{{ devices_by_id[device_id].name if device_id in devices_by_id else device_id }}</td>
+          <td><span class="badge-error">{{ reason }}</span></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+
+    {% if preview.eligible %}
+    <form method="post" action="/admin/firmware/rollouts" class="mt-4">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}" />
+      <input type="hidden" name="release_id" value="{{ release.id }}" />
+      <input type="hidden" name="max_concurrent" value="{{ max_concurrent }}" />
+      <input type="hidden" name="failure_threshold_percent" value="{{ failure_threshold_percent }}" />
+      {% if allow_downgrade %}<input type="hidden" name="allow_downgrade" value="1" />{% endif %}
+      <input type="hidden" name="downgrade_reason" value="{{ downgrade_reason }}" />
+      {% for did in device_ids %}<input type="hidden" name="device_id" value="{{ did }}" />{% endfor %}
+      <button type="submit" class="btn-primary" onclick="return confirm('Pornesti rollout-ul pentru {{ preview.eligible | length }} device-uri?');">Confirma rollout-ul</button>
+    </form>
+    {% endif %}
+    <a class="mt-2 inline-block underline" href="/admin/firmware/rollouts">Renunta</a>
+  </div>
+</div>
+{% endblock %}

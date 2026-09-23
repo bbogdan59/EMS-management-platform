@@ -65,7 +65,9 @@ def heartbeat(
     db: Session = Depends(get_db),
 ):
     device = device_service.record_heartbeat(
-        db, device, payload.boot_id, payload.firmware_version, payload.capabilities, payload.system_stats
+        db, device, payload.boot_id, payload.firmware_version, payload.capabilities, payload.system_stats,
+        build_id=payload.build_id, hardware_platform=payload.hardware_platform,
+        architecture=payload.architecture, os_version=payload.os_version,
     )
 
     has_active_plan = (

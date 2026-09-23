@@ -1,0 +1,116 @@
+{% extends "base.html" %}
+{% block title %}Firmware: release-uri - {{ app_name }}{% endblock %}
+{% block content %}
+<div class="space-y-6">
+  <h1 class="text-xl font-semibold">Firmware EMS-device-code: release-uri</h1>
+  {% include "admin/_tabs.html" %}
+
+  <p class="text-sm text-gray-500 dark:text-gray-400">
+    "Firmware" aici inseamna strict aplicatia EMS-device-code instalata pe Raspberry Pi -- niciodata firmware-ul
+    invertorului DEYE si niciodata un upgrade de Raspberry Pi OS. Metadatele unui release NU se mai pot modifica
+    dupa publicare (o corectie produce un release nou); artifactul e semnat Ed25519 si hash-uit SHA-256, niciodata
+    stocat pe discul efemer Railway.
+  </p>
+
+  {% if errors %}
+  <div class="rounded-lg bg-red-50 p-3 text-sm text-red-800 dark:bg-red-900/30 dark:text-red-200">
+    {% for e in errors %}<p>{{ e }}</p>{% endfor %}
+  </div>
+  {% endif %}
+
+  <div class="card">
+    <h2 class="mb-2 font-medium">Release nou (draft)</h2>
+    <form method="post" action="/admin/firmware/releases" enctype="multipart/form-data" class="grid gap-3 sm:grid-cols-2">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}" />
+      <div>
+        <label class="label">Versiune</label>
+        <input class="input" type="text" name="version" required maxlength="32" placeholder="ex: 1.4.0" />
+      </div>
+      <div>
+        <label class="label">Canal</label>
+        <select class="input" name="channel" required>
+          <option value="stable">stable</option>
+          <option value="beta">beta</option>
+          <option value="canary">canary</option>
+        </select>
+      </div>
+      <div>
+        <label class="label">Platforma hardware</label>
+        <input class="input" type="text" name="hardware_platform" required maxlength="64" placeholder="ex: raspberry-pi-4" />
+      </div>
+      <div>
+        <label class="label">Arhitectura</label>
+        <input class="input" type="text" name="architecture" required maxlength="32" placeholder="ex: arm64" />
+      </div>
+      <div>
+        <label class="label">Versiune schema protocol</label>
+        <input class="input" type="number" name="protocol_schema_version" required min="1" value="1" />
+      </div>
+      <div>
+        <label class="label">Versiune minima compatibila (optional)</label>
+        <input class="input" type="text" name="min_compatible_agent_version" maxlength="32" placeholder="ex: 1.0.0" />
+      </div>
+      <div class="sm:col-span-2">
+        <label class="label">Note de release</label>
+        <textarea class="input w-full" name="release_notes" rows="3"></textarea>
+      </div>
+      <div class="sm:col-span-2">
+        <label class="label">Artifact (.tar.gz)</label>
+        <input class="input w-full" type="file" name="artifact" required />
+      </div>
+      <div class="sm:col-span-2">
+        <button type="submit" class="btn-primary">Creaza draft</button>
+      </div>
+    </form>
+  </div>
+
+  <div class="card">
+    <table class="w-full text-sm">
+      <thead class="text-left text-gray-500">
+        <tr>
+          <th class="py-1">Versiune</th>
+          <th>Canal</th>
+          <th>Platforma / arh.</th>
+          <th>Status</th>
+          <th>SHA-256</th>
+          <th>Marime</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in releases %}
+        <tr class="border-t border-gray-100 dark:border-gray-800">
+          <td class="py-1 font-mono">{{ r.version }}</td>
+          <td>{{ r.channel }}</td>
+          <td class="font-mono text-xs">{{ r.hardware_platform }} / {{ r.architecture }}</td>
+          <td>
+            {% if r.status == "published" %}<span class="badge-ok">published</span>
+            {% elif r.status == "revoked" %}<span class="badge-error">revoked</span>
+            {% else %}<span class="badge-warn">draft</span>{% endif %}
+          </td>
+          <td class="font-mono text-xs">{{ r.sha256_hex[:16] }}…</td>
+          <td>{{ (r.artifact_size_bytes / 1024 / 1024) | round(1) }} MB</td>
+          <td class="flex gap-2">
+            {% if r.status == "draft" %}
+            <form method="post" action="/admin/firmware/releases/{{ r.id }}/publish">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}" />
+              <button type="submit" class="btn-primary" onclick="return confirm('Publici acest release? Metadatele devin imutabile.');">Publica</button>
+            </form>
+            {% endif %}
+            {% if r.status != "revoked" %}
+            <form method="post" action="/admin/firmware/releases/{{ r.id }}/revoke" class="flex items-center gap-1">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}" />
+              <input class="input text-xs" name="reason" placeholder="motiv" required />
+              <button type="submit" class="btn-danger" onclick="return confirm('Revoci acest release? Ofertele neincepute vor fi anulate.');">Revoca</button>
+            </form>
+            {% endif %}
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="7" class="py-4 text-center text-gray-500">Niciun release inca.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
