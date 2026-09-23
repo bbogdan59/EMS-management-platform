@@ -7,6 +7,8 @@ argon2-cffi==25.1.0
 argon2-cffi-bindings==26.1.0
 asyncpg==0.30.0
 billiard==4.2.4
+boto3==1.43.97
+botocore==1.43.100
 celery==5.6.3
 certifi==2026.7.22
 cffi==2.1.1
@@ -35,6 +37,7 @@ idna==3.19
 iniconfig==2.3.0
 itsdangerous==2.2.0
 Jinja2==3.1.6
+jmespath==1.1.0
 kombu==5.6.2
 librt==0.15.0
 Mako==1.4.1
@@ -75,6 +78,7 @@ redis==5.3.1
 requests==2.34.2
 respx==0.22.0
 ruff==0.14.5
+s3transfer==0.19.2
 scipy==1.17.1
 six==1.17.0
 SQLAlchemy==2.0.52

@@ -453,6 +453,20 @@ def admin_market_retention_job_task(job_id: str) -> dict:
     return {"status": "succeeded", **result.as_dict()}
 
 
+@celery_app.task(name="app.workers.tasks.firmware_deployment_sweep_task")
+def firmware_deployment_sweep_task() -> dict:
+    """Issue #168: expires offers/confirmations past their deadline
+    (`timed_out`), auto-pauses a rollout past its failure threshold, and
+    promotes queued deployments as concurrency slots free up."""
+    from app.services import firmware_service
+
+    with _task_lock("firmware_deployment_sweep") as acquired:
+        if not acquired:
+            return {"skipped": "already_running"}
+        with session_scope() as db:
+            return firmware_service.sweep_expired_deployments(db)
+
+
 @celery_app.task(name="app.workers.tasks.market_revision_retention_task")
 def market_revision_retention_task() -> dict:
     """Rulare planificata zilnica a retentiei de revizii OPCOM (issue #51) --

@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+{% block title %}Rollout {{ release.version if release else "" }} - {{ app_name }}{% endblock %}
+{% block content %}
+<div class="space-y-6">
+  <h1 class="text-xl font-semibold">Rollout: {{ release.version if release else "?" }} ({{ release.channel if release else "" }})</h1>
+  {% include "admin/_tabs.html" %}
+
+  {% if request.query_params.get("error") %}
+  <div class="rounded-lg bg-red-50 p-3 text-sm text-red-800 dark:bg-red-900/30 dark:text-red-200">{{ request.query_params.get("error") }}</div>
+  {% endif %}
+
+  <div class="card">
+    <p>
+      Status:
+      {% if rollout.status == "active" %}<span class="badge-ok">active</span>
+      {% elif rollout.status == "paused" %}<span class="badge-warn">paused{% if rollout.auto_paused_at %} (auto: {{ rollout.auto_paused_reason }}){% endif %}</span>
+      {% elif rollout.status == "cancelled" %}<span class="badge-error">cancelled</span>
+      {% else %}<span class="badge-muted">{{ rollout.status }}</span>{% endif %}
+      &middot; concurenta {{ rollout.max_concurrent }} &middot; prag oprire {{ rollout.failure_threshold_percent }}%
+      {% if rollout.allow_downgrade %}&middot; downgrade permis ({{ rollout.downgrade_reason }}){% endif %}
+    </p>
+    <div class="mt-2 flex gap-2">
+      {% if rollout.status == "active" %}
+      <form method="post" action="/admin/firmware/rollouts/{{ rollout.id }}/pause">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}" />
+        <button type="submit" class="btn-secondary">Pauza</button>
+      </form>
+      {% elif rollout.status == "paused" %}
+      <form method="post" action="/admin/firmware/rollouts/{{ rollout.id }}/resume">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}" />
+        <button type="submit" class="btn-primary">Reia</button>
+      </form>
+      {% endif %}
+      {% if rollout.status in ("active", "paused") %}
+      <form method="post" action="/admin/firmware/rollouts/{{ rollout.id }}/cancel" class="flex items-center gap-1">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}" />
+        <input class="input text-xs" name="reason" placeholder="motiv" required />
+        <button type="submit" class="btn-danger" onclick="return confirm('Anulezi rollout-ul? Device-urile deja in instalare/repornire nu sunt intrerupte.');">Anuleaza</button>
+      </form>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="card">
+    <table class="w-full text-sm">
+      <thead class="text-left text-gray-500">
+        <tr>
+          <th class="py-1">Device</th>
+          <th>Versiune curenta → tinta</th>
+          <th>Stare</th>
+          <th>Incercare</th>
+          <th>Ultima eroare</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for d in deployments %}
+        {% set device = devices_by_id.get(d.device_id) %}
+        <tr class="border-t border-gray-100 dark:border-gray-800">
+          <td class="py-1">{{ device.name if device else d.device_id }}</td>
+          <td class="font-mono text-xs">{{ d.from_version or "necunoscut" }} → {{ d.target_version }}{% if d.is_downgrade %} <span class="badge-warn">downgrade</span>{% endif %}</td>
+          <td>
+            {% if d.status == "succeeded" %}<span class="badge-ok">la zi</span>
+            {% elif d.status in ("requested", "offered") %}<span class="badge-muted">update disponibil</span>
+            {% elif d.status in ("downloading", "verified", "installing") %}<span class="badge-warn">in curs</span>
+            {% elif d.status == "awaiting_confirmation" %}<span class="badge-warn">neconfirmat</span>
+            {% elif d.status == "failed" %}<span class="badge-error">esuat</span>
+            {% elif d.status == "rolled_back" %}<span class="badge-error">rollback</span>
+            {% elif d.status == "timed_out" %}<span class="badge-error">expirat</span>
+            {% elif d.status in ("rejected", "cancelled") %}<span class="badge-muted">{{ d.status }}</span>
+            {% else %}<span class="badge-muted">necunoscut</span>{% endif %}
+          </td>
+          <td>{{ d.attempt }}</td>
+          <td class="text-xs text-gray-500">{{ d.last_error or "" }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="5" class="py-4 text-center text-gray-500">Niciun device in acest rollout.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

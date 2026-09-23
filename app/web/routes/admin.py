@@ -21,6 +21,7 @@ from app.models.audit import AuditLog
 from app.models.command import Command
 from app.models.device import Device
 from app.models.enums import AdminJobStatus, AdminJobType, AlertStatus, DeviceStatus, PlanStatus
+from app.models.firmware import FirmwareDeployment
 from app.models.market import ImportRun
 from app.models.optimization import OptimizationRun, Plan
 from app.models.organization import Membership, Organization
@@ -934,9 +935,18 @@ def fleet_devices_list(request: Request, db: Session = Depends(get_db), user: Us
     devices = db.scalars(select(Device).order_by(Device.name)).all()
     stations = db.scalars(select(Station).order_by(Station.name)).all()
     stations_by_id = {s.id: s for s in stations}
+    # Issue #168: "update disponibil" badge per device -- the current
+    # non-terminal deployment (if any), keyed by device_id.
+    from app.services import firmware_service
+
+    active_deployments = db.scalars(
+        select(FirmwareDeployment).where(FirmwareDeployment.status.in_(firmware_service.IN_FLIGHT_STATUSES))
+    ).all()
+    deployment_by_device_id = {d.device_id: d for d in active_deployments}
     context = {
         "devices": devices,
         "stations_by_id": stations_by_id,
+        "deployment_by_device_id": deployment_by_device_id,
         "now": utcnow(),
         **build_nav_context(db, user),
     }

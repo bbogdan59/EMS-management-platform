@@ -111,6 +111,7 @@ jobs:
             -e SESSION_COOKIE_SECURE="true" \
             -e EMAIL_BACKEND="smtp" \
             -e LEGACY_CLAIM_CODE_ENABLED="false" \
+            -e FIRMWARE_STORAGE_BACKEND="s3" \
             -e RUN_MIGRATIONS_ON_START="true" \
             -e PORT=8000 \
             ems-platform:ci web

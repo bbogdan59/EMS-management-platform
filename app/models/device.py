@@ -49,7 +49,28 @@ class Device(Entity):
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     status: Mapped[str] = mapped_column(String(16), default=DeviceStatus.pending_claim.value, nullable=False)
     capabilities: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    # "firmware_version" is the installed EMS-device-code AGENT version (issue
+    # #168) -- never DEYE inverter firmware or the Raspberry Pi OS. Kept under
+    # this name for API/backward compatibility with the existing heartbeat
+    # contract; `firmware_version_source`/`firmware_reported_at` say WHERE and
+    # WHEN it was last observed, so the UI can distinguish "unknown" from
+    # "reported at enrollment" from "reported by heartbeat" -- never defaults
+    # to "0.0.0" when unknown.
     firmware_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    firmware_version_source: Mapped[str | None] = mapped_column(String(16), nullable=True)  # enrollment|heartbeat
+    firmware_reported_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Typed inventory fields (issue #168) -- deliberately NOT buried only in
+    # the free-form `capabilities`/`hardware_info` JSON, so the fleet
+    # dashboard and OTA compatibility checks can query/filter on them.
+    build_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    hardware_platform: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    architecture: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    os_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Generalizes "online/offline" to devices that never heartbeat (pending,
+    # unassigned) -- updated by ANY authenticated contact (enrollment OR
+    # heartbeat), unlike `last_heartbeat_at` below which stays heartbeat-only
+    # (existing UI/alerting already keys off it specifically).
+    last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_boot_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     # Latest system-resource snapshot REPORTED by the device with each

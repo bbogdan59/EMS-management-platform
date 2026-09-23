@@ -44,6 +44,12 @@ class HeartbeatRequest(BaseModel):
             "este 0. Inlocuieste (nu combina) instantaneul anterior."
         ),
     )
+    # Tipizate (issue #168), simetrice cu EnrollRequest -- optionale: un
+    # device vechi, pre-#168, nu le trimite si nu trebuie sa esueze.
+    build_id: str | None = Field(default=None, max_length=64)
+    hardware_platform: str | None = Field(default=None, max_length=64)
+    architecture: str | None = Field(default=None, max_length=32)
+    os_version: str | None = Field(default=None, max_length=64)
 
 
 class HeartbeatResponse(BaseModel):
@@ -317,3 +323,30 @@ class CommandResultRequest(BaseModel):
         if v not in ("executed", "failed"):
             raise ValueError("status trebuie sa fie 'executed' sau 'failed'")
         return v
+
+
+# --- Firmware OTA (issue #168) -- strictly a release_id/manifest target, ---
+# --- never a shell command, raw URL or executable argument.              ---
+
+
+class FirmwareOfferOut(BaseModel):
+    deployment_id: uuid.UUID
+    release_id: uuid.UUID
+    target_version: str
+    channel: str
+    status: str
+    is_downgrade: bool
+    offer_expires_at: datetime
+    download_url: str = Field(..., description="Presemnata, cu durata limitata -- niciodata un link permanent/public.")
+    sha256_hex: str
+    signature_ed25519_hex: str
+    signing_key_id: str
+    artifact_size_bytes: int
+
+
+class FirmwareDeploymentEventRequest(BaseModel):
+    event_type: Literal[
+        "downloading", "verified", "installing", "restarting", "confirmed", "failed", "rejected",
+    ]
+    payload: dict = Field(default_factory=dict)
+    message: str | None = Field(default=None, max_length=1000)

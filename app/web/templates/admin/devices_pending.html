@@ -23,7 +23,9 @@
       <thead class="text-left text-gray-500">
         <tr>
           <th class="py-1">Installation UUID</th>
+          <th>Firmware</th>
           <th>Hardware</th>
+          <th>Ultima raportare</th>
           <th>Enrollat</th>
           <th>Expira</th>
           <th>Aloca</th>
@@ -34,7 +36,11 @@
         {% for d in pending_devices %}
         <tr class="border-t border-gray-100 dark:border-gray-800">
           <td class="py-1 font-mono text-xs">{{ d.installation_uuid }}</td>
-          <td class="text-xs">{{ d.capabilities | tojson }}</td>
+          <td class="font-mono text-xs">{{ d.firmware_version or "necunoscut" }}</td>
+          <td class="font-mono text-xs">{{ d.hardware_platform or "?" }}/{{ d.architecture or "?" }}</td>
+          <td class="text-xs text-gray-500">
+            {% if d.last_seen_at %}{{ d.last_seen_at | local_dt(None) }}{% else %}niciodata{% endif %}
+          </td>
           <td>{{ d.enrolled_at | local_dt(None) if d.enrolled_at else "-" }}</td>
           <td>
             {% if d.enrollment_expires_at and d.enrollment_expires_at < now %}
@@ -61,7 +67,7 @@
           </td>
         </tr>
         {% else %}
-        <tr><td colspan="6" class="py-4 text-center text-gray-500">Niciun device neasociat.</td></tr>
+        <tr><td colspan="8" class="py-4 text-center text-gray-500">Niciun device neasociat.</td></tr>
         {% endfor %}
       </tbody>
     </table>

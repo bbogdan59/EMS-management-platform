@@ -9,6 +9,8 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from app.schemas.device_api import FirmwareOfferOut
+
 
 class EnrollRequest(BaseModel):
     """Cerere idempotenta: se poate retrimite oricand cu aceeasi identitate
@@ -32,6 +34,18 @@ class EnrollRequest(BaseModel):
         description="Device Code cu entropie mare, livrat sigilat clientului si consumat o singura data.",
     )
     hardware_info: dict = Field(default_factory=dict, description="Informatii libere despre hardware (model, serie, IMEI daca exista).")
+    # Campuri tipizate (issue #168) -- NU doar ingropate in hardware_info,
+    # ca inventarul admin/OTA sa poata filtra/verifica compatibilitatea fara
+    # sa parseze JSON liber. Toate optionale: un device vechi, pre-#168, nu
+    # le trimite si nu trebuie sa esueze din cauza asta.
+    agent_version: str | None = Field(
+        default=None, max_length=64,
+        description="Versiunea EMS-device-code instalata -- acelasi camp raportat si prin heartbeat (Device.firmware_version).",
+    )
+    build_id: str | None = Field(default=None, max_length=64, description="Commit SHA/build id al versiunii instalate.")
+    hardware_platform: str | None = Field(default=None, max_length=64, description='Ex. "raspberry-pi-4".')
+    architecture: str | None = Field(default=None, max_length=32, description='Ex. "arm64".')
+    os_version: str | None = Field(default=None, max_length=64, description="Versiunea Raspberry Pi OS/kernel relevanta.")
 
     @field_validator("installation_uuid")
     @classmethod
@@ -68,3 +82,8 @@ class EnrollResponse(BaseModel):
     )
     enrollment_expires_at: datetime | None = None
     message: str | None = None
+    # Issue #168: a pending/unlinked device has no other authenticated
+    # channel to receive an OTA offer than this idempotent enrollment call
+    # (it has no Bearer credential yet) -- present only when one exists AND
+    # this device's provisioning proof just verified successfully above.
+    firmware_offer: FirmwareOfferOut | None = None

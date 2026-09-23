@@ -56,6 +56,7 @@ def create_app() -> FastAPI:
     from app.api.v1.router import api_v1_router
     from app.web.routes import admin as admin_routes
     from app.web.routes import admin_catalog as admin_catalog_routes
+    from app.web.routes import admin_firmware as admin_firmware_routes
     from app.web.routes import auth as auth_routes
     from app.web.routes import dashboard as dashboard_routes
     from app.web.routes import deye_integration as deye_integration_routes
@@ -74,6 +75,7 @@ def create_app() -> FastAPI:
     app.include_router(deye_integration_routes.router, tags=["deye-cloud-integration"])
     app.include_router(admin_routes.router, prefix="/admin", tags=["web-admin"])
     app.include_router(admin_catalog_routes.router, prefix="/admin", tags=["web-admin-catalog"])
+    app.include_router(admin_firmware_routes.router, prefix="/admin", tags=["web-admin-firmware"])
     app.include_router(sse_routes.router, tags=["web-sse"])
     app.include_router(api_v1_router, prefix="/api/v1", tags=["device-api"])
 

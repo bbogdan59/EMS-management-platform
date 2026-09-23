@@ -163,6 +163,53 @@ class DeyeCloudConnectionStatus(str, enum.Enum):
     disconnected = "disconnected"
 
 
+class FirmwareChannel(str, enum.Enum):
+    stable = "stable"
+    beta = "beta"
+    canary = "canary"
+
+
+class FirmwareReleaseStatus(str, enum.Enum):
+    """`draft`: metadata still editable, never offered to a device.
+    `published`: immutable (see FirmwareRelease docstring), eligible for
+    new deployments. `revoked`: blocks new deployments/offers, but cannot
+    retroactively un-install already-succeeded devices (see issue #168)."""
+
+    draft = "draft"
+    published = "published"
+    revoked = "revoked"
+
+
+class FirmwareRolloutStatus(str, enum.Enum):
+    active = "active"
+    paused = "paused"
+    completed = "completed"
+    cancelled = "cancelled"
+
+
+class FirmwareDeploymentStatus(str, enum.Enum):
+    """State machine per issue #168:
+    requested -> offered -> downloading -> verified -> installing ->
+    restarting -> awaiting_confirmation -> succeeded, with terminal
+    alternatives rejected/failed/timed_out/rolled_back/cancelled. Only a
+    device's own post-restart report (exact version + new boot_id + health)
+    can produce `succeeded` -- never set by the offer/dispatch side."""
+
+    requested = "requested"
+    offered = "offered"
+    downloading = "downloading"
+    verified = "verified"
+    installing = "installing"
+    restarting = "restarting"
+    awaiting_confirmation = "awaiting_confirmation"
+    succeeded = "succeeded"
+    rejected = "rejected"
+    failed = "failed"
+    timed_out = "timed_out"
+    rolled_back = "rolled_back"
+    cancelled = "cancelled"
+
+
 class EquipmentType(str, enum.Enum):
     """Tip de echipament in catalogul administrabil -- issue #42. Catalogul
     comercial (aceasta lista) e distinct de harta de registre RS485 (issue
