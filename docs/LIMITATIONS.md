@@ -2732,3 +2732,70 @@ orizontului si al liniei "acum" pentru PV, cele doua culori si stack-urile
 pentru zonele de consum, filtrarea seriilor ajutatoare din tooltip).
 `tests/unit/test_dashboard_lazy_loading.py` (formatarea cu doua zecimale pe
 axele graficului principal de putere).
+
+## Addendum: Prag de toleranta si procent de acuratete pentru cele doua grafice de prognoza
+
+Extensie a addendumului anterior, la cererea clientului: coloratul in doua
+culori (sub/peste) nu distingea o diferenta minora (ex. 0.05 kW) de una
+reala -- orice abatere, oricat de mica, aparea colorata la fel. Acum ambele
+grafice (`Prognoza vs. realizat - PV` si `- consum`) clasifica fiecare
+interval de 15 minute in una din trei stari, cu o toleranta explicita:
+
+- **Corect** (albastru) -- `|realizat - prognoza| <= 0.25 kW`.
+- **Sub prognoza** (verde) -- `realizat - prognoza < -0.25 kW`.
+- **Peste prognoza** (rosu) -- `realizat - prognoza > 0.25 kW`.
+
+Pragul (`EMS_FORECAST_ACCURACY_THRESHOLD_KW = 0.25` in `dashboard.js`) e
+aplicat IDENTIC la ambele grafice -- clientul a cerut aceleasi conditii, nu
+o semantica inversata pentru PV (unde "peste prognoza" ar putea parea o
+veste buna, nu una rea; etichetele text clarifica totusi contextul:
+"Productie peste prognoza" vs. "Consum peste prognoza"). Zona colorata
+dintre cele doua linii foloseste acum TREI stack-uri ECharts (nu doua ca
+inainte), fiecare cu propriul strat de baza invizibil si strat de umplere
+vizibil doar pentru punctele clasificate in acea stare
+(`forecastAreaFillSeries(metric, data, thresholdKw)`); niciun punct nu
+poate fi activ in mai mult de un stack simultan.
+
+**Procent de timp + tooltip la hover.** Sub titlul fiecarui grafic apare un
+rand cu procentul de intervale (din cele cu date reale disponibile, NU si
+orizontul viitor al PV) clasificate corect/sub/peste, cu un punct colorat
+identic cu zona din grafic. Randul intreg poarta un atribut `title` (hover
+nativ de browser, fara element nou de UI) care explica pragul si ce
+inseamna fiecare culoare (`updateForecastAccuracy` in `dashboard.js`).
+Tooltip-ul de pe grafic (la hover pe un punct) afiseaza acum si starea
+punctului respectiv plus diferenta exacta in kW.
+
+**Bug real gasit la verificarea manuala in browser** (nu doar o presupunere
+teoretica): randul de clasificare din tooltip nu aparea deloc initial.
+Cauza: codul folosea `params[i].axisValue` ca cheie pentru a gasi punctul
+original in harta `pointsByTime`, dar pe un `xAxis: { type: "time" }`
+ECharts intoarce `axisValue` ca timestamp NUMERIC, nu string-ul ISO original
+din `d.t` folosit ca cheie -- cautarea nu se potrivea NICIODATA. Acelasi bug
+exista dinainte (addendumul anterior) pentru contextul meteo afisat in
+tooltip-ul graficului PV, dar nu fusese observat pentru ca datele de test
+folosite atunci nu aveau `weather` atasat prognozelor. Fix: se foloseste
+`params[i].value[0]` (tuplul original `[d.t, valoare]` pastrat de ECharts),
+nu `axisValue`. Verificat manual in browser cu date semanate care produc
+toate cele trei stari -- tooltip-ul arata acum corect, de exemplu,
+"Consum peste prognoza (+0.42 kW fata de prognoza)".
+
+**Culori explicite, nu paleta implicita ECharts.** Odata ce umplerea are 6
+serii (3 stari x baza+umplere) inaintea liniilor "Prognoza"/"Realizat",
+paleta implicita le-ar fi asignat culori identice sau apropiate de cele ale
+zonelor de stare (verificat vizual -- liniile deveneau rosu/albastru
+deschis, indistincte de zonele rosii/albastre). Fix: `itemStyle.color`
+explicit atat pe seriile de umplere (identic cu culoarea zonei, pentru ca
+legenda sa arate exact ce e pe grafic), cat si pe liniile Prognoza
+(portocaliu) si Realizat (violet).
+
+**Nu acopera:** un prag configurabil per statie/utilizator (0.25 kW e fix,
+in cod, la cererea clientului); un KPI agregat separat cu procentul de
+acuratete pe o fereastra mai lunga (30 zile) -- procentele afisate sunt
+limitate la fereastra de 24h afisata pe grafic (plus orizontul viitor pentru
+PV, care oricum nu se claseaza inca).
+
+**Teste.** `tests/unit/test_dashboard_forecast_chart_enhancements.py`
+(clasificarea in cele trei stari cu pragul explicit, umplerea in trei
+stack-uri aplicata identic la ambele grafice, etichetele si legenda
+specifice per metrica, randul de procente cu tooltip la hover, fix-ul
+`axisValue` vs. `value[0]`, culorile explicite ale liniilor/zonelor).

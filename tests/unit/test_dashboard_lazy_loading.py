@@ -96,4 +96,4 @@ def test_pv_forecast_chart_exposes_weather_summary_and_tooltip_context():
     assert "function pvWeatherSummary(points)" in dashboard_js
     assert "Meteo PV" in dashboard_js
     assert "GHI/DNI/DHI" in dashboard_js
-    assert "tooltipFormatter: forecastTooltipFormatter(metric, pointsByTime)" in dashboard_js
+    assert 'formatter: forecastTooltipFormatter(metric, pointsByTime, ["Prognoza", "Realizat"])' in dashboard_js
