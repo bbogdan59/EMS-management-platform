@@ -99,7 +99,13 @@ class AlertSeverity(str, enum.Enum):
 
 
 class AlertStatus(str, enum.Enum):
-    open = "open"
+    open = "open"  # legacy incidents
+    detected = "detected"
+    active = "active"
+    resolving = "resolving"
+    suppressed = "suppressed"
+    expired = "expired"
+    false_positive = "false_positive"
     acknowledged = "acknowledged"
     resolved = "resolved"
 

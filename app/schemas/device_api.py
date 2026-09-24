@@ -7,7 +7,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 TelemetryQuality = Literal["measured", "derived", "simulated", "stale"]
 
@@ -70,8 +70,8 @@ class TelemetryItem(BaseModel):
 
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
 
-    boot_id: str
-    sequence: int = Field(..., ge=0, description="Contor monoton crescator in cadrul unui boot_id, pentru deduplicare.")
+    boot_id: str = Field(min_length=1, max_length=64)
+    sequence: int = Field(..., ge=0, le=9223372036854775807, description="Contor monoton crescator in cadrul unui boot_id, pentru deduplicare.")
     schema_version: int = Field(default=1, ge=1)
     measured_at: datetime
 
@@ -84,13 +84,55 @@ class TelemetryItem(BaseModel):
     ev_power_w: Decimal | None = Field(default=None, description="W, >=0. Respingere semantica per item daca este negativa.")
 
     mppt: list[MpptTelemetry] = Field(default_factory=list, max_length=8)
-    phases: list[PhaseTelemetry] = Field(default_factory=list, max_length=3)
+    phases: list[PhaseTelemetry] = Field(default_factory=list, max_length=6)
     battery: BatteryTelemetry | None = None
+    inverter: InverterTelemetry | None = None
     status: DeviceStatusTelemetry | None = None
     counters: list[CumulativeCounterTelemetry] = Field(default_factory=list, max_length=32)
 
     quality_flags: dict = Field(default_factory=dict)
     raw_payload: dict = Field(default_factory=dict)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _agent_flat_metrics(cls, value):
+        if not isinstance(value, dict):
+            return value
+        data = dict(value)
+        groups = {}
+        for index in (1, 2):
+            row = {}
+            for metric, unit in (("power", "w"), ("voltage", "v"), ("current", "a")):
+                key = f"pv{index}_{metric}_{unit}"
+                if key in data:
+                    row[f"{metric}_{unit}"] = data.pop(key)
+            if row:
+                groups.setdefault("mppt", []).append({"index": index, **row})
+        for circuit in ("grid", "load"):
+            for phase in ("l1", "l2", "l3"):
+                row = {}
+                for key, target in ((f"{circuit}_voltage_{phase}_v", "voltage_v"),
+                                    (f"grid_ct_{phase}_w" if circuit == "grid" else f"load_power_{phase}_w", "active_power_w")):
+                    if key in data:
+                        row[target] = data.pop(key)
+                if row:
+                    groups.setdefault("phases", []).append({"circuit": circuit, "phase": phase.upper(), **row})
+        for group, mapping in (("battery", {"battery_voltage_v": "voltage_v", "battery_current_a": "current_a", "battery_temperature_c": "temperature_c"}),
+                               ("inverter", {"dc_temperature_c": "dc_temperature_c", "ac_temperature_c": "ac_temperature_c", "inverter_status_code": "status_code"})):
+            row = {target: data.pop(key) for key, target in mapping.items() if key in data}
+            if row:
+                groups[group] = row
+        for name in ("pv", "load", "grid_import", "grid_export", "battery_charge", "battery_discharge"):
+            key = f"{name}_energy_total_kwh"
+            if key in data:
+                number = data.pop(key)
+                if number is not None:
+                    groups.setdefault("counters", []).append({"name": f"{name}_energy_total", "unit": "kWh", "value": number})
+        for group, normalized in groups.items():
+            if group in data:
+                raise ValueError(f"Nu combina metricile agentului cu grupul tipizat {group}.")
+            data[group] = normalized
+        return data
 
     @field_validator("measured_at")
     @classmethod
@@ -114,6 +156,7 @@ class PhaseTelemetry(BaseModel):
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
 
     phase: Literal["L1", "L2", "L3"]
+    circuit: Literal["grid", "load"] = "grid"
     voltage_v: Decimal | None = Field(default=None, ge=0)
     current_a: Decimal | None = Field(default=None, ge=0)
     active_power_w: Decimal | None = Field(
@@ -129,7 +172,17 @@ class BatteryTelemetry(BaseModel):
     voltage_v: Decimal | None = Field(default=None, ge=0)
     current_a: Decimal | None = Field(default=None)
     temperature_c: Decimal | None = None
+    soh_percent: Decimal | None = Field(default=None, ge=0, le=100)
     state: Literal["idle", "charging", "discharging", "fault", "unknown"] | None = None
+    quality: TelemetryQuality = "measured"
+
+
+class InverterTelemetry(BaseModel):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+
+    dc_temperature_c: Decimal | None = None
+    ac_temperature_c: Decimal | None = None
+    status_code: int | None = Field(default=None, ge=0, le=65535)
     quality: TelemetryQuality = "measured"
 
 
@@ -147,7 +200,7 @@ class DeviceStatusTelemetry(BaseModel):
     inverter_state: Literal["offline", "standby", "running", "fault", "unknown"] | None = None
     battery_state: Literal["idle", "charging", "discharging", "fault", "unknown"] | None = None
     faults: list[FaultTelemetry] = Field(default_factory=list, max_length=32)
-    quality: TelemetryQuality = "reported"
+    quality: Literal["reported", "measured", "derived", "simulated", "stale"] = "reported"
 
 
 class CumulativeCounterTelemetry(BaseModel):
@@ -170,6 +223,8 @@ class CumulativeCounterTelemetry(BaseModel):
         description="Schimbat de device cand contorul a fost resetat sau a facut rollover.",
     )
     quality: TelemetryQuality = "measured"
+
+    rollover_kwh: Decimal | None = Field(default=None, gt=0)
 
 
 class TelemetryBatchRequest(BaseModel):
@@ -236,6 +291,7 @@ class TelemetryMetricSpec(BaseModel):
 
 class TelemetryContractResponse(BaseModel):
     schema_version: int
+    supported_schema_versions: list[int] = Field(default_factory=lambda: [1, 2])
     endpoint: str
     deduplication_key: list[str]
     time: dict

@@ -20,7 +20,7 @@ from app.models.alert import Alert
 from app.models.audit import AuditLog
 from app.models.command import Command
 from app.models.device import Device
-from app.models.enums import AdminJobStatus, AdminJobType, AlertStatus, DeviceStatus, PlanStatus
+from app.models.enums import AdminJobStatus, AdminJobType, DeviceStatus, PlanStatus
 from app.models.firmware import FirmwareDeployment
 from app.models.market import ImportRun
 from app.models.optimization import OptimizationRun, Plan
@@ -68,7 +68,7 @@ def overview(request: Request, db: Session = Depends(get_db), user: User = Depen
     }
 
     active_alerts = db.scalars(
-        select(Alert).where(Alert.status == AlertStatus.open.value).order_by(Alert.created_at.desc()).limit(20)
+        select(Alert).where(Alert.status.in_(("open", "detected", "active", "acknowledged", "resolving"))).order_by(Alert.created_at.desc()).limit(20)
     ).all()
 
     last_opcom = db.scalar(select(ImportRun).order_by(ImportRun.created_at.desc()).limit(1))
@@ -122,7 +122,7 @@ def _admin_organization_context(
     for station in db.scalars(select(Station).where(Station.organization_id == organization.id).order_by(Station.name)).all():
         device_count = db.scalar(select(func.count(Device.id)).where(Device.station_id == station.id))
         open_alerts = db.scalar(
-            select(func.count(Alert.id)).where(Alert.station_id == station.id, Alert.status == AlertStatus.open.value)
+            select(func.count(Alert.id)).where(Alert.station_id == station.id, Alert.status.in_(("open", "detected", "active", "acknowledged", "resolving")))
         )
         latest_telemetry = dashboard_service.get_latest_telemetry(db, station.id)
         station_rows.append(

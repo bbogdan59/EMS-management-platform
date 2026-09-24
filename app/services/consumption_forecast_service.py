@@ -15,6 +15,7 @@ masurate, cand dispozitivul le raporteaza.
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+from decimal import Decimal
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
@@ -66,15 +67,21 @@ def generate_consumption_forecast(db: Session, station: Station, horizon_start: 
                and (ev_disabled or (a.ev_energy_kwh is not None and (a.coverage or {}).get("ev", 0) >= 0.9))]
     if not history:
         raise ConsumptionForecastError("Istoric cu acoperire insuficienta pentru consum/EV.")
+    if station.execution_mode == "live":
+        history = [a for a in history if a.data_quality == "measured"]
+        if not history:
+            raise ConsumptionForecastError("Istoric nemasurat sau stale -- prognoza live blocata.")
+    untrusted = any(a.data_quality != "measured" for a in history)
+    simulated = any(a.data_quality == "simulated" for a in history)
     distinct_days = {a.period_start.astimezone(tz).date() for a in history}
     is_cold_start = len(distinct_days) < MIN_DAYS_FOR_FULL_PROFILE
 
-    buckets: dict[tuple[int, int], list[tuple[float, float]]] = {}
-    all_load: list[float] = []
-    all_ev: list[float] = []
+    buckets: dict[tuple[int, int], list[tuple[Decimal, Decimal]]] = {}
+    all_load: list[Decimal] = []
+    all_ev: list[Decimal] = []
     for a in history:
-        load_kw = float(a.load_energy_kwh) * 4  # kWh/15min -> kW mediu
-        ev_kw = 0.0 if ev_disabled else float(a.ev_energy_kwh) * 4
+        load_kw = a.load_energy_kwh * 4  # kWh/15min -> kW mediu
+        ev_kw = Decimal(0) if ev_disabled else a.ev_energy_kwh * 4
         all_load.append(load_kw)
         all_ev.append(ev_kw)
         if not is_cold_start:
@@ -99,18 +106,20 @@ def generate_consumption_forecast(db: Session, station: Station, horizon_start: 
             else:
                 load_kw, ev_kw = global_avg_load, global_avg_ev
 
-        base_kw = max(load_kw - ev_kw, 0.0)
+        base_kw = max(load_kw - ev_kw, Decimal(0))
         cf = ConsumptionForecast(
             station_id=station.id,
             issued_at=forecast_issued_at,
             interval_start=t,
             interval_end=t + timedelta(minutes=15),
             source="historical_profile",
-            source_version="weekday_15min_v1" if not is_cold_start else "global_average_cold_start_v1",
+            source_version=("weekday_15min_v1" if not is_cold_start else "global_average_cold_start_v1") + ("_untrusted" if untrusted else ""),
             base_load_kw=round(base_kw, 4),
             ev_component_kw=round(ev_kw, 4),
             flexible_component_kw=0,
             is_cold_start=is_cold_start,
+            is_synthetic=simulated,
+            confidence="low" if untrusted or is_cold_start else "nominal",
         )
         db.add(cf)
         created.append(cf)

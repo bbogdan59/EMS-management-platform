@@ -47,10 +47,12 @@ def get_summary(db: Session, station: Station) -> dict:
     last_update = None
     if latest is not None:
         last_update = latest.measured_at
-        if latest.is_simulated:
+        if latest.is_simulated or (latest.quality_flags or {}).get("simulated"):
             data_quality = "simulated"
-        elif (now - latest.measured_at) > STALE_AFTER:
+        elif (latest.quality_flags or {}).get("stale") or (now - latest.measured_at) > STALE_AFTER:
             data_quality = "stale"
+        elif (latest.quality_flags or {}).get("derived"):
+            data_quality = "estimated"
         else:
             data_quality = "measured"
 
@@ -128,10 +130,12 @@ def get_live_metrics(db: Session, station: Station) -> list[dict]:
     if latest is not None:
         measured_at_iso = latest.measured_at.isoformat()
         received_at_iso = latest.received_at.isoformat()
-        if latest.is_simulated:
+        if latest.is_simulated or (latest.quality_flags or {}).get("simulated"):
             data_quality = "simulated"
-        elif (now - latest.measured_at) > STALE_AFTER:
+        elif (latest.quality_flags or {}).get("stale") or (now - latest.measured_at) > STALE_AFTER:
             data_quality = "stale"
+        elif (latest.quality_flags or {}).get("derived"):
+            data_quality = "estimated"
         else:
             data_quality = "measured"
 
@@ -326,7 +330,7 @@ def _query_telemetry_rows(db: Session, station: Station, start: datetime, end: d
             "battery_kw": _w_to_kw(r.battery_power_w),
             "grid_kw": _w_to_kw(r.grid_power_w),
             "soc_pct": float(r.battery_soc_percent) if r.battery_soc_percent is not None else None,
-            "data_quality": "simulated" if r.is_simulated else ("stale" if r.is_late else "measured"),
+            "data_quality": "simulated" if r.is_simulated or (r.quality_flags or {}).get("simulated") else ("stale" if r.is_late or (r.quality_flags or {}).get("stale") else "estimated" if (r.quality_flags or {}).get("derived") else "measured"),
             "is_simulated": r.is_simulated,
             "is_late": r.is_late,
         }

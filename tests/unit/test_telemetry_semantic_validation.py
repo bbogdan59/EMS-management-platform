@@ -65,7 +65,7 @@ def test_telemetry_contract_declares_v1_metrics_and_ack_semantics():
     assert metrics["grid_power_w"]["sign"] == "positive_import_negative_export"
     assert metrics["battery_power_w"]["sign"] == "positive_charge_negative_discharge"
     assert contract["provenance"]["numeric_values_default"] == "measured"
-    assert contract["provenance"]["simulation_flag"] == "raw_payload.simulated == true"
+    assert contract["provenance"]["simulation_flag"] == "raw_payload.simulated == true OR quality_flags.simulated == true"
     assert "derived" in contract["provenance"]["categories"]
     assert "unsupported raw_payload fields" in contract["provenance"]["rule"]
     assert contract["raw_payload"]["purpose"].startswith("diagnostic/source payload only")

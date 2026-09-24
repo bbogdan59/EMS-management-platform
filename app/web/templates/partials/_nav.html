@@ -33,6 +33,7 @@
 
     <nav class="ml-2 flex flex-wrap items-center gap-1">
       {% if current_station %}
+      <a class="nav-link" href="/stations/{{ current_station.id }}/health">Stare si alerte</a>
       <a class="nav-link" href="/stations/{{ current_station.id }}/config">Configurare</a>
       <a class="nav-link" href="/stations/{{ current_station.id }}/preferences">Preferinte</a>
       <a class="nav-link" href="/stations/{{ current_station.id }}/tariffs">Tarife</a>
@@ -40,6 +41,8 @@
       <a class="nav-link" href="/stations/{{ current_station.id }}/integrations/deye">Deye Cloud</a>
       {% endif %}
       <a class="nav-link" href="/market/prices{% if current_station %}?station_id={{ current_station.id }}{% endif %}">Piata energie</a>
+      <a class="nav-link" href="/fleet/health">Starea statiilor</a>
+      <a class="nav-link" href="/notifications">Notificari</a>
       {% if current_user.is_platform_admin %}
       <a class="nav-link" href="/admin">Administrare</a>
       {% if worker_failure_count %}

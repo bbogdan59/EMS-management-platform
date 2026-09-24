@@ -249,9 +249,11 @@ def aggregate_interval_15m(db: Session, station_id: uuid.UUID, period_start: dat
 
     coverage = {"pv": pv_cov, "load": load_cov, "battery": batt_cov, "grid": grid_cov, "ev": ev_cov, "soc": soc_cov}
 
-    if any(r.is_simulated for r in rows):
+    if any(r.is_simulated or (r.quality_flags or {}).get("simulated") for r in rows):
         quality = "simulated"
-    elif n < MIN_SAMPLES_FOR_MEASURED_15M or any(c < FULL_COVERAGE_QUALITY_THRESHOLD for c in coverage.values() if c > 0):
+    elif any((r.quality_flags or {}).get("stale") for r in rows):
+        quality = "stale"
+    elif any((r.quality_flags or {}).get("derived") for r in rows) or n < MIN_SAMPLES_FOR_MEASURED_15M or any(c < FULL_COVERAGE_QUALITY_THRESHOLD for c in coverage.values() if c > 0):
         quality = "estimated"
     else:
         quality = "measured"
@@ -377,6 +379,7 @@ def reaggregate_range(db: Session, station: Station, start_utc: datetime, end_ut
     interval istoric arbitrar."""
     if end_utc <= start_utc:
         return
+    db.execute(select(Station.id).where(Station.id == station.id).with_for_update(key_share=True)).scalar_one()
     tz = ZoneInfo(station.timezone)
 
     bucket_start = start_utc.replace(minute=(start_utc.minute // 15) * 15, second=0, microsecond=0)
@@ -470,3 +473,18 @@ def _upsert_aggregate(db: Session, values: dict) -> None:
     # intarziate) ar lasa consumatorii sa vada in continuare valorile vechi,
     # in cache, desi randul din baza s-a schimbat deja.
     db.expire_all()
+
+
+def drain_backfill(db: Session, limit: int = 24) -> int:
+    from app.models.telemetry import TelemetryBackfill
+
+    rows = db.scalars(select(TelemetryBackfill).order_by(TelemetryBackfill.hour_start)
+                      .limit(limit).with_for_update(skip_locked=True)).all()
+    for station_id in sorted({row.station_id for row in rows}):
+        db.execute(select(Station.id).where(Station.id == station_id).with_for_update(key_share=True)).scalar_one()
+    for row in rows:
+        station = db.get(Station, row.station_id)
+        reaggregate_range(db, station, row.hour_start, row.hour_start + timedelta(hours=1))
+        db.delete(row)
+    db.flush()
+    return len(rows)

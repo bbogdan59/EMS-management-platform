@@ -56,6 +56,14 @@ celery_app.conf.beat_schedule = {
         "task": "app.workers.tasks.command_dispatch_task",
         "schedule": crontab(minute="*/2"),
     },
+    "telemetry-backfill-every-minute": {
+        "task": "app.workers.tasks.telemetry_backfill_task",
+        "schedule": crontab(minute="*"),
+    },
+    "notifications-every-minute": {
+        "task": "app.workers.tasks.notifications_task",
+        "schedule": crontab(minute="*"),
+    },
     "alerts-every-5-min": {
         "task": "app.workers.tasks.alerts_task",
         "schedule": crontab(minute="*/5"),

@@ -17,7 +17,7 @@ def build_nav_context(db: Session, user: User, current_station_id: uuid.UUID | N
     else:
         org_ids = [
             row[0]
-            for row in db.execute(select(Membership.organization_id).where(Membership.user_id == user.id)).all()
+            for row in db.execute(select(Membership.organization_id).join(Organization).where(Membership.user_id == user.id, Membership.is_active.is_(True), Organization.status != "archived")).all()
         ]
         stations = (
             db.scalars(select(Station).where(Station.organization_id.in_(org_ids)).order_by(Station.name)).all()
