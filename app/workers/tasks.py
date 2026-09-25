@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import contextlib
 import uuid
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 
 import structlog
 from sqlalchemy import func, select
@@ -89,13 +89,8 @@ def opcom_import_daily_task() -> dict:
     with _task_lock("opcom_import") as acquired:
         if not acquired:
             return {"skipped": "already_running"}
-        results = {}
         with session_scope() as db:
-            for offset in (0, 1):
-                d = datetime.now(opcom_service.BUCHAREST).date() + timedelta(days=offset)
-                run = opcom_service.import_opcom_day(db, d)
-                results[d.isoformat()] = run.status
-        return results
+            return opcom_service.poll_next_day_prices(db)
 
 
 @celery_app.task(name="app.workers.tasks.weather_and_forecast_task")

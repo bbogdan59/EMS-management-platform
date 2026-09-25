@@ -27,7 +27,7 @@ from __future__ import annotations
 import csv as csv_module
 import hashlib
 import io
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal, InvalidOperation
 from zoneinfo import ZoneInfo
 
@@ -49,6 +49,8 @@ from app.services.opcom_schema import DEFAULT_SCHEMA, OpcomCsvSchema
 logger = structlog.get_logger(__name__)
 settings = get_settings()
 BUCHAREST = ZoneInfo("Europe/Bucharest")
+PUBLICATION_POLL_START = time(13, 15)
+PUBLICATION_POLL_INTERVAL = timedelta(minutes=30)
 
 
 class OpcomError(Exception):
@@ -294,9 +296,9 @@ def parse_csv(raw_text: str, delivery_date: date, schema: OpcomCsvSchema = DEFAU
     return results
 
 
-def _fetch_raw(url: str) -> bytes:
+def _fetch_raw(url: str, *, max_attempts: int | None = None) -> bytes:
     for attempt in Retrying(
-        stop=stop_after_attempt(settings.opcom_max_retries),
+        stop=stop_after_attempt(settings.opcom_max_retries if max_attempts is None else max_attempts),
         wait=wait_exponential(multiplier=1, min=1, max=20),
         retry=retry_if_exception_type((httpx.HTTPError,)),
         reraise=True,
@@ -366,7 +368,40 @@ def _lock_import_day(db: Session, source: str, delivery_date: date) -> None:
     db.execute(select(func.pg_advisory_xact_lock(func.hashtextextended(f"opcom-import:{source}:{delivery_date.isoformat()}", 0))))
 
 
-def import_opcom_day(db: Session, delivery_date: date, triggered_by_user_id=None) -> ImportRun:
+def poll_next_day_prices(db: Session) -> dict:
+    now = utcnow()
+    local_date = now.astimezone(BUCHAREST).date()
+    window_start = datetime.combine(local_date, PUBLICATION_POLL_START, BUCHAREST).astimezone(UTC)
+    if now < window_start:
+        return {"skipped": "before_publication_window"}
+
+    delivery_date = local_date + timedelta(days=1)
+    source = "opcom_pzu"
+    _lock_import_day(db, source, delivery_date)
+    # A queued invocation can wait behind a manual import across midnight.
+    now = utcnow()
+    if now.astimezone(BUCHAREST).date() != local_date:
+        return {"skipped": "publication_window_expired"}
+    if has_successful_real_import(db, delivery_date, source):
+        return {"skipped": "already_received", "delivery_date": delivery_date.isoformat()}
+
+    slot_start = window_start + ((now - window_start) // PUBLICATION_POLL_INTERVAL) * PUBLICATION_POLL_INTERVAL
+    attempted = db.scalar(
+        select(ImportRun.id).where(
+            ImportRun.source == source,
+            ImportRun.delivery_date == delivery_date,
+            ImportRun.fetched_at >= slot_start,
+        ).limit(1)
+    )
+    if attempted is not None:
+        return {"skipped": "retry_not_due", "delivery_date": delivery_date.isoformat()}
+
+    # Beat owns the retry cadence; transport retries would query within seconds.
+    run = import_opcom_day(db, delivery_date, max_attempts=1)
+    return {delivery_date.isoformat(): run.status}
+
+
+def import_opcom_day(db: Session, delivery_date: date, triggered_by_user_id=None, *, max_attempts: int | None = None) -> ImportRun:
     source = "opcom_pzu"
     _lock_import_day(db, source, delivery_date)
     existing_max = db.scalar(
@@ -403,11 +438,11 @@ def import_opcom_day(db: Session, delivery_date: date, triggered_by_user_id=None
     raw_bytes: bytes | None = None
     fetch_error: Exception | None = None
     try:
-        raw_bytes = _fetch_raw(url)
-        run.attempt_count = settings.opcom_max_retries
+        raw_bytes = _fetch_raw(url) if max_attempts is None else _fetch_raw(url, max_attempts=max_attempts)
+        run.attempt_count = settings.opcom_max_retries if max_attempts is None else max_attempts
     except Exception as exc:  # httpx.HTTPError sau eroare finala dupa retry
         fetch_error = exc
-        run.attempt_count = settings.opcom_max_retries
+        run.attempt_count = settings.opcom_max_retries if max_attempts is None else max_attempts
 
     run.fetched_at = utcnow()
 
