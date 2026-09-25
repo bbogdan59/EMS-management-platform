@@ -40,9 +40,11 @@ celery_app.conf.beat_schedule = {
         "task": "app.workers.tasks.run_aggregation_task",
         "schedule": crontab(minute="*/15"),
     },
-    "opcom-import-hourly": {
+    "opcom-import-after-1315-bucharest-every-30-min": {
         "task": "app.workers.tasks.opcom_import_daily_task",
-        "schedule": crontab(minute=5),
+        # The worker gates HTTP by Bucharest time and persisted import results;
+        # other tasks retain their UTC schedules, including across DST changes.
+        "schedule": crontab(minute="15,45"),
     },
     "weather-and-forecasts-every-30-min": {
         "task": "app.workers.tasks.weather_and_forecast_task",

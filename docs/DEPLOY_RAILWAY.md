@@ -129,6 +129,20 @@ Pentru serviciul **web**, `railway.json` de la radacina se aplica automat
 replici peste 1. Doua instante de Celery Beat ar dubla toate joburile
 planificate (importuri OPCOM, optimizari etc.).
 
+**Program OPCOM PZU:** prima incercare automata pentru preturile zilei
+urmatoare este la **13:15 Europe/Bucharest**, apoi la **13:45, 14:15, ...,
+23:45** pana la un import real reusit. Ora de vara/iarna este derivata din
+fusul pietei. Beat verifica la minutele 15/45; worker-ul nu interogheaza
+OPCOM inainte de 13:15 sau dupa un succes deja stocat. Fiecare incercare
+programata face o singura cerere HTTP, fara retry-uri rapide de transport.
+Lock-ul PostgreSQL per zi si istoricul importurilor impiedica duplicatele
+in aceeasi fereastra de 30 minute, inclusiv dupa restart; datele sintetice
+nu opresc reincercarile. La miezul noptii fereastra se inchide, iar urmatorul
+ciclu incepe la 13:15 pentru noua zi urmatoare. Recuperarea zilelor ratate
+si corectiile ulterioare raman disponibile prin import manual/backfill.
+
+Modificarile programului necesita redeploy pentru **worker** si **scheduler**.
+
 ## 4. Migratii -- pas controlat
 
 Nu rula migratiile automat la fiecare deploy al serviciului **web**
