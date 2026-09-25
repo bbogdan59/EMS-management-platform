@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}Control - {{ station.name }}{% endblock %}
+{% block content %}
+<h1 class="page-title">Control: {{ station.name }}</h1>
+<p class="mt-2">Mod: <strong>{{ state.mode if state else 'shadow' }}</strong>. Aprobarea, acceptarea, aplicarea, verificarea setarilor si rezultatul masurat sunt etape separate.</p>
+{% if state %}<p class="text-sm mt-2">{{ state.reason }}</p>{% endif %}
+{% if role in ['operator','organization_admin','platform_admin'] %}
+<form class="card mt-4" method="post" action="/stations/{{ station.id }}/control/stop">
+<input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+<h2 class="font-semibold">Oprire de urgenta a automatizarii</h2><p class="mt-2 text-sm">Blocheaza comenzile noi si retrage comenzile in asteptare. Nu confirma oprirea fizica a invertorului; pentru pericol imediat foloseste protectia locala.</p>
+<button class="btn-danger mt-3">Suspenda automatizarea</button></form>
+<form class="card mt-4 space-y-3" method="post" action="/stations/{{ station.id }}/control/mode">
+<input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><input type="hidden" name="revision" value="{{ state.revision if state else 1 }}">
+<h2 class="font-semibold">Schimba modul</h2>
+<label class="block">Mod<select class="input" name="mode"><option value="shadow">Shadow — simulare</option><option value="assisted">Assisted — aprobare pentru fiecare plan</option><option value="automatic">Automatic — numai cu politica validata</option><option value="suspended">Suspended — monitorizare</option></select></label>
+<label class="block">Motiv<input class="input w-full" name="reason" required maxlength="500"></label>
+<label class="block"><input type="checkbox" name="confirmed" value="true" required> Confirm schimbarea modului.</label><button class="btn-primary">Schimba modul</button>
+<p class="text-sm">Assisted si Automatic necesita capabilitati raportate, un profil hardware validat si activarea executiei. Agentul actual read-only ramane fara control fizic.</p></form>
+{% endif %}
+{% if plan %}<div class="card mt-4"><h2 class="font-semibold">Plan v{{ plan.version }} · {{ plan.execution_mode }}</h2><p>{{ plan.status }}</p><a class="btn-secondary mt-3" href="/stations/{{ station.id }}/control/plans/{{ plan.id }}">Preview si verificari</a></div>{% endif %}
+{% if policy %}<details class="card mt-4"><summary>Politica v{{ policy.version }}</summary><dl class="mt-3">{% for key, value in policy.limits.items() %}<dt class="font-semibold mt-2">{{ key|replace('_',' ') }}</dt><dd class="break-words">{{ value }}</dd>{% endfor %}</dl></details>{% endif %}
+{% if role in ['organization_admin','platform_admin'] %}
+<details class="card mt-4"><summary>Defineste o politica noua</summary>
+<form class="mt-3 grid gap-3 sm:grid-cols-2" method="post" action="/stations/{{ station.id }}/control/policy">
+<input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+<label>Dispozitiv<select class="input w-full" name="device_id" required>{% for d in devices %}<option value="{{ d.id }}">{{ d.name }}</option>{% endfor %}</select></label>
+{% for name, label, value in [('min_soc','SOC minim (%)',preference.min_reserve_soc_percent),('max_soc','SOC maxim (%)',preference.max_normal_soc_percent),('max_energy','Energie maxima gestionata (kWh)',0),('charge','Putere maxima incarcare (kW)',0),('discharge','Putere maxima descarcare (kW)',0),('ramp','Variatie maxima putere (kW/min)',0.1),('efc_day','Buget EFC / zi',0),('efc_month','Buget EFC / luna',0)] %}<label>{{ label }}<input class="input w-full" type="number" step="any" name="{{ name }}" value="{{ value }}" min="0" required></label>{% endfor %}
+<label>Fereastra zilnica de la<input class="input w-full" name="window_start" value="00:00" required></label><label>Pana la (24:00 = sfarsitul zilei)<input class="input w-full" name="window_end" value="24:00" required></label>
+<label>Expirare in {{ station.timezone }} (maximum 30 zile)<input class="input w-full" type="datetime-local" name="expires_at" required></label>
+<p class="text-sm sm:col-span-2">O politica noua suspenda automatizarea si invalideaza aprobarile vechi. Zero inseamna limita zero.</p><button class="btn-primary">Salveaza politica</button></form></details>
+{% endif %}
+{% endblock %}

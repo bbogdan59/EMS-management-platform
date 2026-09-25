@@ -161,3 +161,46 @@ def test_health_notification_and_assistant_browser_flow(diagnostics_server):
         page.screenshot(path="/tmp/ems-diagnostics-mobile.png", full_page=True)
         assert errors == []
         browser.close()
+
+
+def test_energy_operations_ev_schedule_preset_and_control_browser_flow(diagnostics_server):
+    base, station_id = diagnostics_server
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(executable_path=os.environ.get("PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH"))
+        page = browser.new_page(viewport={"width": 1280, "height": 900})
+        errors = []
+        page.on("pageerror", lambda error: errors.append(str(error)))
+        page.goto(base + "/login")
+        page.fill("#email", "diagnostics-browser@test.local")
+        page.fill("#password", "TestPass1234")
+        page.click("button[type=submit]")
+        page.goto(base + f"/stations/{station_id}/ev")
+        page.get_by_text("Adauga o statie EV cu un conector", exact=True).click()
+        form = page.locator(f'form[action="/stations/{station_id}/ev"]')
+        form.locator('[name="name"]').fill("Garage EV")
+        form.locator('[name="max_power_kw"]').fill("7.4")
+        form.locator('[name="meter"]').check()
+        form.get_by_role("button", name="Adauga EVSE").click()
+        expect(page.locator("h2").filter(has_text="Garage EV")).to_be_visible()
+        page.get_by_text("Cerinta de plecare / program saptamanal", exact=True).click()
+        form = page.locator('form[action$="/ev/requirements"]')
+        form.locator('[name="energy"]').fill("12")
+        form.locator('[name="weekdays"][value="0"]').check()
+        form.locator('[name="local_time"]').fill("08:00")
+        form.get_by_role("button", name="Salveaza cerinta").click()
+        expect(page.locator("article").first).to_contain_text("12.000 kWh")
+        page.goto(base + f"/stations/{station_id}/recommendations")
+        page.locator('form[action$="/recommendations/preset"] select').select_option("economy")
+        page.locator('form[action$="/recommendations/preset"] button').click()
+        expect(page.locator("h1")).to_have_text("Economy")
+        expect(page.get_by_role("button", name="Apply — confirm modificarile")).to_be_disabled()
+        page.locator('[name="reason"]').fill("Browser feedback")
+        page.get_by_role("button", name="Not relevant", exact=True).click()
+        expect(page.locator("main")).to_contain_text("not_relevant")
+        page.set_viewport_size({"width": 390, "height": 844})
+        for route in ("ev", "control", "recommendations"):
+            page.goto(base + f"/stations/{station_id}/{route}")
+            assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth"), route
+        page.screenshot(path="/tmp/ems-operations-mobile.png", full_page=True)
+        assert errors == []
+        browser.close()

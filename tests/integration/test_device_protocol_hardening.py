@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import uuid
 from datetime import timedelta
-from decimal import Decimal
 
 import pytest
 from sqlalchemy import select
@@ -14,6 +13,7 @@ from app.core.security import utcnow
 from app.models.command import Command, CommandEvent
 from app.models.enums import CommandStatus, CommandType
 from app.services import device_service
+from tests.energy_helpers import command_for, ops_fixture  # noqa: F401
 from tests.factories import make_device, make_org, make_station, make_user
 
 
@@ -25,22 +25,13 @@ def _claim(client, db, station, user):
     return payload, {"Authorization": f"Bearer {payload['device_id']}.{payload['credential_secret']}"}
 
 
-def test_ack_replay_is_idempotent_but_contradiction_rejected(client, db):
-    user = make_user(db, email="ackidemp@test.local", password="Password1234")
-    org = make_org(db, "Ack Idemp Org")
-    station = make_station(db, org, user, name="Ack Idemp Station")
+def test_ack_replay_is_idempotent_but_contradiction_rejected(client, db, ops, monkeypatch):
+    user, station, device, plan, interval, policy, now = ops
+    cmd = command_for(db, ops, monkeypatch)
+    monkeypatch.setattr(device_service, "utcnow", lambda: now + timedelta(minutes=1))
+    headers = {"Authorization": f"Bearer {device.id}.ops-secret"}
     db.commit()
-    payload, headers = _claim(client, db, station, user)
 
-    cmd = Command(
-        station_id=station.id, device_id=uuid.UUID(payload["device_id"]),
-        type=CommandType.hold_battery.value, parameters={},
-        version=1, idempotency_key="ack-idemp-1", status=CommandStatus.created.value,
-        author="user", reason="Test idempotency",
-        valid_from=utcnow() - timedelta(minutes=1), expires_at=utcnow() + timedelta(minutes=10),
-    )
-    db.add(cmd)
-    db.commit()
     client.get("/api/v1/commands/pending", headers=headers)  # marks delivered
 
     first = client.post(f"/api/v1/commands/{cmd.id}/ack", json={"status": "accepted"}, headers=headers)
@@ -68,22 +59,13 @@ def test_ack_replay_is_idempotent_but_contradiction_rejected(client, db):
     assert len(events) == 1, "reincercarea idempotenta nu trebuie sa duplice evenimentul de audit"
 
 
-def test_result_replay_is_idempotent_but_contradiction_rejected(client, db):
-    user = make_user(db, email="resultidemp@test.local", password="Password1234")
-    org = make_org(db, "Result Idemp Org")
-    station = make_station(db, org, user, name="Result Idemp Station")
+def test_result_replay_is_idempotent_but_contradiction_rejected(client, db, ops, monkeypatch):
+    user, station, device, plan, interval, policy, now = ops
+    cmd = command_for(db, ops, monkeypatch)
+    monkeypatch.setattr(device_service, "utcnow", lambda: now + timedelta(minutes=1))
+    headers = {"Authorization": f"Bearer {device.id}.ops-secret"}
     db.commit()
-    payload, headers = _claim(client, db, station, user)
 
-    cmd = Command(
-        station_id=station.id, device_id=uuid.UUID(payload["device_id"]),
-        type=CommandType.hold_battery.value, parameters={},
-        version=1, idempotency_key="result-idemp-1", status=CommandStatus.created.value,
-        author="user", reason="Test idempotency",
-        valid_from=utcnow() - timedelta(minutes=1), expires_at=utcnow() + timedelta(minutes=10),
-    )
-    db.add(cmd)
-    db.commit()
     client.get("/api/v1/commands/pending", headers=headers)
     client.post(f"/api/v1/commands/{cmd.id}/ack", json={"status": "accepted"}, headers=headers)
 
@@ -198,13 +180,15 @@ def test_concurrent_claim_of_same_code_has_exactly_one_winner(engine):
             for did in device_ids:
                 cleanup.execute(delete(DeviceCredential).where(DeviceCredential.device_id == did))
             cleanup.execute(delete(Device).where(Device.station_id == station_id))
+            from app.models.audit import AuditLog
+            cleanup.execute(delete(AuditLog).where(AuditLog.station_id == station_id))
             cleanup.execute(delete(Station).where(Station.id == station_id))
             cleanup.execute(delete(Organization).where(Organization.id == org_id))
             cleanup.execute(delete(User).where(User.id == user_id))
             cleanup.commit()
 
 
-def test_concurrent_dispatch_produces_no_duplicate_commands(engine):
+def test_concurrent_dispatch_produces_no_duplicate_commands(engine, monkeypatch):
     """Doua rulari concurente ale `dispatch_due_commands` pentru aceeasi statie
     live/interval curent trebuie sa produca exact O comanda, niciodata doua
     echivalente, si niciuna dintre rulari nu trebuie sa se pravaleasca in bloc
@@ -215,47 +199,18 @@ def test_concurrent_dispatch_produces_no_duplicate_commands(engine):
     from sqlalchemy import delete
     from sqlalchemy.orm import Session
 
-    from app.models.enums import OptimizationRunStatus, PlanStatus
-    from app.models.optimization import OptimizationRun, Plan, PlanInterval
     from app.models.organization import Organization
     from app.models.user import User
     from app.services import command_dispatch_service
-
-    suffix = uuid.uuid4().hex
+    from tests.energy_helpers import approve, make_control_context
     with Session(engine) as setup:
-        user = make_user(setup, email=f"{suffix}@dispatchrace.test")
-        org = make_org(setup, f"Dispatch Race {suffix}")
-        station = make_station(setup, org, user, name=f"Dispatch Race Station {suffix}")
-        station.execution_mode = "live"
-        setup.add(station)
-        device = make_device(setup, station)
-        setup.flush()
-
-        config, preference = device_service.get_active_station_config(setup, station.id)
-        now = utcnow()
-        run = OptimizationRun(
-            station_id=station.id, status=OptimizationRunStatus.succeeded.value, is_fallback=False,
-            horizon_start=now - timedelta(minutes=15), horizon_end=now + timedelta(hours=1), interval_minutes=15,
-            station_config_version_id=config.id, preference_version_id=preference.id,
-            triggered_by="user", started_at=now, finished_at=now,
-        )
-        setup.add(run)
-        setup.flush()
-        plan = Plan(
-            optimization_run_id=run.id, station_id=station.id, version=1,
-            status=PlanStatus.accepted_by_device.value, execution_mode="live",
-            published_at=now, accepted_at=now, accepted_by_device_id=device.id,
-        )
-        setup.add(plan)
-        setup.flush()
-        interval = PlanInterval(
-            plan_id=plan.id, interval_start=now - timedelta(minutes=1), interval_end=now + timedelta(minutes=14),
-            pv_forecast_kw=Decimal("1"), load_forecast_kw=Decimal("1"), battery_power_target_kw=Decimal("1"),
-            grid_power_target_kw=Decimal("0"), battery_soc_target_percent=Decimal("60"), ev_charge_power_kw=Decimal("0"),
-        )
-        setup.add(interval)
+        context = make_control_context(setup, monkeypatch)
+        user, station, device, plan, interval, policy, now = context
+        approve(setup, context)
+        device_service.accept_plan(setup, device, plan.version)
         setup.commit()
-        station_id, org_id, user_id, run_id, plan_id = station.id, org.id, user.id, run.id, plan.id
+        station_id, org_id, user_id = station.id, station.organization_id, user.id
+    monkeypatch.setattr(command_dispatch_service, "utcnow", lambda: now + timedelta(minutes=1))
 
     barrier = Barrier(2)
 
@@ -277,14 +232,9 @@ def test_concurrent_dispatch_produces_no_duplicate_commands(engine):
             assert len(commands) == 1
     finally:
         with Session(engine) as cleanup:
-            cleanup.execute(delete(Command).where(Command.station_id == station_id))
-            cleanup.execute(delete(PlanInterval).where(PlanInterval.plan_id == plan_id))
-            cleanup.execute(delete(Plan).where(Plan.id == plan_id))
-            cleanup.execute(delete(OptimizationRun).where(OptimizationRun.id == run_id))
-            from app.models.device import Device
+            from app.models.audit import AuditLog
             from app.models.station import Station
-
-            cleanup.execute(delete(Device).where(Device.station_id == station_id))
+            cleanup.execute(delete(AuditLog).where(AuditLog.station_id == station_id))
             cleanup.execute(delete(Station).where(Station.id == station_id))
             cleanup.execute(delete(Organization).where(Organization.id == org_id))
             cleanup.execute(delete(User).where(User.id == user_id))

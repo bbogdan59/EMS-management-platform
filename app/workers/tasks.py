@@ -158,7 +158,11 @@ def optimization_all_stations_task() -> dict:
 
 @celery_app.task(name="app.workers.tasks.command_dispatch_task")
 def command_dispatch_task() -> dict:
+    from app.services.control_service import reconcile_station
+
     with session_scope() as db:
+        for station in db.scalars(select(Station).where(Station.is_active.is_(True)).order_by(Station.id)):
+            reconcile_station(db, station)
         created = command_dispatch_service.dispatch_due_commands(db)
         return {"commands_created": len(created)}
 
@@ -470,9 +474,11 @@ def telemetry_backfill_task() -> dict:
 def retention_task() -> dict:
     from app.models.audit import AuditLog
     from app.models.telemetry import TelemetryAggregate, TelemetryRaw
+    from app.services.ev_service import retention as ev_retention
 
     now = utcnow()
     with session_scope() as db:
+        ev_deleted = ev_retention(db, now)
         raw_cutoff = now - timedelta(days=settings.telemetry_raw_retention_days)
         agg_cutoff = now - timedelta(days=settings.telemetry_aggregate_retention_days)
         audit_cutoff = now - timedelta(days=settings.audit_log_retention_days)
@@ -487,4 +493,4 @@ def retention_task() -> dict:
         agg_deleted = db.query(TelemetryAggregate).filter(TelemetryAggregate.period_start < agg_cutoff).delete(synchronize_session=False)
         audit_deleted = db.query(AuditLog).filter(AuditLog.occurred_at < audit_cutoff).delete(synchronize_session=False)
 
-    return {"raw_deleted": raw_deleted, "aggregates_deleted": agg_deleted, "audit_deleted": audit_deleted}
+    return {"raw_deleted": raw_deleted, "aggregates_deleted": agg_deleted, "audit_deleted": audit_deleted, "ev_sessions_deleted": ev_deleted}

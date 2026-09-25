@@ -109,10 +109,12 @@ def test_dispatch_allows_plan_when_organization_active():
     assert dispatch.plan_allows_dispatch(db, plan, station, now)
 
 
-def test_dispatch_targets_the_device_that_accepted_the_plan():
+def test_dispatch_targets_the_device_that_accepted_the_plan(monkeypatch):
+    from app.services import control_service
+    monkeypatch.setattr(control_service, "execution_authorized", lambda *args: True)
     now, station, config, pref, device, plan, interval, db = context()
     db.scalars.return_value.all.return_value = [station]
-    db.scalar.side_effect = [plan, pref, config, interval, None]
+    db.scalar.side_effect = [station, plan, pref, config, interval, None]
     db.get.return_value = device
     commands = dispatch.dispatch_due_commands(db)
     db.get.assert_called_once_with(Device, plan.accepted_by_device_id)
@@ -129,7 +131,7 @@ def test_dispatch_does_not_fall_back_to_another_device(state):
     if state == "wrong_station":
         device.station_id = uuid.uuid4()
     db.scalars.return_value.all.return_value = [station]
-    db.scalar.side_effect = [plan, pref, config, interval]
+    db.scalar.side_effect = [station, plan, pref, config, interval]
     db.get.return_value = None if state == "missing" else device
     assert dispatch.dispatch_due_commands(db) == []
 
@@ -172,6 +174,6 @@ def test_command_cannot_be_accepted_before_valid_from():
     command = SimpleNamespace(
         device_id=device.id, status="created", valid_from=now + timedelta(hours=1)
     )
-    db.get.return_value = command
+    db.scalar.side_effect = [station, command]
     with pytest.raises(device_service.DeviceServiceError, match="inca valabila"):
         device_service.acknowledge_command(db, device, uuid.uuid4(), "accepted", None)
