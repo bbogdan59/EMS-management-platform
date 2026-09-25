@@ -72,14 +72,6 @@ def test_flow_diagram_template_is_semantic_bus_layout():
     assert 'aria-labelledby="energy-flow-title energy-flow-summary"' in html
     assert 'id="energy-flow-summary"' in html
     assert 'aria-live="polite"' in html
-    assert "Bus" in html
-    assert ">Consum</text>" in html
-    assert ">casa</text>" in html
-    assert '<text x="281" y="119" text-anchor="middle" class="fill-gray-800 dark:fill-gray-100">Bus</text>' in html
-
-
-def test_ev_kpi_treats_zero_power_as_a_value():
-    dashboard_js = Path("app/web/static/js/dashboard.js").read_text()
-
-    assert 'hasValue(s.ev_power_kw) ? ", " + fmt(s.ev_power_kw) + " kW" : ""' in dashboard_js
-    assert 's.ev_power_kw ? ", " + fmt(s.ev_power_kw) + " kW" : ""' not in dashboard_js
+    for edge in ("pv_bus", "bus_load", "battery_bus", "bus_battery", "grid_bus", "bus_grid", "bus_ev"):
+        assert f'data-flow-edge="{edge}"' in html
+    assert "bus AC" in html

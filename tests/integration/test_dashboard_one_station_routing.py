@@ -59,7 +59,7 @@ def test_single_station_user_redirects_straight_to_dashboard(client, db):
     # deloc (doar numele statiei, ca text simplu) -- issue #45.
     assert 'name="station_id"' not in page.text
     assert "DS One Station Org / DS Only Station" in page.text
-    assert f'href="/?station_id={station.id}" class="flex items-center gap-2 text-base font-semibold' in page.text
+    assert f'href="/?station_id={station.id}" aria-label="EMS Platform — acasa"' in page.text
 
 
 def test_single_station_redirect_does_not_reflect_untrusted_host(client, db):
@@ -165,7 +165,8 @@ def test_price_and_benefit_kpi_cards_have_calculation_disclosure(client, db):
     assert page.status_code == 200
     # Costurile/beneficiile si KPI-urile Astazi/Luna curenta au disclosure-uri
     # explicite; testul cere existenta lor, nu un numar inghetat de carduri.
-    assert page.text.count("Cum se calculeaza?") >= 6
+    assert page.text.count("Cum se calculeaza?") == 3
+    assert page.text.count("Reper si metoda de calcul") == 2
     assert "Astazi" in page.text
     assert "Luna curenta" in page.text
     assert "Pe scurt, ce se intampla acum" in page.text

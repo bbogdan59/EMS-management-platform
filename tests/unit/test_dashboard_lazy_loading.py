@@ -52,8 +52,8 @@ def test_dashboard_power_chart_overlays_faded_soc_on_left_axis():
     assert "yAxisIndex: 0" in dashboard_js
     assert (
         'yAxis: [\n'
-        '          { type: "value", name: "%", min: 0, max: 100, axisLabel: { formatter: (v) => Number(v).toFixed(2) } },\n'
-        '          { type: "value", name: "kW", axisLabel: { formatter: (v) => Number(v).toFixed(2) } },\n'
+        '          { type: "value", name: "%", min: 0, max: 100, axisLabel: { formatter: (v) => fmt(v, 2) } },\n'
+        '          { type: "value", name: "kW", axisLabel: { formatter: (v) => fmt(v, 2) } },\n'
         '        ]'
     ) in dashboard_js
     # doua zecimale peste tot in acest grafic (cerere client) -- tooltip si axe
@@ -80,7 +80,7 @@ def test_dashboard_timeseries_line_symbols_are_threshold_based():
 
     assert "const EMS_CHART_SYMBOL_THRESHOLD = 48" in dashboard_js
     assert "item.data.length <= EMS_CHART_SYMBOL_THRESHOLD" in dashboard_js
-    assert 'const mk = (key, name) => ({ name, type: "line", yAxisIndex: 1, data:' in dashboard_js
+    assert 'const mk = (key, name) => ({ name, type: "line", yAxisIndex: 1,' in dashboard_js
 
 
 def test_daily_export_energy_chart_preserves_missing_values_as_gaps():

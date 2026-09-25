@@ -9,12 +9,12 @@ from app.web.templating import fmt_lei_per_kwh
 def test_tariff_template_preserves_explicit_zero_fixed_price():
     """`fmt_lei_per_kwh` (issue #114) checks `value is None`, never a
     truthy/falsy check on the Decimal itself -- so an explicit price of
-    0 must render as "0.00000 lei/kWh", not be treated as missing/"-"."""
+    0 must render as "0,00000 lei/kWh", not be treated as missing/"-"."""
     template = Path("app/web/templates/stations/tariffs.html").read_text()
 
     assert "v.fixed_price_lei_per_kwh | lei_per_kwh" in template
     assert "if v.fixed_price_lei_per_kwh else" not in template
-    assert fmt_lei_per_kwh(Decimal("0")) == "0.00000 lei/kWh"
+    assert fmt_lei_per_kwh(Decimal("0")) == "0,00000 lei/kWh"
     assert fmt_lei_per_kwh(None) == "-"
 
 

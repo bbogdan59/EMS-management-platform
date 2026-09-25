@@ -1,70 +1,47 @@
-<svg id="energy-flow-diagram" viewBox="0 0 560 260" class="mx-auto w-full max-w-2xl" role="img" aria-labelledby="energy-flow-title energy-flow-summary">
-  <title id="energy-flow-title">Diagrama fluxurilor de energie</title>
-  <desc id="energy-flow-desc">Fluxuri nete intre PV, consum, baterie, retea, EV si bus-ul energetic al statiei.</desc>
-  <defs>
-    <marker id="flow-arrow-amber" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto" markerUnits="strokeWidth">
-      <path d="M0,0 L8,4 L0,8 Z" class="fill-amber-500"></path>
-    </marker>
-    <marker id="flow-arrow-green" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto" markerUnits="strokeWidth">
-      <path d="M0,0 L8,4 L0,8 Z" class="fill-green-600"></path>
-    </marker>
-    <marker id="flow-arrow-gray" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto" markerUnits="strokeWidth">
-      <path d="M0,0 L8,4 L0,8 Z" class="fill-gray-500"></path>
-    </marker>
-    <marker id="flow-arrow-sky" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto" markerUnits="strokeWidth">
-      <path d="M0,0 L8,4 L0,8 Z" class="fill-sky-600"></path>
-    </marker>
-  </defs>
-
-  <g font-size="12" font-family="sans-serif">
-    <circle cx="95" cy="54" r="32" class="fill-amber-100 stroke-amber-500 dark:fill-amber-900/40" stroke-width="2"></circle>
-    <text x="95" y="58" text-anchor="middle" class="fill-gray-800 dark:fill-gray-100">PV</text>
-
-    <rect x="238" y="95" width="86" height="58" rx="8" class="fill-brand-100 stroke-brand-600 dark:fill-brand-900/40" stroke-width="2"></rect>
-    <text x="281" y="119" text-anchor="middle" class="fill-gray-800 dark:fill-gray-100">Bus</text>
-    <text x="281" y="137" text-anchor="middle" class="fill-gray-600 dark:fill-gray-300">statie</text>
-
-    <rect x="420" y="95" width="92" height="58" rx="8" class="fill-gray-100 stroke-gray-500 dark:fill-gray-800" stroke-width="2"></rect>
-    <text x="466" y="119" text-anchor="middle" class="fill-gray-800 dark:fill-gray-100">Consum</text>
-    <text x="466" y="137" text-anchor="middle" class="fill-gray-600 dark:fill-gray-300">casa</text>
-
-    <rect x="58" y="183" width="80" height="48" rx="8" class="fill-green-100 stroke-green-600 dark:fill-green-900/40" stroke-width="2"></rect>
-    <text x="98" y="211" text-anchor="middle" class="fill-gray-800 dark:fill-gray-100">Baterie</text>
-
-    <rect x="408" y="18" width="100" height="48" rx="8" class="fill-gray-200 stroke-gray-500 dark:fill-gray-800" stroke-width="2"></rect>
-    <text x="458" y="47" text-anchor="middle" class="fill-gray-800 dark:fill-gray-100">Retea</text>
-
-    <rect x="408" y="183" width="100" height="48" rx="8" class="fill-sky-100 stroke-sky-600 dark:fill-sky-900/40" stroke-width="2"></rect>
-    <text x="458" y="211" text-anchor="middle" class="fill-gray-800 dark:fill-gray-100">EV</text>
-  </g>
-
-  <g id="energy-flow-edges" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round">
-    <path id="flow-pv-bus" data-flow-edge="pv_bus" d="M124 66 C168 82 201 103 238 117" class="stroke-amber-500" opacity="0.18" marker-end="url(#flow-arrow-amber)"></path>
-    <path id="flow-bus-load" data-flow-edge="bus_load" d="M324 124 C356 124 386 124 420 124" class="stroke-gray-500" opacity="0.18" marker-end="url(#flow-arrow-gray)"></path>
-    <path id="flow-battery-bus" data-flow-edge="battery_bus" d="M136 201 C178 178 207 151 239 137" class="stroke-green-600" opacity="0.18" marker-end="url(#flow-arrow-green)"></path>
-    <path id="flow-bus-battery" data-flow-edge="bus_battery" d="M239 146 C207 160 176 184 136 207" class="stroke-green-600" opacity="0.18" marker-end="url(#flow-arrow-green)"></path>
-    <path id="flow-grid-bus" data-flow-edge="grid_bus" d="M410 56 C371 75 347 93 320 110" class="stroke-gray-500" opacity="0.18" marker-end="url(#flow-arrow-gray)"></path>
-    <path id="flow-bus-grid" data-flow-edge="bus_grid" d="M324 102 C354 83 380 65 410 49" class="stroke-gray-500" opacity="0.18" marker-end="url(#flow-arrow-gray)"></path>
-    <path id="flow-bus-ev" data-flow-edge="bus_ev" d="M321 145 C356 164 383 184 408 199" class="stroke-sky-600" opacity="0.18" marker-end="url(#flow-arrow-sky)"></path>
-  </g>
-
-  <g font-size="11" font-family="sans-serif" class="fill-gray-600 dark:fill-gray-300">
-    <text data-flow-label="pv_bus" x="176" y="81" text-anchor="middle">-</text>
-    <text data-flow-label="bus_load" x="372" y="116" text-anchor="middle">-</text>
-    <text data-flow-label="battery_bus" x="176" y="178" text-anchor="middle">-</text>
-    <text data-flow-label="bus_battery" x="176" y="221" text-anchor="middle">-</text>
-    <text data-flow-label="grid_bus" x="366" y="78" text-anchor="middle">-</text>
-    <text data-flow-label="bus_grid" x="366" y="44" text-anchor="middle">-</text>
-    <text data-flow-label="bus_ev" x="364" y="181" text-anchor="middle">-</text>
-  </g>
+<svg id="energy-flow-diagram" viewBox="0 0 600 285" class="energy-flow-scene" role="img" aria-labelledby="energy-flow-title energy-flow-summary">
+<title id="energy-flow-title">Diagrama fluxurilor de energie</title>
+<desc id="energy-flow-desc">Schema ilustrativa: fluxuri nete intre PV, consum, baterie, retea, EV si bus AC al statiei. Directiile si valorile provin din telemetrie.</desc>
+<defs>
+  <linearGradient id="house-front" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#fff"/><stop offset="1" stop-color="#e2e8dc"/></linearGradient>
+  <linearGradient id="house-side" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#d3decb"/><stop offset="1" stop-color="#bac9ae"/></linearGradient>
+  <linearGradient id="house-window" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#eaf1c8"/><stop offset="1" stop-color="#b8cc8f"/></linearGradient>
+  <linearGradient id="roof-solar" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#668868"/><stop offset="1" stop-color="#294f3c"/></linearGradient>
+  <filter id="scene-shadow" x="-30%" y="-30%" width="160%" height="180%"><feDropShadow dx="0" dy="8" stdDeviation="8" flood-color="#264629" flood-opacity=".11"/></filter>
+  {% for name, color in [('amber','#5e8b46'),('green','#8fa970'),('gray','#7c9291'),('sky','#6c9691')] %}<marker id="flow-arrow-{{ name }}" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L6,3 L0,6 Z" fill="{{ color }}"/></marker>{% endfor %}
+</defs>
+<ellipse class="flow-scene-ground" cx="311" cy="222" rx="252" ry="41" opacity=".65"/>
+<g opacity=".7" stroke="#ccd8c0" stroke-width="1" fill="none"><path d="m133 204 169-84 222 109-171 41z"/><path d="m206 241 165-86M279 258l160-68"/></g>
+<!-- The house is an illustration of the common AC bus, not a claim about site geometry. -->
+<g filter="url(#scene-shadow)">
+  <path d="m179 144 94-77 105 40v118l-108 30-91-41z" fill="url(#house-front)"/>
+  <path d="m273 68 105 39v118l-108 30V140z" fill="url(#house-side)"/>
+  <path d="m163 146 104-94 132 48-109 67z" fill="#355442"/>
+  <path d="m267 52 132 48-109 67-117-29z" fill="url(#roof-solar)"/>
+  <g stroke="#adcc9d" stroke-width="1" opacity=".65"><path d="m198 115 122 45m-96-70 123 45m-98-70 123 45M213 152l99-83m-68 93 100-81m-67 80 99-68"/></g>
+  <path d="m176 143 91-82 13 5-104 88z" fill="#779379"/>
+  <path d="m198 153 28-24 30 17v91l-58-25z" fill="#668462"/>
+  <path d="m203 155 23-20 25 14v80l-48-21z" fill="url(#house-window)"/>
+  <path d="m226 136 1 82m-25-35 50 23" fill="none" stroke="#92ad7c" stroke-width="2"/>
+  <path d="m315 171 29-9v33l-29 9z" fill="#e9f0dc" stroke="#b0c39e"/>
+  <path d="m330 167 1 32m-15-11 28-9" fill="none" stroke="#a4b995"/>
+  <path d="m270 247 108-29v7l-108 30-91-41v-7z" fill="#a9bda0"/>
+</g>
+<!-- Grid, storage and charger have separate, directional telemetry edges. -->
+<g transform="translate(66 115)" fill="none" stroke="#7e9691" stroke-linecap="round" stroke-linejoin="round"><path d="m24 0-18 90m25-90 18 90M14 28h27M10 52h35M6 90l39-38-31-24h27L10 52l39 38M0 27h54M5 11h44" stroke-width="2.6"/><path d="M5 11v8m44-8v8M0 27v8m54-8v8" stroke-width="3.5"/></g>
+<g filter="url(#scene-shadow)"><path d="m406 177 27-9 21 11v65l-27 9-21-12z" fill="#b6c6ac"/><path d="m406 177 21 11v65l-21-12z" fill="#f2f5eb"/><path d="m427 188 27-9v65l-27 9z" fill="#d9e3cf"/><path d="m413 192 8 4v7l-8-4z" fill="#668955"/><path d="m413 222 8 4m-8 4 8 4" stroke="#bdccaf" stroke-width="2"/></g>
+<g filter="url(#scene-shadow)"><path d="m475 204 41-13 34 13v20l-47 16-29-14z" fill="#bacdbb"/><path d="m486 194 23-7 21 13-27 9-28-4z" fill="#dce7d4"/><path d="m489 195 19-5 16 9-20 6z" fill="#547265"/><path d="m475 205 28 12 47-14v21l-47 16-29-14z" fill="#cfdeca"/><ellipse cx="486" cy="225" rx="6" ry="9" fill="#46604c"/><ellipse cx="538" cy="226" rx="6" ry="9" fill="#46604c"/><path d="m553 170 13-4 8 6v44l-13 5-8-6z" fill="#98b3a5"/><path d="m553 170 8 5v46l-8-6z" fill="#e4ece2"/><path d="m565 180 5-2v9l-5 2z" fill="#416854"/><path d="M571 191q20 20-23 22" stroke="#5d856b" stroke-width="2" fill="none"/></g>
+<g id="energy-flow-edges" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <path id="flow-pv-bus" data-flow-edge="pv_bus" d="M313 145 V163 Q313 170 302 174 L296 177" stroke="#5e8b46" opacity=".18" marker-end="url(#flow-arrow-amber)"/>
+  <path id="flow-bus-load" data-flow-edge="bus_load" d="M283 188 L258 198 L240 190" stroke="#7c9291" opacity=".18" marker-end="url(#flow-arrow-gray)"/>
+  <path id="flow-battery-bus" data-flow-edge="battery_bus" d="M406 213 372 234 Q366 238 357 234 L300 208 V200" stroke="#8fa970" opacity=".18" marker-end="url(#flow-arrow-green)"/>
+  <path id="flow-bus-battery" data-flow-edge="bus_battery" d="M308 198 V204 L361 228 Q367 233 375 229 L406 208" stroke="#8fa970" opacity=".18" marker-end="url(#flow-arrow-green)"/>
+  <path id="flow-grid-bus" data-flow-edge="grid_bus" d="M112 196 L143 219 Q149 223 157 225 L264 263 Q278 268 281 257 L288 201" stroke="#7c9291" opacity=".18" marker-end="url(#flow-arrow-gray)"/>
+  <path id="flow-bus-grid" data-flow-edge="bus_grid" d="M280 201 274 251 Q273 258 263 255 L158 219 Q153 218 147 213 L116 190" stroke="#7c9291" opacity=".18" marker-end="url(#flow-arrow-gray)"/>
+  <path id="flow-bus-ev" data-flow-edge="bus_ev" d="M310 187 L375 165 Q391 162 404 159 L519 135 Q551 129 557 162" stroke="#6c9691" opacity=".18" marker-end="url(#flow-arrow-sky)"/>
+</g>
+<g filter="url(#scene-shadow)"><rect x="279" y="170" width="31" height="33" rx="5" fill="#f6f8f0" stroke="#cad7bf"/><path d="m296 178-7 10h6l-2 8 10-12h-6z" fill="#6a8c59"/></g>
+<g font-family="Manrope,sans-serif" font-size="10" fill="#647b5d" text-anchor="middle"><text x="90" y="104">RETEA</text><text x="270" y="37">PRODUCTIE SOLARA</text><text x="226" y="249">CONSUM</text><text x="431" y="267">BATERIE</text><text x="515" y="259">INCARCARE EV</text></g>
+<g font-family="Manrope,sans-serif" font-size="11" fill="#486042" text-anchor="middle"><text data-flow-label="pv_bus" x="347" y="151">-</text><text data-flow-label="bus_load" x="250" y="177">-</text><text data-flow-label="battery_bus" x="370" y="254">-</text><text data-flow-label="bus_battery" x="369" y="216">-</text><text data-flow-label="grid_bus" x="137" y="248">-</text><text data-flow-label="bus_grid" x="151" y="193">-</text><text data-flow-label="bus_ev" x="464" y="132">-</text></g>
 </svg>
-<p id="energy-flow-summary" class="mt-2 text-center text-xs text-gray-500 dark:text-gray-400" aria-live="polite">
-  Se asteapta primul snapshot live.
-</p>
-<div class="mt-2 flex flex-wrap justify-center gap-3 text-xs text-gray-500 dark:text-gray-400">
-  <span><span class="inline-block h-2 w-2 rounded-full bg-amber-500"></span> PV</span>
-  <span><span class="inline-block h-2 w-2 rounded-full bg-green-600"></span> Baterie</span>
-  <span><span class="inline-block h-2 w-2 rounded-full bg-gray-500"></span> Retea/consum</span>
-  <span><span class="inline-block h-2 w-2 rounded-full bg-sky-600"></span> EV</span>
-  <span id="energy-flow-provenance" class="badge-muted" hidden></span>
-</div>
+<p id="energy-flow-summary" class="flow-caption" aria-live="polite">Se asteapta primul snapshot live.</p>
+<div class="flow-legend"><span><i style="background:#5e8b46"></i>PV</span><span><i style="background:#8fa970"></i>Baterie</span><span><i style="background:#7c9291"></i>Retea / consum</span><span><i style="background:#6c9691"></i>EV</span><span id="energy-flow-provenance" class="badge-muted" hidden></span></div>

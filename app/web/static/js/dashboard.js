@@ -1,4 +1,4 @@
-/* global echarts, emsConnectSSE */
+/* global echarts, emsConnectSSE, emsCreateChart, emsSetMetric, emsFormatNumber */
 
 const EMS_FLOW_DEADBAND_KW = 0.05;
 const EMS_FLOW_ACTIVE_STATES = new Set(["measured", "estimated", "simulated"]);
@@ -44,7 +44,7 @@ function emsBuildFlowState(metrics) {
       direction: cfg.direction,
       state,
       value_kw: valueKw,
-      label: valueKw === null ? "-" : `${valueKw.toFixed(2)} kW`,
+      label: valueKw === null ? "-" : `${new Intl.NumberFormat("ro-RO", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(valueKw)} kW`,
     };
   }
   return { quality, values, active };
@@ -52,15 +52,11 @@ function emsBuildFlowState(metrics) {
 
 window.emsBuildFlowState = emsBuildFlowState;
 
-function emsChartTheme() {
-  return document.documentElement.classList.contains("dark") ? "dark" : undefined;
-}
-
 function emsInitDashboard(stationId, initialSummary = null) {
   const $ = (id) => document.getElementById(id);
 
   function fmt(v, digits = 2) {
-    return v === null || v === undefined ? "-" : Number(v).toFixed(digits);
+    return emsFormatNumber(v, digits);
   }
 
   function hasValue(v) {
@@ -73,26 +69,37 @@ function emsInitDashboard(stationId, initialSummary = null) {
   // `delta` -- un update de `pv_power_kw` nu mai atinge DOM-ul celorlalte 10
   // widget-uri KPI neschimbate. `setKpis` (mai jos) ramane folosit doar la
   // `snapshot`/`replace`, cand chiar toate au nevoie de randare.
-  function updatePvKpi(s) { $("kpi-pv").textContent = hasValue(s.pv_power_kw) ? fmt(s.pv_power_kw) + " kW" : "fara date"; }
-  function updateLoadKpi(s) { $("kpi-load").textContent = hasValue(s.load_power_kw) ? fmt(s.load_power_kw) + " kW" : "fara date"; }
+  function updatePvKpi(s) { emsSetMetric($("kpi-pv"), s.pv_power_kw, "kW"); }
+  function updateLoadKpi(s) { emsSetMetric($("kpi-load"), s.load_power_kw, "kW"); }
   function updateGridKpi(s) {
     const grid = s.grid_power_kw;
-    $("kpi-grid").textContent = !hasValue(grid) ? "fara date" : (grid >= 0 ? "Import " : "Export ") + fmt(Math.abs(grid)) + " kW";
+    emsSetMetric($("kpi-grid"), hasValue(grid) ? Math.abs(grid) : null, "kW");
+    $("grid-direction-note").textContent = !hasValue(grid) ? "Directie necunoscuta" : grid > 0 ? "Import · din retea spre statie" : grid < 0 ? "Export · din statie spre retea" : "Fara schimb cu reteaua";
   }
-  function updateSocKpi(s) { $("kpi-soc").textContent = hasValue(s.battery_soc_percent) ? fmt(s.battery_soc_percent, 1) + " %" : "fara date"; }
+  function updateSocKpi(s) {
+    emsSetMetric($("kpi-soc"), s.battery_soc_percent, "%", 1);
+    const gauge = $("battery-gauge-fill");
+    if (gauge) gauge.style.strokeDasharray = `${hasValue(s.battery_soc_percent) ? Math.max(0, Math.min(100, Number(s.battery_soc_percent))) : 0} 100`;
+  }
   function updateBatteryKpi(s) {
     const batt = s.battery_power_kw;
-    $("kpi-battery").textContent = !hasValue(batt) ? "fara date" : (batt >= 0 ? "Incarcare " : "Descarcare ") + fmt(Math.abs(batt)) + " kW";
+    emsSetMetric($("kpi-battery"), hasValue(batt) ? Math.abs(batt) : null, "kW");
+    $("battery-direction-note").textContent = !hasValue(batt) ? "Baterie · stare necunoscuta" : batt > 0 ? "Baterie · incarcare" : batt < 0 ? "Baterie · descarcare" : "Baterie · in repaus";
   }
   function updateEvKpi(s) {
-    $("kpi-ev").textContent = s.ev_connected === null || s.ev_connected === undefined ? "necunoscut" : (s.ev_connected ? ("conectat" + (hasValue(s.ev_power_kw) ? ", " + fmt(s.ev_power_kw) + " kW" : "")) : "neconectat");
+    const connected = s.ev_connected;
+    emsSetMetric($("kpi-ev"), connected === true ? s.ev_power_kw : null, "kW", 2, connected === false ? "Neconectat" : "fara date");
+    $("ev-state-note").textContent = connected === true ? "Masina electrica · conectata" : connected === false ? "Masina electrica" : "Masina electrica · stare necunoscuta";
   }
-  function updatePriceBuyKpi(s) { $("kpi-price-buy").textContent = hasValue(s.price_buy_lei_kwh) ? fmt(s.price_buy_lei_kwh, 4) + " lei/kWh" : "indisponibil"; }
-  function updatePriceSellKpi(s) { $("kpi-price-sell").textContent = hasValue(s.price_sell_lei_kwh) ? fmt(s.price_sell_lei_kwh, 4) + " lei/kWh" : "indisponibil"; }
+  function updatePriceBuyKpi(s) { emsSetMetric($("kpi-price-buy"), s.price_buy_lei_kwh, "lei/kWh", 5, "indisponibil"); }
+  function updatePriceSellKpi(s) { emsSetMetric($("kpi-price-sell"), s.price_sell_lei_kwh, "lei/kWh", 5, "indisponibil"); }
   function updateAutomationKpi(s) {
-    $("kpi-automation").textContent = s.execution_mode === "shadow" ? "Mod shadow (informativ)" : (s.has_active_plan ? "Activa" : "Fara plan activ");
+    $("kpi-automation").textContent = s.execution_mode === "shadow" ? "Mod shadow · informativ" : (s.has_active_plan ? "Plan activ · verifica executia" : "Fara plan activ");
   }
-  function updateLastUpdateKpi(s) { $("kpi-last-update").textContent = s.last_update ? new Date(s.last_update).toLocaleString("ro-RO") : "niciodata"; }
+  function updateLastUpdateKpi(s) {
+    const timeZone = document.querySelector('.energy-dashboard')?.dataset.timezone || 'UTC';
+    $("kpi-last-update").textContent = s.last_update ? new Date(s.last_update).toLocaleString("ro-RO", { timeZone }) : "niciodata";
+  }
   function updateQualityKpi(s) {
     const qualityBadge = $("kpi-quality");
     qualityBadge.className = "badge-" + ({ measured: "ok", estimated: "warn", simulated: "warn", stale: "error", missing: "muted" }[s.data_quality] || "muted");
@@ -215,8 +222,9 @@ function emsInitDashboard(stationId, initialSummary = null) {
       const isMissing = edgeState.state === "missing" || edgeState.state === "stale";
       const width = isActive ? Math.min(7, 3 + edgeState.value_kw * 0.45) : 3;
       const opacity = isActive ? 1 : (isMissing ? 0.1 : 0.22);
-      item.animate(400).attr({ opacity, "stroke-width": width });
-      if (!isActive) item.attr({ "stroke-dasharray": "4 8", "stroke-dashoffset": 0 });
+      if (flowController.reducedMotion) item.attr({ opacity, "stroke-width": width });
+      else item.animate(400).attr({ opacity, "stroke-width": width });
+      if (!isActive) { stopFlowAnimation(edge); item.attr({ "stroke-dasharray": "4 8", "stroke-dashoffset": 0 }); }
       else setFlowAnimation(edge, true, Math.max(650, 1800 - edgeState.value_kw * 90));
       if (label) {
         label.textContent = edgeState.label;
@@ -289,7 +297,7 @@ function emsInitDashboard(stationId, initialSummary = null) {
   const EMS_CHART_SYMBOL_THRESHOLD = 48;
 
   function lineChart(el, series, opts = {}) {
-    const chart = echarts.init(el, emsChartTheme());
+    const chart = emsCreateChart(el);
     const configuredSeries = series.map((item) => ({
       showSymbol: Array.isArray(item.data) && item.data.length <= EMS_CHART_SYMBOL_THRESHOLD,
       ...item,
@@ -299,6 +307,7 @@ function emsInitDashboard(stationId, initialSummary = null) {
         ...configuredSeries[0],
         markArea: {
           silent: true,
+          label: { position: "insideTopLeft", fontSize: 10 },
           itemStyle: { opacity: 0.14 },
           data: opts.markAreas,
         },
@@ -377,11 +386,11 @@ function emsInitDashboard(stationId, initialSummary = null) {
   function powerChartTooltipFormatter(params) {
     const rows = Array.isArray(params) ? params : [params];
     const ts = rows[0] && rows[0].axisValue;
-    const lines = [`<strong>${new Date(ts).toLocaleString("ro-RO")}</strong>`];
+    const lines = [`<strong>${new Date(ts).toLocaleString("ro-RO", { timeZone: document.querySelector(".energy-dashboard")?.dataset.timezone || "UTC" })}</strong>`];
     for (const row of rows) {
       const value = Array.isArray(row.value) ? row.value[1] : row.value;
       const unit = row.seriesName === "SOC baterie" ? "%" : "kW";
-      lines.push(`${row.marker}${row.seriesName}: ${value === null || value === undefined ? "-" : Number(value).toFixed(2)} ${unit}`);
+      lines.push(`${row.marker}${row.seriesName}: ${value === null || value === undefined ? "-" : fmt(value, 2)} ${unit}`);
     }
     return lines.join("<br/>");
   }
@@ -409,7 +418,7 @@ function emsInitDashboard(stationId, initialSummary = null) {
       if (resEl) resEl.textContent = describeResolution(data);
       if (!points.length) { showWidgetState(widget, "empty"); return; }
       showWidgetState(widget, "ok");
-      const mk = (key, name) => ({ name, type: "line", yAxisIndex: 1, data: points.map((d) => [d.t, d[key]]) });
+      const mk = (key, name) => ({ name, type: "line", yAxisIndex: 1, itemStyle: { color: { pv_kw: '#527c45', load_kw: '#69868a', battery_kw: '#a1b785', grid_kw: '#b69359' }[key] }, data: points.map((d) => [d.t, d[key]]) });
       const soc = {
         name: "SOC baterie",
         type: "line",
@@ -428,8 +437,8 @@ function emsInitDashboard(stationId, initialSummary = null) {
       lineChart(widget.chartEl, [soc, ...powerSeries], {
         grid: { left: 48, right: 54, top: 28, bottom: 32 },
         yAxis: [
-          { type: "value", name: "%", min: 0, max: 100, axisLabel: { formatter: (v) => Number(v).toFixed(2) } },
-          { type: "value", name: "kW", axisLabel: { formatter: (v) => Number(v).toFixed(2) } },
+          { type: "value", name: "%", min: 0, max: 100, axisLabel: { formatter: (v) => fmt(v, 2) } },
+          { type: "value", name: "kW", axisLabel: { formatter: (v) => fmt(v, 2) } },
         ],
         markAreas: qualityMarkAreas(points),
         tooltipFormatter: powerChartTooltipFormatter,
@@ -452,7 +461,7 @@ function emsInitDashboard(stationId, initialSummary = null) {
       ]);
       if (!today.intervals.length && !tomorrow.intervals.length) { showWidgetState(widget, "empty"); return; }
       showWidgetState(widget, "ok");
-      const chart = echarts.init(widget.chartEl, emsChartTheme());
+      const chart = emsCreateChart(widget.chartEl);
       const mkBar = (payload, name) => ({
         name,
         type: "bar",
@@ -482,7 +491,7 @@ function emsInitDashboard(stationId, initialSummary = null) {
       if (!data.plan) { showWidgetState(widget, "empty"); return; }
       showWidgetState(widget, "ok");
       $("plan-status-badge").textContent = `${data.plan.status} (${data.plan.execution_mode})`;
-      const chart = echarts.init(widget.chartEl, emsChartTheme());
+      const chart = emsCreateChart(widget.chartEl);
       const series = [
         { name: "Baterie (plan)", type: "bar", data: data.intervals.map((i) => [i.t, i.battery_kw]) },
         { name: "Retea (plan)", type: "bar", data: data.intervals.map((i) => [i.t, i.grid_kw]) },
@@ -515,7 +524,7 @@ function emsInitDashboard(stationId, initialSummary = null) {
   }
 
   function fmtWeatherValue(value, digits = 0) {
-    return value === null || value === undefined || Number.isNaN(Number(value)) ? "-" : Number(value).toFixed(digits);
+    return value === null || value === undefined || Number.isNaN(Number(value)) ? "-" : fmt(value, digits);
   }
 
   function averageWeather(points, key) {
@@ -591,17 +600,17 @@ function emsInitDashboard(stationId, initialSummary = null) {
       // `[d.t, ...]` asa cum a fost dat la construirea seriei.
       const ts = rows[0] && (Array.isArray(rows[0].value) ? rows[0].value[0] : rows[0].axisValue);
       const point = pointsByTime.get(ts);
-      const lines = [`<strong>${new Date(ts).toLocaleString("ro-RO")}</strong>`];
+      const lines = [`<strong>${new Date(ts).toLocaleString("ro-RO", { timeZone: document.querySelector(".energy-dashboard")?.dataset.timezone || "UTC" })}</strong>`];
       for (const row of rows) {
         const value = Array.isArray(row.value) ? row.value[1] : row.value;
-        lines.push(`${row.marker}${row.seriesName}: ${value === null || value === undefined ? "-" : Number(value).toFixed(3)} kW`);
+        lines.push(`${row.marker}${row.seriesName}: ${value === null || value === undefined ? "-" : fmt(value, 3)} kW`);
       }
       if (point) {
         const state = classifyForecastPoint(point, EMS_FORECAST_ACCURACY_THRESHOLD_KW);
         if (state) {
           const labels = FORECAST_STATE_LABELS[metric] || FORECAST_STATE_LABELS.load;
           const diff = point.actual_kw - point.forecast_kw;
-          lines.push(`${labels[state]} (${diff >= 0 ? "+" : ""}${diff.toFixed(2)} kW fata de prognoza)`);
+          lines.push(`${labels[state]} (${diff >= 0 ? "+" : ""}${fmt(diff, 2)} kW fata de prognoza)`);
         }
       }
       if (metric === "pv" && point && point.weather) {
@@ -723,7 +732,7 @@ function emsInitDashboard(stationId, initialSummary = null) {
           },
         };
       }
-      const chart = echarts.init(widget.chartEl, emsChartTheme());
+      const chart = emsCreateChart(widget.chartEl);
       chart.setOption({
         grid: { left: 48, right: 16, top: 24, bottom: 32 },
         tooltip: { trigger: "axis", formatter: forecastTooltipFormatter(metric, pointsByTime, ["Prognoza", "Realizat"]) },
@@ -754,7 +763,7 @@ function emsInitDashboard(stationId, initialSummary = null) {
         const minute = String((slot % 4) * 15).padStart(2, "0");
         return `${hour}:${minute}`;
       });
-      const chart = echarts.init(widget.chartEl, emsChartTheme());
+      const chart = emsCreateChart(widget.chartEl);
       const values = data.map((d) => [d.slot, d.weekday, Number(d.avg_load_kw.toFixed(3))]);
       const max = Math.max(...values.map((v) => v[2]), 0.1);
       chart.setOption({
@@ -787,7 +796,7 @@ function emsInitDashboard(stationId, initialSummary = null) {
       const daily = await fetchJson(`/stations/${stationId}/data/energy-totals?granularity=day&periods=30`);
       if (!daily.length) { showWidgetState(widget, "empty"); return; }
       showWidgetState(widget, "ok");
-      const chart = echarts.init(widget.chartEl, emsChartTheme());
+      const chart = emsCreateChart(widget.chartEl);
       chart.setOption({
         grid: { left: 48, right: 16, top: 24, bottom: 48 },
         tooltip: { trigger: "axis" },
@@ -832,17 +841,19 @@ function emsInitDashboard(stationId, initialSummary = null) {
     const coverageEl = $(`kpi-${period}-${domKey}-coverage`);
     const contextEl = $(`kpi-${period}-${domKey}-context`);
     if (!valueEl) return;
-    if (!item || item.value === null || item.value === undefined) {
-      valueEl.textContent = "fara date";
-    } else {
-      valueEl.textContent = `${fmt(item.value, 2)} kWh`;
-    }
+    emsSetMetric(valueEl, item?.value, "kWh");
     if (contextEl) contextEl.textContent = item && item.value !== null && item.value !== undefined
       ? comparisonText(item, comparisonLabel)
       : `comparatie cu ${comparisonLabel}: indisponibila`;
     if (coverageEl) {
-      const coverage = item && item.coverage !== null && item.coverage !== undefined ? Math.round(item.coverage * 100) : 0;
-      coverageEl.textContent = `acoperire ${coverage}%`;
+      const coverage = item?.coverage;
+      coverageEl.textContent = coverage === null || coverage === undefined ? "acoperire necunoscuta" : `acoperire ${fmt(coverage * 100, 0)}%`;
+      if (coverage !== null && coverage !== undefined) {
+        const meter = document.createElement('span');
+        meter.className = 'coverage-meter'; meter.setAttribute('aria-hidden', 'true');
+        const fill = document.createElement('span'); fill.style.width = `${Math.max(0, Math.min(100, coverage * 100))}%`;
+        meter.append(fill); coverageEl.append(meter);
+      }
     }
   }
 
@@ -891,7 +902,7 @@ function emsInitDashboard(stationId, initialSummary = null) {
       const monthly = await fetchJson(`/stations/${stationId}/data/energy-totals?granularity=month&periods=12`);
       if (!monthly.length) { showWidgetState(widget, "empty"); return; }
       showWidgetState(widget, "ok");
-      const chart = echarts.init(widget.chartEl, emsChartTheme());
+      const chart = emsCreateChart(widget.chartEl);
       chart.setOption({
         grid: { left: 48, right: 16, top: 24, bottom: 48 },
         tooltip: { trigger: "axis" },
@@ -917,9 +928,9 @@ function emsInitDashboard(stationId, initialSummary = null) {
     try {
       const savings = await fetchJson(`/stations/${stationId}/data/savings?range=30d`);
       if (savings.available) {
-        $("kpi-savings").textContent = fmt(savings.whole_system_benefit_lei) + " lei (30 zile)";
+        emsSetMetric($("kpi-savings"), savings.whole_system_benefit_lei, "lei");
         $("kpi-savings-note").textContent = savings.whole_system_baseline_description;
-        $("kpi-ems-benefit").textContent = fmt(savings.ems_incremental_benefit_lei) + " lei (30 zile)";
+        emsSetMetric($("kpi-ems-benefit"), savings.ems_incremental_benefit_lei, "lei");
         $("kpi-ems-benefit-note").textContent = savings.ems_incremental_baseline_description;
         const coveragePct = savings.coverage_ratio !== null ? Math.round(savings.coverage_ratio * 100) : null;
         $("kpi-savings-coverage").textContent = coveragePct !== null
@@ -946,14 +957,14 @@ function emsInitDashboard(stationId, initialSummary = null) {
           provenanceEl.className = isMeasured ? "badge-ok" : "badge-warn";
         }
       } else {
-        $("kpi-savings").textContent = "indisponibil";
+        emsSetMetric($("kpi-savings"), null, "lei", 2, "indisponibil");
         $("kpi-savings-note").textContent = savings.reason || "";
-        $("kpi-ems-benefit").textContent = "indisponibil";
+        emsSetMetric($("kpi-ems-benefit"), null, "lei", 2, "indisponibil");
         $("kpi-ems-benefit-note").textContent = "";
         $("kpi-savings-coverage").textContent = "";
-        $("kpi-gross-pv-value").textContent = "indisponibil";
-        $("kpi-self-consumption").textContent = "indisponibil";
-        $("kpi-export-revenue").textContent = "indisponibil";
+        emsSetMetric($("kpi-gross-pv-value"), null, "lei", 2, "indisponibil");
+        emsSetMetric($("kpi-self-consumption"), null, "lei", 2, "indisponibil");
+        emsSetMetric($("kpi-export-revenue"), null, "lei", 2, "indisponibil");
         const provenanceEl = $("kpi-tariff-provenance");
         if (provenanceEl) {
           provenanceEl.textContent = "-";

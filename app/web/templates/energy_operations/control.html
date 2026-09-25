@@ -3,6 +3,11 @@
 {% block content %}
 <h1 class="page-title">Control: {{ station.name }}</h1>
 <p class="mt-2">Mod: <strong>{{ state.mode if state else 'shadow' }}</strong>. Aprobarea, acceptarea, aplicarea, verificarea setarilor si rezultatul masurat sunt etape separate.</p>
+<ol class="control-stages" aria-label="Etape distincte ale controlului">
+{% for title, description in [('Plan','Setari dorite'),('Aprobare','Permisiune de executie'),('ACK','Comanda acceptata'),('Verificare','Setari citite din dispozitiv'),('Rezultat','Energie masurata')] %}
+<li><span class="step-number" aria-hidden="true">{{ loop.index }}</span><div><strong>{{ title }}</strong><p>{{ description }}</p></div></li>
+{% endfor %}
+</ol>
 {% if state %}<p class="text-sm mt-2">{{ state.reason }}</p>{% endif %}
 {% if role in ['operator','organization_admin','platform_admin'] %}
 <form class="card mt-4" method="post" action="/stations/{{ station.id }}/control/stop">
