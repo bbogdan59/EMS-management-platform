@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 from collections import Counter
-from datetime import timedelta
+from datetime import UTC, timedelta
 
 from sqlalchemy import delete, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -25,7 +25,7 @@ from app.models.enums import ClaimCodeStatus, CommandStatus, DeviceStatus, PlanS
 from app.models.optimization import Plan
 from app.models.preference import PreferenceVersion
 from app.models.station import Station, StationConfigVersion
-from app.models.telemetry import TelemetryRaw
+from app.models.telemetry import TelemetryBackfill, TelemetryRaw
 from app.models.user import User
 from app.schemas.device_api import DeviceLogEntryIn, TelemetryItem, TelemetryItemAck
 
@@ -34,6 +34,11 @@ MAX_TELEMETRY_AGE = timedelta(days=400)
 LATE_TELEMETRY_THRESHOLD = timedelta(minutes=5)
 DEVICE_LOG_RETENTION = timedelta(days=10)
 TELEMETRY_SEMANTIC_REASONS = {
+    "retention_window_expired": "Masuratoarea este in afara ferestrei de retentie raw.",
+    "unsupported_schema_version": "Versiune de schema nesuportata.",
+    "duplicate_metric": "Identificatori duplicati pentru metrici extinse.",
+    "counter_out_of_range": "Contorul trebuie sa fie sub limita rollover.",
+    "power_out_of_range": "Puterea depaseste precizia de stocare.",
     "pv_power_negative": "pv_power_w nu poate fi negativ.",
     "load_power_negative": "load_power_w nu poate fi negativ.",
     "ev_power_negative": "ev_power_w nu poate fi negativ.",
@@ -210,6 +215,19 @@ def list_recent_device_logs(db: Session, device: Device, limit: int = 200) -> li
 
 
 def telemetry_semantic_rejection(item: TelemetryItem) -> str | None:
+    if item.schema_version not in (1, 2):
+        return "unsupported_schema_version"
+    for rows, key in ((item.mppt, "index"), (item.counters, "name")):
+        if len({getattr(row, key) for row in rows}) != len(rows):
+            return "duplicate_metric"
+    if len({(row.circuit, row.phase) for row in item.phases}) != len(item.phases):
+        return "duplicate_metric"
+    if any(c.rollover_kwh is not None and c.value >= c.rollover_kwh for c in item.counters):
+        return "counter_out_of_range"
+    for key in ("pv_power_w", "load_power_w", "grid_power_w", "battery_power_w", "ev_power_w"):
+        value = getattr(item, key)
+        if value is not None and abs(value) >= 99999999:
+            return "power_out_of_range"
     if item.pv_power_w is not None and item.pv_power_w < 0:
         return "pv_power_negative"
     if item.load_power_w is not None and item.load_power_w < 0:
@@ -229,6 +247,8 @@ def _extended_telemetry_payload(item: TelemetryItem) -> dict:
         extended["phases"] = [row.model_dump(mode="json") for row in item.phases]
     if item.battery is not None:
         extended["battery"] = item.battery.model_dump(mode="json", exclude_none=True)
+    if item.inverter is not None:
+        extended["inverter"] = item.inverter.model_dump(mode="json", exclude_none=True)
     if item.status is not None:
         extended["status"] = item.status.model_dump(mode="json", exclude_none=True)
     if item.counters:
@@ -266,7 +286,8 @@ def ingest_telemetry_batch(
             )
             continue
 
-        semantic_reason = telemetry_semantic_rejection(item)
+        retention_cutoff = (now - timedelta(days=get_settings().telemetry_raw_retention_days) + timedelta(hours=2)).replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+        semantic_reason = "retention_window_expired" if item.measured_at < retention_cutoff else telemetry_semantic_rejection(item)
         if semantic_reason is not None:
             errors.append(f"item {idx}: {TELEMETRY_SEMANTIC_REASONS[semantic_reason]}")
             results_by_index[idx] = TelemetryItemAck(
@@ -281,6 +302,7 @@ def ingest_telemetry_batch(
         is_late = (now - item.measured_at) > LATE_TELEMETRY_THRESHOLD
         extended = _extended_telemetry_payload(item)
         raw_payload = dict(item.raw_payload)
+        raw_payload.pop("extended", None)
         if extended:
             raw_payload["extended"] = extended
         rows.append(
@@ -302,7 +324,8 @@ def ingest_telemetry_batch(
                 "ev_power_w": item.ev_power_w,
                 "quality_flags": item.quality_flags,
                 "raw_payload": raw_payload,
-                "is_simulated": bool(item.raw_payload.get("simulated", False)),
+                "diagnostics": extended,
+                "is_simulated": bool(item.raw_payload.get("simulated") or item.quality_flags.get("simulated")),
                 "is_late": is_late,
             })
         )
@@ -318,6 +341,19 @@ def ingest_telemetry_batch(
         )
         result = db.execute(stmt)
         inserted = Counter((row.boot_id, row.sequence) for row in result)
+        backfill_hours = set()
+        remaining_inserted = inserted.copy()
+        for _, item, _ in rows:
+            key = (item.boot_id, item.sequence)
+            if not remaining_inserted[key]:
+                continue
+            remaining_inserted[key] -= 1
+            if now - item.measured_at > timedelta(hours=2):
+                hour = item.measured_at.astimezone(UTC).replace(minute=0, second=0, microsecond=0)
+                backfill_hours.update((hour - timedelta(hours=1), hour, hour + timedelta(hours=1)))
+        for hour in sorted(backfill_hours):
+            db.execute(pg_insert(TelemetryBackfill).values(station_id=device.station_id, hour_start=hour)
+                       .on_conflict_do_update(constraint="uq_telemetry_backfill_hour", set_={"updated_at": now}))
         accepted = sum(inserted.values())
         duplicates = len(rows) - accepted
         for idx, item, _ in rows:

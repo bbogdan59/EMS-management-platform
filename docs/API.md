@@ -580,3 +580,36 @@ OptimizationRun (scenariu calculat)
             -> POST /commands/{id}/result (executed|failed)   <- singura sursa a starii "aplicat"
         -> efectul observat se reconciliaza ulterior din telemetria reala (PlanInterval.observed_*)
 ```
+
+## Health, diagnostic access and notifications
+
+See [HEALTH_DIAGNOSTICS.md](HEALTH_DIAGNOSTICS.md) for the complete contract,
+retention policy, lifecycle, controls and verification scope.
+
+Telemetry schema versions 1 and 2 accept typed `inverter` temperatures/raw status,
+`battery.soh_percent`, grid/load `phases[].circuit`, and optional
+`counters[].rollover_kwh`. Flat extensions emitted by EMS-device-code v0.1 are
+normalized; raw status numbers are not decoded into alarms. Both simulation flags
+are honored. `telemetry_raw.diagnostics` is the validated diagnostic source.
+
+Late samples outside raw retention are permanently rejected with
+`retention_window_expired`; a three-hour guard protects complete adjacent buckets.
+Accepted historical samples queue durable background reaggregation by measured
+UTC hour, never arrival hour. This does not change the existing ACK envelope.
+
+Web endpoints use session authentication. All POSTs require CSRF:
+
+| Method/path | Scope and behavior |
+|---|---|
+| `GET /fleet/health` | Authorized memberships and unexpired diagnostic grants; filters `online`, `severity`, `firmware`, `quality`, `fault`, `update_state` |
+| `GET /stations/{id}/health` | Viewer or explicit diagnostic grant; evidence, lifecycle and timeline |
+| `POST /stations/{id}/health/{alert_id}` | Operator+, form `action` and required `reason`; station-scoped |
+| `POST /stations/{id}/diagnostic-grants` | Organization admin+, form `user_id`, aware `expires_at`, optional `revoke`; maximum 30 days |
+| `GET /stations/{id}/diagnostics/export?start=...&end=...` | Viewer or grant; aware instants, maximum 31 days, deterministic sanitized JSON |
+| `GET /health/runbooks` | Authenticated; versioned rule catalog |
+| `GET /notifications` | Current user's active organizations only |
+| `POST /notifications/{id}/read` | Current recipient and active station authorization |
+| `POST /organizations/{id}/notification-preferences` | Viewer+, own preference; timezone, quiet hours 0-23, escalation 0-1440 minutes, matrix fields, weekly/opt-out |
+| `POST /organizations/{id}/notifications/verify` | Own email; blank code requests queued verification, otherwise verifies expiring code |
+| `POST /organizations/{id}/notifications/push` | Own browser; validated `PushSubscription` JSON, encrypted storage |
+| `POST /stations/{id}/assistant` | Viewer membership (grants excluded), CSRF, feature flag; form `question`, optional local `day`; bounded read-only evidence response |

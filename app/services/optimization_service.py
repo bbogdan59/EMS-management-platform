@@ -102,7 +102,13 @@ def _current_soc_kwh(db: Session, station: Station, available_capacity_kwh: Deci
 
     soc_kwh = float(latest.battery_soc_percent) / 100.0 * float(available_capacity_kwh)
     max_age = timedelta(minutes=settings.optimization_soc_max_age_minutes)
-    quality = "measured" if (utcnow() - latest.measured_at) <= max_age else "stale"
+    quality = "measured" if timedelta(0) <= (utcnow() - latest.measured_at) <= max_age else "stale"
+    if latest.is_simulated or (latest.quality_flags or {}).get("simulated"):
+        quality = "simulated"
+    elif (latest.quality_flags or {}).get("stale"):
+        quality = "stale"
+    elif (latest.quality_flags or {}).get("derived"):
+        quality = "derived"
     return soc_kwh, latest.measured_at, quality
 
 
@@ -123,7 +129,7 @@ def _build_pv_series(db: Session, station_id: uuid.UUID, horizon: list[datetime]
     series = {}
     for t in horizon:
         match = next((r for r in rows if r.interval_start <= t < r.interval_end), None)
-        series[t] = float(match.predicted_power_kw) if match else None
+        series[t] = float(match.predicted_power_kw) if match and not match.is_synthetic else None
     return series
 
 
@@ -148,7 +154,8 @@ def _build_load_series(db: Session, station_id: uuid.UUID, horizon: list[datetim
     # incarcarea EV. A include si estimarea aici ar insemna sa numere aceeasi
     # energie EV de doua ori in bilantul energetic (o data ca "load" fix, o
     # data ca decizie optimizata).
-    by_start = {r.interval_start: float(r.base_load_kw + r.flexible_component_kw) for r in rows}
+    by_start = {r.interval_start: float(r.base_load_kw + r.flexible_component_kw) for r in rows
+                if not r.is_synthetic and not (r.source_version or "").endswith("_untrusted")}
     return {t: by_start.get(t) for t in horizon}
 
 

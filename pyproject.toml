@@ -34,6 +34,7 @@ dependencies = [
     "pandas==2.3.3",
     "orjson==3.11.3",
     "structlog==25.4.0",
+    "pywebpush==2.5.0",
     "cryptography==50.0.1",
     "boto3==1.43.97",
     "sse-starlette==3.4.11",

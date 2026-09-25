@@ -9,7 +9,7 @@ import uuid
 from datetime import date, datetime, timedelta
 
 import structlog
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.celery_app import celery_app
 from app.config import get_settings
@@ -18,9 +18,7 @@ from app.core.rate_limit import get_redis
 from app.core.security import utcnow
 from app.database import session_scope
 from app.models.admin_job import AdminJob
-from app.models.alert import Alert
-from app.models.device import Device
-from app.models.enums import AdminJobStatus, AdminJobType, AlertSeverity, AlertStatus
+from app.models.enums import AdminJobStatus, AdminJobType
 from app.models.station import Station
 from app.services import (
     aggregation_service,
@@ -79,7 +77,7 @@ def run_aggregation_task() -> dict:
         window_start = now - aggregation_service.RECENT_REAGGREGATION_LOOKBACK
         processed = 0
         with session_scope() as db:
-            stations = db.scalars(select(Station).where(Station.is_active.is_(True))).all()
+            stations = db.scalars(select(Station).where(Station.is_active.is_(True)).order_by(Station.id)).all()
             for station in stations:
                 aggregation_service.reaggregate_range(db, station, window_start, now)
                 processed += 1
@@ -112,7 +110,7 @@ def weather_and_forecast_task() -> dict:
             "consumption": {"succeeded": 0, "failed": 0},
         }
         with session_scope() as db:
-            stations = db.scalars(select(Station).where(Station.is_active.is_(True))).all()
+            stations = db.scalars(select(Station).where(Station.is_active.is_(True)).order_by(Station.id)).all()
             for station in stations:
                 try:
                     weather_service.refresh_weather_for_station(db, station)
@@ -167,47 +165,28 @@ def command_dispatch_task() -> dict:
 
 @celery_app.task(name="app.workers.tasks.alerts_task")
 def alerts_task() -> dict:
-    now = utcnow()
+    from app.services.health_service import evaluate_station
     created = 0
     with session_scope() as db:
-        devices = db.scalars(select(Device)).all()
-        for device in devices:
-            # Device-ul sintetic Deye Cloud (issue #43) nu foloseste
-            # NICIODATA protocolul web-device de heartbeat -- alerta
-            # "offline" ar fi permanenta si falsa. Prospetimea lui reala e
-            # `DeyeCloudConnection.last_sync_at/last_sync_status`, verificata
-            # separat de `deye_cloud_poll_task`, nu prin heartbeat.
-            if device.capabilities.get("deye_cloud"):
-                continue
-            is_offline = device.status == "active" and (
-                device.last_heartbeat_at is None or (now - device.last_heartbeat_at) > timedelta(minutes=15)
-            )
-            open_alerts_for_station = db.scalars(
-                select(Alert).where(
-                    Alert.station_id == device.station_id,
-                    Alert.category == "device_offline",
-                    Alert.status == AlertStatus.open.value,
-                )
-            ).all()
-            open_alert = next((a for a in open_alerts_for_station if a.context.get("device_id") == str(device.id)), None)
-            if is_offline and open_alert is None:
-                db.add(
-                    Alert(
-                        station_id=device.station_id,
-                        category="device_offline",
-                        severity=AlertSeverity.warning.value,
-                        status=AlertStatus.open.value,
-                        title=f"Dispozitiv offline: {device.name}",
-                        description="Niciun heartbeat primit in ultimele 15 minute.",
-                        context={"device_id": str(device.id)},
-                    )
-                )
-                created += 1
-            elif not is_offline and open_alert is not None:
-                open_alert.status = AlertStatus.resolved.value
-                open_alert.resolved_at = now
-                db.add(open_alert)
+        for station in db.scalars(select(Station).where(Station.is_active.is_(True)).order_by(Station.id)).all():
+            created += evaluate_station(db, station)
     return {"alerts_created": created}
+
+
+@celery_app.task(name="app.workers.tasks.notifications_task")
+def notifications_task() -> dict:
+    from app.services import notification_service
+    with session_scope() as db:
+        created = notification_service.materialize(db)
+        routed = notification_service.route_pending(db)
+        notification_service.weekly_reports(db)
+    processed = 0
+    for _ in range(50):
+        with session_scope() as db:
+            if not notification_service.deliver_one(db):
+                break
+            processed += 1
+    return {"created": created, "routed": routed, "processed": processed}
 
 
 @celery_app.task(name="app.workers.tasks.deye_cloud_poll_task")
@@ -481,6 +460,12 @@ def market_revision_retention_task() -> dict:
     return {"status": "succeeded", **result.as_dict()}
 
 
+@celery_app.task(name="app.workers.tasks.telemetry_backfill_task")
+def telemetry_backfill_task() -> dict:
+    with session_scope() as db:
+        return {"hours_rebuilt": aggregation_service.drain_backfill(db)}
+
+
 @celery_app.task(name="app.workers.tasks.retention_task")
 def retention_task() -> dict:
     from app.models.audit import AuditLog
@@ -492,6 +477,12 @@ def retention_task() -> dict:
         agg_cutoff = now - timedelta(days=settings.telemetry_aggregate_retention_days)
         audit_cutoff = now - timedelta(days=settings.audit_log_retention_days)
 
+        from app.models.telemetry import TelemetryBackfill
+        # Leave every contributing sample until its durable reaggregation has
+        # completed, including carry-in for queued hours.
+        pending_start = db.scalar(select(func.min(TelemetryBackfill.hour_start)))
+        if pending_start is not None:
+            raw_cutoff = min(raw_cutoff, pending_start - timedelta(hours=1))
         raw_deleted = db.query(TelemetryRaw).filter(TelemetryRaw.measured_at < raw_cutoff).delete(synchronize_session=False)
         agg_deleted = db.query(TelemetryAggregate).filter(TelemetryAggregate.period_start < agg_cutoff).delete(synchronize_session=False)
         audit_deleted = db.query(AuditLog).filter(AuditLog.occurred_at < audit_cutoff).delete(synchronize_session=False)

@@ -61,6 +61,7 @@ class TelemetryRaw(Entity):
 
     quality_flags: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
     raw_payload: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    diagnostics: Mapped[dict] = mapped_column(JSON, default=dict, server_default="{}", nullable=False)
     is_simulated: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     is_late: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
@@ -121,3 +122,11 @@ class TelemetryAggregate(Entity):
     # "pv", "load", "battery", "grid", "ev", "soc". Absenta unei chei ==
     # acoperire 0 pentru acea metrica (camp NULL). Vezi docstring-ul clasei.
     coverage: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+
+
+class TelemetryBackfill(Entity):
+    __tablename__ = "telemetry_backfill"
+    __table_args__ = (UniqueConstraint("station_id", "hour_start", name="uq_telemetry_backfill_hour"),)
+
+    station_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("stations.id", ondelete="CASCADE"), index=True)
+    hour_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

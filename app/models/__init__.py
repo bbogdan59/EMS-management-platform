@@ -18,15 +18,17 @@ from app.models.firmware import (
     FirmwareRollout,
 )
 from app.models.forecast import ConsumptionForecast, PvForecast, WeatherForecast
+from app.models.health import AlertEvent, DiagnosticGrant, HealthEvaluation, HealthState
 from app.models.inverter_config import InverterDesired, InverterProfile, InverterReport
 from app.models.market import ImportRun, MarketPriceInterval
+from app.models.notification import Notification, NotificationDelivery, NotificationPreference
 from app.models.optimization import OptimizationRun, Plan, PlanInterval
 from app.models.organization import Membership, Organization
 from app.models.preference import PreferenceVersion, StationPreference
 from app.models.station import PanelGroup, Station, StationConfig, StationConfigVersion
 from app.models.tariff import Tariff, TariffVersion
 from app.models.task_execution import TaskExecution
-from app.models.telemetry import TelemetryAggregate, TelemetryRaw
+from app.models.telemetry import TelemetryAggregate, TelemetryBackfill, TelemetryRaw
 from app.models.user import (
     Invitation,
     PasswordResetToken,
@@ -39,6 +41,7 @@ from app.models.user import (
 __all__ = [
     "AdminJob",
     "Alert",
+    "AlertEvent",
     "AuditLog",
     "ClaimCode",
     "Command",
@@ -49,12 +52,15 @@ __all__ = [
     "DeviceLogEntry",
     "DeyeCloudConnection",
     "DeyeCloudDeviceLink",
+    "DiagnosticGrant",
     "EquipmentManufacturer",
     "EquipmentModel",
     "FirmwareDeployment",
     "FirmwareDeploymentEvent",
     "FirmwareRelease",
     "FirmwareRollout",
+    "HealthEvaluation",
+    "HealthState",
     "ImportRun",
     "InverterDesired",
     "InverterProfile",
@@ -62,6 +68,9 @@ __all__ = [
     "Invitation",
     "MarketPriceInterval",
     "Membership",
+    "Notification",
+    "NotificationDelivery",
+    "NotificationPreference",
     "OptimizationRun",
     "Organization",
     "PanelGroup",
@@ -78,6 +87,7 @@ __all__ = [
     "TariffVersion",
     "TaskExecution",
     "TelemetryAggregate",
+    "TelemetryBackfill",
     "TelemetryRaw",
     "User",
     "UserSession",

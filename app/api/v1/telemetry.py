@@ -19,6 +19,7 @@ settings = get_settings()
 
 TELEMETRY_CONTRACT_V1 = {
     "schema_version": 1,
+    "supported_schema_versions": [1, 2],
     "endpoint": "/api/v1/telemetry/batch",
     "deduplication_key": ["device_id", "boot_id", "sequence"],
     "time": {
@@ -26,6 +27,8 @@ TELEMETRY_CONTRACT_V1 = {
         "max_future_skew_seconds": int(device_service.MAX_FUTURE_SKEW.total_seconds()),
         "max_age_days": device_service.MAX_TELEMETRY_AGE.days,
         "late_after_seconds": int(device_service.LATE_TELEMETRY_THRESHOLD.total_seconds()),
+        "raw_retention_days": settings.telemetry_raw_retention_days,
+        "backfill_retention_guard_hours": 3,
     },
     "metrics": [
         {
@@ -95,6 +98,7 @@ TELEMETRY_CONTRACT_V1 = {
     },
     "extended_metrics": {
         "storage": "raw_payload.extended",
+        "validated_storage": "telemetry_raw.diagnostics",
         "canonical_energy_aggregation": False,
         "purpose": "Typed diagnostics for MPPT, per-phase AC, battery details and status/faults.",
         "quality_values": ["measured", "derived", "simulated", "stale"],
@@ -109,20 +113,24 @@ TELEMETRY_CONTRACT_V1 = {
             },
         },
         "phases": {
-            "max_items": 3,
+            "max_items": 6,
             "fields": {
                 "phase": {"values": ["L1", "L2", "L3"]},
+                "circuit": {"values": ["grid", "load"], "default": "grid"},
                 "voltage_v": {"unit": "V", "nullable": True, "min_value": 0},
                 "current_a": {"unit": "A", "nullable": True, "min_value": 0},
                 "active_power_w": {"unit": "W", "nullable": True},
                 "quality": {"unit": None, "default": "measured"},
             },
         },
+        "agent_flat_compatibility": "EMS-device-code v0.1 MPPT, grid/load phases, battery/inverter temperatures and cumulative kWh fields are normalized into typed groups. Do not mix flat and grouped forms for one group. Raw inverter_status_code is inventory, never an interpreted fault.",
+        "inverter": {"fields": {"dc_temperature_c": {"unit": "degC", "nullable": True}, "ac_temperature_c": {"unit": "degC", "nullable": True}, "status_code": {"unit": None, "nullable": True, "min_value": 0, "max_value": 65535}}},
         "battery": {
             "fields": {
                 "voltage_v": {"unit": "V", "nullable": True, "min_value": 0},
                 "current_a": {"unit": "A", "nullable": True},
                 "temperature_c": {"unit": "degC", "nullable": True},
+                "soh_percent": {"unit": "%", "nullable": True, "min_value": 0, "max_value": 100},
                 "state": {"values": ["idle", "charging", "discharging", "fault", "unknown"], "nullable": True},
                 "quality": {"unit": None, "default": "measured"},
             },
@@ -139,6 +147,7 @@ TELEMETRY_CONTRACT_V1 = {
     "cumulative_counters": {
         "storage": "raw_payload.extended.counters",
         "unit": "kWh",
+        "rollover_kwh": "Optional exclusive counter modulus; must exceed value. Changed reset_id starts a new baseline.",
         "names": [
             "pv_energy_total",
             "load_energy_total",
@@ -153,7 +162,7 @@ TELEMETRY_CONTRACT_V1 = {
     "provenance": {
         "numeric_values_default": "measured",
         "categories": ["measured", "derived", "simulated", "stale"],
-        "simulation_flag": "raw_payload.simulated == true",
+        "simulation_flag": "raw_payload.simulated == true OR quality_flags.simulated == true",
         "derived_flag": "quality_flags.derived == true",
         "stale_flag": "server derives stale/late from measured_at vs received_at",
         "rule": (

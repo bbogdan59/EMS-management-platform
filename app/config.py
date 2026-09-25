@@ -76,6 +76,13 @@ class Settings(BaseSettings):
     smtp_from_address: str = "no-reply@ems-platform.local"
     smtp_use_tls: bool = True
 
+    notifications_email_enabled: bool = False
+    notifications_push_enabled: bool = False
+    notifications_vapid_private_key: str | None = None
+    notifications_vapid_public_key: str | None = None
+    notifications_vapid_subject: str | None = None
+    energy_assistant_enabled: bool = False
+
     # --- Device API ---
     device_claim_code_ttl_minutes: int = 15
     device_telemetry_batch_max_items: int = 500
@@ -217,6 +224,10 @@ class Settings(BaseSettings):
         return v
 
     def model_post_init(self, __context) -> None:
+        if self.notifications_email_enabled and (self.email_backend != "smtp" or not self.smtp_host):
+            raise ValueError("Notificarile email necesita SMTP configurat.")
+        if self.notifications_push_enabled and not all((self.notifications_vapid_private_key, self.notifications_vapid_public_key, self.notifications_vapid_subject)):
+            raise ValueError("Notificarile push necesita cheile VAPID si contactul configurate.")
         if self.is_production and self.secret_key == "dev-only-insecure-secret-change-me":
             raise RuntimeError(
                 "SECRET_KEY implicit nu poate fi folosit in productie. "
