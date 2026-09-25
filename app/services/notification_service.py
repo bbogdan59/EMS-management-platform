@@ -11,7 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 
 from app.config import get_settings
-from app.core.crypto import decrypt_secret, encrypt_secret
+from app.core.crypto import DecryptionError, decrypt_secret, encrypt_secret
 from app.core.email import get_email_adapter
 from app.core.security import constant_time_eq, hash_token, utcnow
 from app.models.alert import Alert
@@ -428,6 +428,7 @@ def deliver_one(db, now=None, *, email_adapter=None, push_adapter=None):
         reason = "channel_unconfigured"
     if reason:
         delivery.status, delivery.failure_code = "suppressed", reason
+        delivery.encrypted_payload = None
         return True
     title = "Rezumat saptamanal EMS" if delivery.kind == "weekly" else "Notificari EMS"
     link = "/notifications"
@@ -437,9 +438,19 @@ def deliver_one(db, now=None, *, email_adapter=None, push_adapter=None):
     )
     destination = user.email
     if delivery.kind == "verification":
-        payload = json.loads(decrypt_secret(delivery.encrypted_payload))
-        if payload["email"] != user.email or hash_token(payload["code"]) != pref.verification_hash:
+        try:
+            payload = json.loads(decrypt_secret(delivery.encrypted_payload))
+            matches = (
+                payload["email"] == user.email
+                and hash_token(payload["code"]) == pref.verification_hash
+            )
+        except (DecryptionError, ValueError, TypeError, KeyError, AttributeError):
+            delivery.status, delivery.failure_code = "failed", "invalid_payload"
+            delivery.encrypted_payload = None
+            return True
+        if not matches:
             delivery.status, delivery.failure_code = "suppressed", "verification_superseded"
+            delivery.encrypted_payload = None
             return True
         body = f"Codul tau de verificare EMS: {payload['code']}. Valabil 15 minute."
         title = "Verificare notificari EMS"
@@ -459,6 +470,7 @@ def deliver_one(db, now=None, *, email_adapter=None, push_adapter=None):
         delivery.due_at = now + timedelta(minutes=min(2**delivery.attempts, 60))
         if delivery.attempts >= 5:
             delivery.status = "failed"
+            delivery.encrypted_payload = None
     else:
         delivery.status, delivery.delivered_at, delivery.failure_code = "delivered", now, None
         delivery.encrypted_payload = None

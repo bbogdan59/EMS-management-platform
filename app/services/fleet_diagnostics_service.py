@@ -56,7 +56,7 @@ def grant_access(db, actor, station, user_id, expires_at, *, revoke=False):
     ):
         raise ValueError("Accesul trebuie sa expire in maximum 30 zile.")
     target = db.get(User, user_id)
-    if target is None or not target.is_active:
+    if target is None or (not revoke and not target.is_active):
         raise ValueError("Utilizator indisponibil.")
     db.execute(
         select(Station.id).where(Station.id == station.id).with_for_update(key_share=True)
@@ -67,12 +67,17 @@ def grant_access(db, actor, station, user_id, expires_at, *, revoke=False):
         )
     )
     if grant is None:
+        if revoke:
+            raise ValueError("Accesul de diagnostic nu exista.")
         grant = DiagnosticGrant(
             station_id=station.id, user_id=user_id, granted_by=actor.id, expires_at=expires_at
         )
         db.add(grant)
-    grant.expires_at, grant.granted_by = expires_at, actor.id
-    grant.revoked_at = utcnow() if revoke else None
+    if revoke:
+        grant.revoked_at = grant.revoked_at or utcnow()
+    else:
+        grant.expires_at, grant.granted_by = expires_at, actor.id
+        grant.revoked_at = None
     record_audit(
         db,
         action="diagnostic.revoke" if revoke else "diagnostic.grant",
@@ -81,7 +86,7 @@ def grant_access(db, actor, station, user_id, expires_at, *, revoke=False):
         actor_user_id=actor.id,
         organization_id=station.organization_id,
         station_id=station.id,
-        metadata={"user_id": str(user_id), "expires_at": expires_at.isoformat()},
+        metadata={"user_id": str(user_id), "expires_at": grant.expires_at.isoformat()},
     )
     return grant
 

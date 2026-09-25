@@ -46,7 +46,7 @@ masura ce bateria se degradeaza, desi utilizarea reala e aceeasi).
 
 ## Calitatea datelor (`data_quality`)
 
-Derivata, cea mai "slaba" castiga (simulated > estimated > measured):
+Derivata, cea mai "slaba" castiga (simulated > stale > estimated > measured):
 'simulated' daca orice proba provine din simulator, 'estimated' daca
 numarul brut de esantioane e sub pragul minim SAU acoperirea vreunei
 metrici e sub `FULL_COVERAGE_QUALITY_THRESHOLD`, altfel 'measured'.
@@ -86,7 +86,7 @@ from sqlalchemy.orm import Session
 from app.models.station import Station
 from app.models.telemetry import TelemetryAggregate, TelemetryRaw
 
-QUALITY_RANK = {"measured": 0, "estimated": 1, "simulated": 2, "stale": 3, "missing": 4}
+QUALITY_RANK = {"measured": 0, "estimated": 1, "stale": 2, "missing": 3, "simulated": 4}
 MIN_SAMPLES_FOR_MEASURED_15M = 2
 
 # O metrica e considerata cunoscuta intre doua esantioane consecutive doar

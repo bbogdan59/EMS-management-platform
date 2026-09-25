@@ -703,3 +703,144 @@ def test_simulated_carry_in_reaches_dashboard_export_and_forecast(db, context):
         db, station, at, at + timedelta(minutes=15)
     )
     assert forecast[0].is_synthetic
+
+
+def test_incident_expiry_waits_for_a_day_without_known_evidence(db, context):
+    user, org, station, device, at = context
+    for measured_at in (at - timedelta(days=2), at):
+        sample(
+            db, station, device, measured_at,
+            diagnostics={"battery": {"quality": "measured", "temperature_c": "55"}},
+        )
+        health.evaluate_station(db, station, measured_at)
+    alert = alert_for(db, station, "battery_temperature")
+    assert alert.created_at == at - timedelta(days=2)
+    health.evaluate_station(db, station, at + timedelta(minutes=15))
+    assert alert.status == "active"
+    health.evaluate_station(db, station, at + timedelta(days=1, minutes=5))
+    assert alert.status == "expired"
+
+
+def test_admin_can_revoke_inactive_recipient_without_changing_grant_history(db, context):
+    user, org, station, device, at = context
+    installer = make_user(db, email="deactivated-installer@test.local")
+    expires = utcnow() + timedelta(days=1)
+    grant = fleet.grant_access(db, user, station, installer.id, expires)
+    installer.is_active = False
+    db.flush()
+    fleet.grant_access(db, user, station, installer.id, utcnow(), revoke=True)
+    db.flush()
+    assert grant.revoked_at is not None and grant.expires_at == expires
+    installer.is_active = True
+    db.flush()
+    with pytest.raises(HTTPException):
+        fleet.diagnostic_access(db, installer, station.id)
+
+
+def test_corrupt_verification_cannot_block_later_deliveries(db, context, monkeypatch):
+    user, org, station, device, at = context
+    monkeypatch.setattr(get_settings(), "notifications_email_enabled", True)
+    pref = notifications.preference(db, user, org)
+    notifications.request_verification(db, pref, user, at)
+    db.flush()
+    corrupt = db.scalar(select(NotificationDelivery))
+    corrupt.encrypted_payload = "ciphertext-from-an-old-key"
+    notifications.request_verification(db, pref, user, at + timedelta(seconds=1))
+    db.flush()
+    sent = []
+    adapter = SimpleNamespace(send=lambda *args: sent.append(args))
+    assert notifications.deliver_one(db, at + timedelta(minutes=1), email_adapter=adapter)
+    assert corrupt.status == "failed" and corrupt.failure_code == "invalid_payload"
+    assert corrupt.encrypted_payload is None and sent == []
+    db.flush()
+    assert notifications.deliver_one(db, at + timedelta(minutes=1), email_adapter=adapter)
+    assert len(sent) == 1
+
+
+@pytest.mark.parametrize(
+    "flag,expected_quality", [("simulated", "simulated"), ("stale", "stale"), ("derived", "estimated")]
+)
+def test_provenance_migration_repairs_retained_history_without_changing_values(
+    db, context, monkeypatch, flag, expected_quality
+):
+    from app.models.forecast import ConsumptionForecast
+
+    user, org, station, device, at = context
+    start = at.replace(minute=0) - timedelta(days=3)
+    raw = sample(
+        db, station, device, start - timedelta(seconds=30),
+        grid_power_w=None, battery_soc_percent=Decimal(0), quality_flags={flag: True},
+    )
+    aggregates = []
+    for period_type, beginning, ending in (
+        ("interval_15m", start, start + timedelta(minutes=15)),
+        ("hour", start, start + timedelta(hours=1)),
+        ("interval_15m", start - timedelta(hours=1), start - timedelta(minutes=45)),
+    ):
+        row = TelemetryAggregate(
+            station_id=station.id, period_type=period_type,
+            period_start=beginning, period_end=ending,
+            load_energy_kwh=Decimal(".1250"), grid_import_energy_kwh=None,
+            avg_battery_soc_percent=Decimal(0), coverage={"load": 1, "grid": 0, "soc": 1},
+            data_quality="measured",
+        )
+        db.add(row)
+        aggregates.append(row)
+    forecasts = []
+    for issued_at in (start - timedelta(days=1), start + timedelta(days=1)):
+        forecast = ConsumptionForecast(
+            station_id=station.id, issued_at=issued_at,
+            interval_start=issued_at, interval_end=issued_at + timedelta(minutes=15),
+            source="historical_profile", source_version="weekday_15min_v1",
+            base_load_kw=Decimal("1.125"), confidence="nominal",
+        )
+        db.add(forecast)
+        forecasts.append(forecast)
+    db.flush()
+    spec = spec_from_file_location(
+        "provenance_migration",
+        Path(__file__).parents[2] / "alembic/versions/a94e8c12f6b0_telemetry_provenance.py",
+    )
+    migration = module_from_spec(spec)
+    spec.loader.exec_module(migration)
+    monkeypatch.setattr(migration, "op", Operations(MigrationContext.configure(db.connection())))
+    migration.upgrade()
+    migration.upgrade()
+    migration.downgrade()
+    db.expire_all()
+    assert raw.is_simulated == (flag == "simulated")
+    assert raw.grid_power_w is None and raw.battery_soc_percent == 0
+    assert [a.data_quality for a in aggregates] == [expected_quality, expected_quality, "measured"]
+    for aggregate in aggregates:
+        assert aggregate.load_energy_kwh == Decimal(".1250")
+        assert aggregate.grid_import_energy_kwh is None and aggregate.avg_battery_soc_percent == 0
+        assert aggregate.coverage == {"load": 1, "grid": 0, "soc": 1}
+    assert forecasts[0].source_version == "weekday_15min_v1"
+    assert forecasts[0].confidence == "nominal"
+    assert forecasts[1].source_version == "weekday_15min_v1_untrusted"
+    assert forecasts[1].is_synthetic == (flag == "simulated")
+    assert forecasts[1].confidence == "low" and forecasts[1].base_load_kw == Decimal("1.125")
+
+
+def test_mixed_stale_and_simulated_history_preserves_simulation_in_rollup(db, context):
+    from app.services import aggregation_service, consumption_forecast_service, dashboard_service
+
+    user, org, station, device, at = context
+    start = at.replace(minute=0) - timedelta(hours=2)
+    for i in range(31):
+        sample(
+            db, station, device, start + timedelta(minutes=i),
+            quality_flags={"simulated": i == 0, "stale": i >= 20},
+        )
+    aggregation_service.aggregate_interval_15m(db, station.id, start)
+    aggregation_service.aggregate_interval_15m(db, station.id, start + timedelta(minutes=15))
+    hour = aggregation_service.aggregate_hour(db, station.id, start)
+    assert hour["data_quality"] == "simulated"
+    chart = dashboard_service.get_timeseries_chart(
+        db, station, start, start + timedelta(hours=1), "30d"
+    )
+    assert chart["points"][0]["data_quality"] == "simulated"
+    forecast = consumption_forecast_service.generate_consumption_forecast(
+        db, station, at, at + timedelta(minutes=15)
+    )
+    assert forecast[0].is_synthetic and forecast[0].confidence == "low"

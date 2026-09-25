@@ -31,6 +31,13 @@ Live optimization requires measured, fresh SOC and excludes synthetic/untrusted
 forecasts. Shadow forecasts preserve their untrusted source marker. Unknown
 values and explicit zero retain their distinct meanings.
 
+The provenance migration repairs retained raw flags and affected aggregates,
+including five-minute carry-in and retained child rollups. Potentially affected
+historical consumption forecasts become untrusted with low confidence. It changes
+no energy, money, NULL or coverage values. Simulation takes precedence in the
+single aggregate quality label when a bucket also contains stale inputs; the raw
+flags remain available. Already-pruned raw evidence cannot be reconstructed.
+
 Validated extensions are stored in `telemetry_raw.diagnostics`, with a legacy
 copy in `raw_payload.extended`. Arbitrary raw JSON is never promoted into that
 validated column, including during migration. Previous raw diagnostics remain
@@ -82,6 +89,8 @@ resolution. Recovery requires two consecutive healthy five-minute windows and
 numeric hysteresis. Resolved incidents cool down 30 minutes; suppression and
 false-positive feedback cool down 24 hours for that station/rule/subject only.
 Legacy offline incidents are adopted without discarding their history.
+An incident expires only after more than a day without known evidence, measured
+from the last known evaluation rather than the incident's original creation.
 
 `evaluate_station(..., historical=True)` records completed historical windows
 without changing live incidents or creating notifications. Stored raw samples,
@@ -122,6 +131,8 @@ exponential retries (five attempts), destination and current membership checks,
 and sanitized failure codes. Subscription URLs, provider exception text, raw
 logs and user questions are never logged. Delivery links lead to authenticated
 application pages and carry no credentials.
+An unreadable verification payload fails independently, allowing later deliveries
+to proceed. Verification payloads are erased on delivery or any terminal outcome.
 
 Unsubscribe disables external channels, not in-app incidents. Revoked memberships
 and archived organizations cannot receive queued incident data. A late retry
@@ -176,10 +187,11 @@ The UI labels generated answers and their limits.
 
 ## Operations, migration and verification
 
-Run Alembic migrations before starting updated workers. The two additive
+Run Alembic migrations before starting updated workers. The first two additive
 migrations add validated telemetry storage, incident/evaluation/grant tables,
-notification preferences/outbox and the backfill queue. They do not rewrite
-canonical energy or monetary columns. Downgrade preserves new feature tables
+notification preferences/outbox and the backfill queue. A third migration repairs
+retained provenance metadata as described above. No migration rewrites canonical
+energy or monetary columns. Downgrade retains corrected provenance and new feature tables
 under `legacy_*` names and copies validated diagnostics into legacy raw payloads;
 re-upgrade restores the feature tables. Do not delete these preserved tables as
 part of rollback. Historical diagnostics are not implicitly trusted after

@@ -630,7 +630,19 @@ def evaluate_station(db, station: Station, at: datetime | None = None, *, histor
         elif alert and alert.status in ACTIVE:
             if finding.bad is None:
                 state.healthy_windows = 0
-                if at - alert.created_at > timedelta(days=1):
+                last_evidence_at = db.scalar(
+                    select(HealthEvaluation.window_end)
+                    .where(
+                        HealthEvaluation.station_id == station.id,
+                        HealthEvaluation.rule == rule.code,
+                        HealthEvaluation.subject == finding.subject,
+                        HealthEvaluation.verdict != "unknown",
+                        HealthEvaluation.window_end <= at,
+                    )
+                    .order_by(HealthEvaluation.window_end.desc())
+                    .limit(1)
+                )
+                if at - (last_evidence_at or alert.created_at) > timedelta(days=1):
                     transition(db, station, alert, "expired", at, "evidence_unavailable")
             elif finding.recovered:
                 state.healthy_windows = (

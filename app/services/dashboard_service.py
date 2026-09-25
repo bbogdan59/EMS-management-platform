@@ -406,7 +406,7 @@ _TIMESERIES_METRICS: dict[str, str] = {
     "soc_pct": "mean",
 }
 
-_QUALITY_RANK = {"measured": 0, "estimated": 1, "simulated": 2, "stale": 3, "missing": 4}
+_QUALITY_RANK = {"measured": 0, "estimated": 1, "stale": 2, "missing": 3, "simulated": 4}
 
 
 def _worse_quality(current: str, candidate: str | None) -> str:
