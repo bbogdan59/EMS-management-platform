@@ -55,12 +55,13 @@ def plan_allows_dispatch(db: Session, plan: Plan, station: Station, now) -> bool
 
 
 def command_allows_delivery(db: Session, command: Command, device: Device, now) -> bool:
+    from app.services.control_service import execution_authorized
     from app.services.inverter_config_service import COMMAND_TYPE, delivery_allowed
 
     if command.type == COMMAND_TYPE:
         return delivery_allowed(db, command, device, now)
     if command.plan_interval_id is None:
-        return command.author != "optimizer"
+        return False
     interval = db.get(PlanInterval, command.plan_interval_id)
     if interval is None:
         return False
@@ -71,19 +72,30 @@ def command_allows_delivery(db: Session, command: Command, device: Device, now) 
         and plan.accepted_by_device_id == device.id
         and device.status == DeviceStatus.active.value
         and plan_allows_dispatch(db, plan, station, now)
+        and command.type == CommandType.set_battery_target_soc.value
+        and command.version == 1
+        and command.parameters == {
+            "target_soc_percent": float(interval.battery_soc_target_percent),
+            "battery_power_kw": float(interval.battery_power_target_kw),
+        }
+        and execution_authorized(db, station, plan, device, now)
     )
 
 
 def dispatch_due_commands(db: Session) -> list[Command]:
+    from app.services.control_service import execution_authorized
+    from app.services.ev_service import lock_station
     now = utcnow()
     live_stations = db.scalars(
         select(Station)
         .join(Organization, Organization.id == Station.organization_id)
         .where(Station.execution_mode == "live", Station.is_active.is_(True), Organization.status == "active")
+        .order_by(Station.id)
     ).all()
     created: list[Command] = []
 
     for station in live_stations:
+        lock_station(db, station.id)
         plan = db.scalar(
             select(Plan).where(
                 Plan.station_id == station.id,
@@ -105,6 +117,8 @@ def dispatch_due_commands(db: Session) -> list[Command]:
 
         device = db.get(Device, plan.accepted_by_device_id) if plan.accepted_by_device_id else None
         if device is None or device.station_id != station.id or device.status != DeviceStatus.active.value:
+            continue
+        if not execution_authorized(db, station, plan, device, now):
             continue
 
         idempotency_key = f"plan:{plan.id}:interval:{current_interval.interval_start.isoformat()}"

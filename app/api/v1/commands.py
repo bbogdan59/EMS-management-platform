@@ -8,9 +8,28 @@ from sqlalchemy.orm import Session
 from app.api.v1.device_deps import get_authenticated_device
 from app.database import get_db
 from app.schemas.device_api import CommandAckRequest, CommandOut, CommandResultRequest
+from app.schemas.energy_operations import ReadbackIn
 from app.services import device_service
 
 router = APIRouter()
+
+
+@router.post("/commands/{command_id}/readback")
+def report_readback(
+    command_id: uuid.UUID,
+    payload: ReadbackIn,
+    device=Depends(get_authenticated_device),
+    db: Session = Depends(get_db),
+):
+    from app.services.control_service import verify_readback
+
+    try:
+        result = verify_readback(db, device, command_id, payload)
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(409, str(exc)) from exc
+    db.commit()
+    return {"command_id": command_id, "verification_status": result.status}
 
 
 @router.get("/commands/pending", response_model=list[CommandOut])

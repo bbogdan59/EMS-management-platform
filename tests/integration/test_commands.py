@@ -6,6 +6,7 @@ from app.core.security import utcnow
 from app.models.command import Command
 from app.models.enums import CommandStatus, CommandType
 from app.services import device_service
+from tests.energy_helpers import command_for, ops_fixture  # noqa: F401
 from tests.factories import make_org, make_station, make_user
 
 
@@ -17,23 +18,11 @@ def _claim(client, db, station, user):
     return payload, {"Authorization": f"Bearer {payload['device_id']}.{payload['credential_secret']}"}
 
 
-def test_command_full_lifecycle(client, db):
-    user = make_user(db, email="cmd1@test.local", password="Password1234")
-    org = make_org(db, "Cmd Org 1")
-    station = make_station(db, org, user, name="Cmd Station 1")
-    db.commit()
-    payload, headers = _claim(client, db, station, user)
-
-    import uuid
-
-    cmd = Command(
-        station_id=station.id, device_id=uuid.UUID(payload["device_id"]),
-        type=CommandType.set_battery_target_soc.value, parameters={"target_soc_percent": 60},
-        version=1, idempotency_key="test-key-1", status=CommandStatus.created.value,
-        author="user", reason="Test manual command",
-        valid_from=utcnow() - timedelta(minutes=1), expires_at=utcnow() + timedelta(minutes=10),
-    )
-    db.add(cmd)
+def test_command_full_lifecycle(client, db, ops, monkeypatch):
+    user, station, device, plan, interval, policy, now = ops
+    cmd = command_for(db, ops, monkeypatch)
+    monkeypatch.setattr(device_service, "utcnow", lambda: now + timedelta(minutes=1))
+    headers = {"Authorization": f"Bearer {device.id}.ops-secret"}
     db.commit()
 
     pending = client.get("/api/v1/commands/pending", headers=headers)
@@ -68,23 +57,11 @@ def test_command_full_lifecycle(client, db):
     assert "executed" in event_types
 
 
-def test_command_rejection(client, db):
-    user = make_user(db, email="cmd2@test.local", password="Password1234")
-    org = make_org(db, "Cmd Org 2")
-    station = make_station(db, org, user, name="Cmd Station 2")
-    db.commit()
-    payload, headers = _claim(client, db, station, user)
-
-    import uuid
-
-    cmd = Command(
-        station_id=station.id, device_id=uuid.UUID(payload["device_id"]),
-        type=CommandType.hold_battery.value, parameters={},
-        version=1, idempotency_key="test-key-2", status=CommandStatus.created.value,
-        author="user", reason="Test rejection",
-        valid_from=utcnow() - timedelta(minutes=1), expires_at=utcnow() + timedelta(minutes=10),
-    )
-    db.add(cmd)
+def test_command_rejection(client, db, ops, monkeypatch):
+    user, station, device, plan, interval, policy, now = ops
+    cmd = command_for(db, ops, monkeypatch)
+    monkeypatch.setattr(device_service, "utcnow", lambda: now + timedelta(minutes=1))
+    headers = {"Authorization": f"Bearer {device.id}.ops-secret"}
     db.commit()
 
     client.get("/api/v1/commands/pending", headers=headers)

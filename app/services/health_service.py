@@ -503,6 +503,23 @@ def findings(db, station, at, *, historical=False):
     )
 
 
+    from app.services.ev_analytics_service import health_findings
+
+    yield from health_findings(db, station, at, historical)
+
+
+for _code, _title, _threshold in (
+    ("ev_offline", "Statia EV nu comunica", "Fara observatii de peste 10 minute"),
+    ("ev_fault", "Statia EV raporteaza o eroare", "Stare faulted raportata"),
+    ("ev_target_impossible", "Tinta EV nu mai este realizabila", "kWh ramasi > putere maxima x timp disponibil"),
+    ("ev_unplugged", "EV deconectat inainte de plecare", "Deconectat cu energie necesara ramasa"),
+    ("ev_interrupted", "Incarcare EV intrerupta", "Pauza cu energie necesara ramasa"),
+    ("ev_cost_limit", "Costul estimat EV depaseste limita", "Estimare tarif import > buget declarat"),
+):
+    RULES[_code] = Rule(_code, _title, "EV observations and explicit requirement", _threshold,
+                       "Verifica sesiunea EV, conexiunea si ora de plecare.")
+
+
 def transition(db, station, alert, status, at, reason, actor=None):
     alert.status = status
     if status == "acknowledged":

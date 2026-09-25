@@ -34,6 +34,9 @@
     <nav class="ml-2 flex flex-wrap items-center gap-1">
       {% if current_station %}
       <a class="nav-link" href="/stations/{{ current_station.id }}/health">Stare si alerte</a>
+      <a class="nav-link" href="/stations/{{ current_station.id }}/control">Control</a>
+      <a class="nav-link" href="/stations/{{ current_station.id }}/ev">EV</a>
+      <a class="nav-link" href="/stations/{{ current_station.id }}/recommendations">Recomandari</a>
       <a class="nav-link" href="/stations/{{ current_station.id }}/config">Configurare</a>
       <a class="nav-link" href="/stations/{{ current_station.id }}/preferences">Preferinte</a>
       <a class="nav-link" href="/stations/{{ current_station.id }}/tariffs">Tarife</a>

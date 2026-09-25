@@ -24,7 +24,7 @@ from app.database import get_db
 from app.models.device import ClaimCode, Device
 from app.models.enums import EquipmentType
 from app.models.equipment_catalog import EquipmentModel
-from app.models.station import PanelGroup, StationConfigVersion
+from app.models.station import PanelGroup, Station, StationConfigVersion
 from app.models.tariff import Tariff
 from app.models.user import User
 from app.schemas.station_forms import PreferenceInput, StationConfigInput
@@ -541,6 +541,8 @@ def preferences_submit(
             )
         suspended_until_utc = valid[0].astimezone(UTC)
 
+    # Serialize with preset application and plan approval in the same station.
+    db.scalar(select(Station).where(Station.id == station.id).with_for_update(key_share=True))
     current_version = station_service.next_preference_version(db, station) - 1
     if validated.expected_version != current_version:
         return _preferences_error_redirect(

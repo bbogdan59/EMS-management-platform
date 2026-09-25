@@ -284,7 +284,12 @@ def run_optimization_for_station(db: Session, station_id: uuid.UUID, triggered_b
     """
     lock = _acquire_lock(station_id)
     try:
-        return _run_locked(db, station_id, triggered_by, triggered_by_user_id)
+        run = _run_locked(db, station_id, triggered_by, triggered_by_user_id)
+        from app.services.recommendation_service import capture_plan
+
+        if run.plan:
+            capture_plan(db, db.get(Station, station_id), run.plan)
+        return run
     finally:
         with contextlib.suppress(Exception):
             lock.release()
@@ -823,6 +828,7 @@ def _publish_plan(
     db: Session, run: OptimizationRun, station: Station, intervals: list[dict], price_buy: dict, priority: str,
     fallback_reason: str | None = None, shadow_downgrade_reason: str | None = None,
 ) -> Plan:
+    db.execute(select(Station.id).where(Station.id == station.id).with_for_update(key_share=True)).scalar_one()
     # Versiunea e monotona pe TOATE planurile statiei vreodata create, indiferent de
     # status -- un plan `completed` (executie terminata) nu mai apare in filtrul de mai
     # jos (care cauta doar planul activ de inlocuit), dar trebuie sa ramana socotit la
@@ -844,12 +850,13 @@ def _publish_plan(
 
     plan = Plan(
         optimization_run_id=run.id,
+        optimization_run=run,
         station_id=station.id,
         version=next_version,
         status=PlanStatus.published.value,
         # Fallback intervals are diagnostic placeholders, never physical setpoints; a plan
         # built from estimated/synthetic-derived prices also stays shadow-only until real data exists.
-        execution_mode="shadow" if (fallback_reason is not None or shadow_downgrade_reason is not None) else station.execution_mode,
+        execution_mode="shadow",
         published_at=utcnow(),
     )
     db.add(plan)

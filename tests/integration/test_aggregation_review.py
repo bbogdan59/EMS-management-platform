@@ -33,7 +33,7 @@ def test_nullable_flow_and_simulated_carry_in(db):
     assert rows[0]['grid_import_kwh'] is None
     assert rows[0]['coverage']['load'] == 1
     # Explicit EV-disabled config makes the missing component structurally zero.
-    config = db.scalar(select(StationConfigVersion))
+    config = db.scalar(select(StationConfigVersion).where(StationConfigVersion.station_id == station.id))
     assert config is not None
     config.ev_enabled = False
     db.flush()

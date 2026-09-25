@@ -82,6 +82,9 @@ class Settings(BaseSettings):
     notifications_vapid_public_key: str | None = None
     notifications_vapid_subject: str | None = None
     energy_assistant_enabled: bool = False
+    closed_loop_execution_enabled: bool = False
+    closed_loop_automatic_enabled: bool = False
+    closed_loop_verified_profiles: dict = Field(default_factory=dict)
 
     # --- Device API ---
     device_claim_code_ttl_minutes: int = 15

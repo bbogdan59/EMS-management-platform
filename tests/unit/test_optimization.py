@@ -506,7 +506,8 @@ def test_optimization_service_does_not_commit_callers_transaction(monkeypatch):
     from app.services import optimization_service
 
     db = MagicMock()
-    expected = object()
+    from types import SimpleNamespace
+    expected = SimpleNamespace(plan=None)
     lock = MagicMock()
     monkeypatch.setattr(optimization_service, "_acquire_lock", lambda _station_id: lock)
     monkeypatch.setattr(optimization_service, "_run_locked", lambda *_args: expected)

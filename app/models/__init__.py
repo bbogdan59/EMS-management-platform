@@ -8,9 +8,26 @@ from app.models.admin_job import AdminJob
 from app.models.alert import Alert
 from app.models.audit import AuditLog
 from app.models.command import Command, CommandEvent
+from app.models.control import (
+    CommandVerification,
+    ControlPolicy,
+    PlanApproval,
+    PlanOutcome,
+    Recommendation,
+    StationControl,
+)
 from app.models.device import ClaimCode, Device, DeviceCredential, DeviceLogEntry
 from app.models.deye_integration import DeyeCloudConnection, DeyeCloudDeviceLink
 from app.models.equipment_catalog import EquipmentManufacturer, EquipmentModel
+from app.models.ev import (
+    EVSE,
+    ChargingPlan,
+    ChargingSession,
+    EVConnector,
+    EVObservation,
+    EVRequirement,
+    Vehicle,
+)
 from app.models.firmware import (
     FirmwareDeployment,
     FirmwareDeploymentEvent,
@@ -39,20 +56,28 @@ from app.models.user import (
 )
 
 __all__ = [
+    "EVSE",
     "AdminJob",
     "Alert",
     "AlertEvent",
     "AuditLog",
+    "ChargingPlan",
+    "ChargingSession",
     "ClaimCode",
     "Command",
     "CommandEvent",
+    "CommandVerification",
     "ConsumptionForecast",
+    "ControlPolicy",
     "Device",
     "DeviceCredential",
     "DeviceLogEntry",
     "DeyeCloudConnection",
     "DeyeCloudDeviceLink",
     "DiagnosticGrant",
+    "EVConnector",
+    "EVObservation",
+    "EVRequirement",
     "EquipmentManufacturer",
     "EquipmentModel",
     "FirmwareDeployment",
@@ -76,12 +101,16 @@ __all__ = [
     "PanelGroup",
     "PasswordResetToken",
     "Plan",
+    "PlanApproval",
     "PlanInterval",
+    "PlanOutcome",
     "PreferenceVersion",
     "PvForecast",
+    "Recommendation",
     "Station",
     "StationConfig",
     "StationConfigVersion",
+    "StationControl",
     "StationPreference",
     "Tariff",
     "TariffVersion",
@@ -91,5 +120,6 @@ __all__ = [
     "TelemetryRaw",
     "User",
     "UserSession",
+    "Vehicle",
     "WeatherForecast",
 ]

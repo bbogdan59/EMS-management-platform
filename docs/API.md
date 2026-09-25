@@ -1,5 +1,64 @@
 # API pentru dispozitiv (`/api/v1`)
 
+Extensiile pentru control cu aprobare si observatii EV sunt documentate in
+[ENERGY_OPERATIONS.md](ENERGY_OPERATIONS.md). Planurile publicate sunt Shadow
+pana la aprobare. Comenzile manuale fara plan/politica nu sunt livrabile.
+Agentul curent EMS-device-code v0.1 ramane read-only; extensiile de mai jos nu
+reprezinta suport hardware verificat.
+
+### Read-back separat de ACK/aplicare
+
+`POST /api/v1/commands/{command_id}/readback`, cu autentificarea device obisnuita:
+
+```json
+{
+  "schema_version": 1,
+  "observed_at": "2026-10-01T00:01:05Z",
+  "command_version": 1,
+  "idempotency_key": "identitatea-exacta-din-comanda",
+  "target_soc_percent": "60.00",
+  "battery_power_kw": "1.000",
+  "quality": "measured"
+}
+```
+
+Necesita un rezultat `executed` anterior, acelasi device autorizat si o
+observatie ulterioara aplicarii, inainte de expirarea comenzii si veche de cel
+mult 5 minute. Raspunde cu `command_id` si `verification_status`; conflictul,
+expirarea sau lipsa capabilitatii produc 409. Versiunile/campurile necunoscute
+si numerele nefinite produc 422. Un retry identic este idempotent.
+
+### Observatii EV
+
+`POST /api/v1/ev/connectors/{connector_id}/observations`:
+
+```json
+{
+  "schema_version": 1,
+  "event_id": "boot-123:42",
+  "observed_at": "2026-10-01T00:01:05Z",
+  "state": "charging",
+  "meter_kwh": "1042.125000",
+  "meter_epoch": "meter-installation-1",
+  "power_kw": "7.400",
+  "vehicle_soc_percent": null,
+  "vehicle_id": null,
+  "quality": "measured"
+}
+```
+
+State: disconnected, connected, available, charging, paused, completed, faulted.
+Quality: measured, estimated, stale, simulated. Meter/power/SOC pot lipsi; NULL
+nu este zero. SOC/vehicul necesita consimtamant; contorul/SOC necesita capabilitati
+declarate. EVSE trebuie asociat exact device-ului autentificat din statia activa.
+Raspuns: `event_id`, `status` (accepted, duplicate, retained_out_of_order), `applied`.
+Conflictele de identitate/scop/tranzitie produc 409, payload invalid 422.
+
+Inventarul uman foloseste `GET/POST /api/stations/{station_id}/evses` cu sesiune
+utilizator; POST necesita organization_admin si CSRF. Schema `EVSEIn` din
+OpenAPI include nume, device optional, limita kW, capabilitati, consimtamant si
+retentie. UI/API nu trimit comenzi fizice catre EVSE.
+
 Acest document e destinat dezvoltatorului **viitorului controler local**
 (Raspberry Pi/ESP32 + Modbus/RS485 catre invertorul Deye), care nu face parte
 din acest repository. Platforma expune un API REST versionat prin care acel

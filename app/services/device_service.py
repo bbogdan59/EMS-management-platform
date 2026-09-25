@@ -147,6 +147,9 @@ def record_heartbeat(
     architecture: str | None = None,
     os_version: str | None = None,
 ) -> Device:
+    from app.services.ev_service import lock_station
+
+    lock_station(db, device.station_id)
     now = utcnow()
     device.last_heartbeat_at = now
     device.last_seen_at = now
@@ -163,8 +166,9 @@ def record_heartbeat(
         device.architecture = architecture
     if os_version:
         device.os_version = os_version
-    if capabilities:
-        device.capabilities = {**(device.capabilities or {}), **capabilities}
+    # Control capability must be explicitly re-reported by every heartbeat.
+    retained = {k: v for k, v in (device.capabilities or {}).items() if k not in ("closed_loop", "inverter_write")}
+    device.capabilities = {**retained, "inverter_write": False, **(capabilities or {})}
     # Wholesale replace, not merged: a stat the device stops reporting (e.g.
     # a sensor read failure) should disappear, not linger as stale data.
     device.system_stats = system_stats or {}
@@ -406,9 +410,14 @@ def get_active_plan(db: Session, station_id: uuid.UUID) -> Plan | None:
 
 
 def accept_plan(db: Session, device: Device, version: int) -> Plan:
+    from app.services.ev_service import lock_station
+
+    lock_station(db, device.station_id)
     plan = get_active_plan(db, device.station_id)
     if plan is None or plan.version != version:
         raise DeviceServiceError("Nu exista un plan publicat cu aceasta versiune.")
+    if plan.accepted_by_device_id and plan.accepted_by_device_id != device.id:
+        raise DeviceServiceError("Planul a fost acceptat de alt dispozitiv.")
     if plan.status == PlanStatus.published.value:
         plan.status = PlanStatus.accepted_by_device.value
         plan.accepted_at = utcnow()
@@ -420,13 +429,16 @@ def accept_plan(db: Session, device: Device, version: int) -> Plan:
 
 def list_pending_commands(db: Session, device: Device) -> list[Command]:
     from app.services.command_dispatch_service import command_allows_delivery
+    from app.services.ev_service import lock_station
+
+    lock_station(db, device.station_id)
 
     now = utcnow()
     expired = db.scalars(
         select(Command).where(
             Command.device_id == device.id,
             Command.status.in_([CommandStatus.created.value, CommandStatus.delivered.value, CommandStatus.accepted.value]),
-            Command.expires_at < now,
+            Command.expires_at <= now,
         )
     ).all()
     for cmd in expired:
@@ -468,8 +480,10 @@ def list_pending_commands(db: Session, device: Device) -> list[Command]:
 
 def acknowledge_command(db: Session, device: Device, command_id: uuid.UUID, status_value: str, reason: str | None) -> Command:
     from app.services.command_dispatch_service import command_allows_delivery
+    from app.services.ev_service import lock_station
 
-    command = db.get(Command, command_id)
+    lock_station(db, device.station_id)
+    command = db.scalar(select(Command).where(Command.id == command_id).with_for_update())
     if command is None or command.device_id != device.id:
         raise DeviceServiceError("Comanda nu exista pentru acest dispozitiv.")
 
@@ -495,14 +509,14 @@ def acknowledge_command(db: Session, device: Device, command_id: uuid.UUID, stat
         raise DeviceServiceError(f"Comanda este in starea '{command.status}', nu poate fi confirmata/respinsa acum.")
     if command.valid_from > utcnow():
         raise DeviceServiceError("Comanda nu este inca valabila.")
-    if status_value == "accepted" and not command_allows_delivery(db, command, device, utcnow()):
-        raise DeviceServiceError("Planul nu mai autorizeaza acceptarea comenzii.")
-    if command.expires_at < utcnow():
+    if command.expires_at <= utcnow():
         command.status = CommandStatus.expired.value
         db.add(command)
         db.add(CommandEvent(command_id=command.id, event_type="expired", source="system"))
         db.flush()
         raise CommandExpiredError("Comanda a expirat.")
+    if status_value == "accepted" and not command_allows_delivery(db, command, device, utcnow()):
+        raise DeviceServiceError("Planul nu mai autorizeaza acceptarea comenzii.")
 
     if status_value == "accepted":
         command.status = CommandStatus.accepted.value
@@ -525,7 +539,10 @@ def acknowledge_command(db: Session, device: Device, command_id: uuid.UUID, stat
 def report_command_result(
     db: Session, device: Device, command_id: uuid.UUID, status_value: str, details: dict, error_message: str | None
 ) -> Command:
-    command = db.get(Command, command_id)
+    from app.services.ev_service import lock_station
+
+    lock_station(db, device.station_id)
+    command = db.scalar(select(Command).where(Command.id == command_id).with_for_update())
     if command is None or command.device_id != device.id:
         raise DeviceServiceError("Comanda nu exista pentru acest dispozitiv.")
 
@@ -552,6 +569,9 @@ def report_command_result(
         raise DeviceServiceError(
             f"Comanda este in starea '{command.status}'; rezultatul poate fi raportat doar dupa acceptare."
         )
+
+    if command.plan_interval_id and command.expires_at <= utcnow():
+        raise DeviceServiceError("Rezultatul comenzii a expirat; nu poate confirma executia live.")
 
     if status_value == "executed":
         from app.services.inverter_config_service import (
@@ -581,6 +601,9 @@ def report_command_result(
         )
     )
     db.flush()
+    from app.services.control_service import record_application
+
+    record_application(db, command)
     return command
 
 
