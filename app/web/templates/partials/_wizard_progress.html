@@ -1,19 +1,12 @@
 {% if wizard_step %}
-<nav aria-label="Pasii asistentului de configurare" class="mb-1">
-  <ol class="flex flex-wrap items-center gap-x-1 gap-y-2 text-sm">
+<nav aria-label="Pasii asistentului de configurare" class="setup-progress">
+  <ol>
     {% for s in wizard_steps %}
-    {% if not loop.first %}<li aria-hidden="true" class="px-1 text-gray-300 dark:text-gray-700">&rarr;</li>{% endif %}
-    <li>
-      {% if s.href %}
-      <a href="{{ s.href }}" {% if s.current %}aria-current="step"{% endif %}
-         class="inline-block rounded px-2 py-1 {% if s.current %}bg-brand-600 font-medium text-white{% elif s.done %}text-brand-700 hover:underline dark:text-brand-300{% else %}text-gray-500 hover:underline dark:text-gray-400{% endif %}">
-        {% if s.done and not s.current %}<span aria-hidden="true">&#10003;</span> {% endif %}{{ s.label }}
-      </a>
-      {% else %}
-      <span class="inline-block rounded px-2 py-1 {% if s.done %}text-brand-700 dark:text-brand-300{% else %}text-gray-400 dark:text-gray-600{% endif %}">
-        {% if s.done %}<span aria-hidden="true">&#10003;</span> {% endif %}{{ s.label }}
-      </span>
-      {% endif %}
+    <li class="{% if s.current %}current{% elif s.done %}complete{% endif %}">
+      {% if s.href %}<a href="{{ s.href }}" {% if s.current %}aria-current="step"{% endif %}>{% else %}<span>{% endif %}
+        <span class="step-number" aria-hidden="true">{% if s.done and not s.current %}&#10003;{% else %}{{ loop.index }}{% endif %}</span>
+        <span>{{ s.label }}</span>
+      {% if s.href %}</a>{% else %}</span>{% endif %}
     </li>
     {% endfor %}
   </ol>

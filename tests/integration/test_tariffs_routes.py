@@ -156,8 +156,8 @@ def test_tariffs_page_uses_latest_non_future_opcom_price_for_preview(client, db)
 
     assert resp.status_code == 200
     assert 'data-market-price="0.200000"' in resp.text
-    assert "pret efectiv <strong>0.3000 lei/kWh</strong>" in resp.text
-    assert "1.0000 lei/kWh" not in resp.text
+    assert "pret efectiv <strong>0,30000 lei/kWh</strong>" in resp.text
+    assert "1,00000 lei/kWh" not in resp.text
 
 
 def test_fixed_contract_with_stray_opcom_margin_is_rejected_with_error_and_saves_nothing(client, db):

@@ -1,4 +1,4 @@
-/* global echarts, emsChartTheme */
+/* global echarts, emsCreateChart, emsFormatNumber */
 
 const EMS_YEAR_COLORS = ["#2f9354", "#4a86e8", "#f5a524", "#a479e2", "#f691b2", "#43d692"];
 const TIMELINE_RANGE_OPTIONS = [30, 90, 180, 365];
@@ -87,7 +87,7 @@ function emsInitMarket(availableYears) {
   }
 
   function initChart(el) {
-    return echarts.getInstanceByDom(el) || echarts.init(el, emsChartTheme());
+    return echarts.getInstanceByDom(el) || emsCreateChart(el);
   }
 
   function renderYearToggles() {
@@ -154,7 +154,7 @@ function emsInitMarket(availableYears) {
   }
 
   function formatPriceValue(value, unitOption) {
-    return value == null ? "-" : `${Number(value).toFixed(unitOption.decimals)} ${unitOption.label}`;
+    return value == null ? "-" : `${emsFormatNumber(value, unitOption.decimals)} ${unitOption.label}`;
   }
 
   function convertFiveDayPrice(value, unitOption) {
@@ -184,7 +184,7 @@ function emsInitMarket(availableYears) {
   }
 
   function formatMarketPrice(value) {
-    return value == null ? "-" : `${Number(value).toFixed(2)} lei/MWh`;
+    return value == null ? "-" : `${emsFormatNumber(value, 2)} lei/MWh`;
   }
 
   function describeTimelineResolution(payload) {

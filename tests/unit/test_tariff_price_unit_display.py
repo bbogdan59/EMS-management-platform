@@ -11,11 +11,11 @@ from app.web.templating import fmt_lei_per_kwh
 
 
 def test_fmt_lei_per_kwh_preserves_five_decimals():
-    assert fmt_lei_per_kwh(Decimal("0.68450")) == "0.68450 lei/kWh"
+    assert fmt_lei_per_kwh(Decimal("0.68450")) == "0,68450 lei/kWh"
 
 
 def test_fmt_lei_per_kwh_does_not_round_small_value_to_zero():
-    assert fmt_lei_per_kwh(Decimal("0.00085")) == "0.00085 lei/kWh"
+    assert fmt_lei_per_kwh(Decimal("0.00085")) == "0,00085 lei/kWh"
 
 
 def test_fmt_lei_per_kwh_none_renders_dash():

@@ -188,7 +188,7 @@ def test_energy_operations_ev_schedule_preset_and_control_browser_flow(diagnosti
         form.locator('[name="weekdays"][value="0"]').check()
         form.locator('[name="local_time"]').fill("08:00")
         form.get_by_role("button", name="Salveaza cerinta").click()
-        expect(page.locator("article").first).to_contain_text("12.000 kWh")
+        expect(page.locator("article").first).to_contain_text("12,00 kWh")
         page.goto(base + f"/stations/{station_id}/recommendations")
         page.locator('form[action$="/recommendations/preset"] select').select_option("economy")
         page.locator('form[action$="/recommendations/preset"] button').click()

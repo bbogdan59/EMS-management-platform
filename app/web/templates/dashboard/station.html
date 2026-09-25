@@ -1,160 +1,54 @@
 {% extends "base.html" %}
-{% from "partials/_breadcrumb.html" import trail as breadcrumb %}
+{% from "partials/_icons.html" import icon %}
 {% from "partials/_field_group.html" import group as field_group %}
 {% block title %}{{ station.name }} - {{ app_name }}{% endblock %}
-{% block content %}
-<div class="space-y-6">
-  <div class="flex flex-wrap items-center justify-between gap-3">
-    <div>
-      {{ breadcrumb([
-        {"label": "Dashboard", "url": "/"},
-        {"label": station.organization.name, "url": "/organizations/" ~ station.organization_id},
-        {"label": station.name, "url": None},
-      ]) }}
-      <h1 class="text-xl font-semibold">{{ station.name }}</h1>
-      <p class="text-sm text-gray-500 dark:text-gray-400">
-        Fus orar: {{ station.timezone }} &middot; actualizat: <span id="kpi-last-update">-</span>
-        &middot; calitate date: <span id="kpi-quality" class="badge-muted">-</span>
-        <span id="kpi-source" class="badge-muted" hidden></span>
-        &middot; live: <span id="sse-status" class="badge-muted" title="Stare conexiune actualizare live">conectare...</span>
-      </p>
-    </div>
-    <div class="flex items-center gap-2">
-      <select id="range-select" class="input w-auto">
-        <option value="24h">24 ore</option>
-        <option value="7d">7 zile</option>
-        <option value="30d">30 zile</option>
-        <option value="1y">1 an</option>
-      </select>
-      <a class="btn-secondary" href="/stations/{{ station.id }}/integrations/deye">Deye Cloud</a>
-      <a id="export-link" class="btn-secondary" href="/stations/{{ station.id }}/export.csv?range=24h">Export CSV</a>
-    </div>
-  </div>
-
-  {% if wizard_resume_url %}
-  <div class="flex flex-wrap items-center justify-between gap-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-800 dark:bg-amber-900/30 dark:text-amber-200">
-    <span>Configurarea ghidata a acestei statii nu e finalizata inca (conectare device, tarif sau pasul de rezumat).</span>
-    <a href="{{ wizard_resume_url }}" class="btn-primary shrink-0">Continua configurarea &rarr;</a>
-  </div>
-  {% endif %}
-
-  {% if station.is_demo %}
-  <p class="badge-warn">Aceasta statie foloseste date simulate (mod demonstrativ).</p>
-  {% endif %}
-
-  <section class="space-y-4" aria-labelledby="client-dashboard-title">
-    <div>
-      <h2 id="client-dashboard-title" class="text-lg font-semibold">Pe scurt, ce se intampla acum</h2>
-      <p class="text-sm text-gray-500 dark:text-gray-400">Primul ecran arata energia curenta, totalurile utile si contextul datelor. Graficele tehnice sunt mai jos, in zona avansata.</p>
-    </div>
-    <div class="grid gap-4 lg:grid-cols-2">
-      <div class="card">
-        <h3 class="mb-3 font-medium">Flux energetic actual</h3>
-        {% include "dashboard/_flow_diagram.html" %}
-      </div>
-      <div class="grid grid-cols-2 gap-3 sm:grid-cols-3">
-        <div class="card"><p class="label !mb-1">Produce acum</p><p id="kpi-pv" class="text-lg font-semibold" aria-live="polite">Se incarca...</p><p class="mt-1 text-xs text-gray-500 dark:text-gray-400">kW, din ultima telemetrie.</p></div>
-        <div class="card"><p class="label !mb-1">Consuma acum</p><p id="kpi-load" class="text-lg font-semibold" aria-live="polite">Se incarca...</p><p class="mt-1 text-xs text-gray-500 dark:text-gray-400">kW, nu energie cumulata.</p></div>
-        <div class="card"><p class="label !mb-1">Retea acum</p><p id="kpi-grid" class="text-lg font-semibold" aria-live="polite">Se incarca...</p><p class="mt-1 text-xs text-gray-500 dark:text-gray-400">Import sau export instant.</p></div>
-        <div class="card"><p class="label !mb-1">Bateria</p><p id="kpi-soc" class="text-lg font-semibold" aria-live="polite">Se incarca...</p><p class="mt-1 text-xs text-gray-500 dark:text-gray-400">Nivel incarcare.</p></div>
-        <div class="card"><p class="label !mb-1">Actiune baterie</p><p id="kpi-battery" class="text-lg font-semibold" aria-live="polite">Se incarca...</p><p class="mt-1 text-xs text-gray-500 dark:text-gray-400">Incarcare sau descarcare.</p></div>
-        <div class="card"><p class="label !mb-1">Masina electrica</p><p id="kpi-ev" class="text-lg font-semibold" aria-live="polite">Se incarca...</p><p class="mt-1 text-xs text-gray-500 dark:text-gray-400">Stare si putere, daca exista.</p></div>
-      </div>
-    </div>
-  </section>
-
-  <section class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4" aria-label="Costuri si beneficii">
-    <div class="card">
-      <p class="label !mb-1">Cost efectiv import</p>
-      <p id="kpi-price-buy" class="text-lg font-semibold">Se incarca...</p>
-      <details class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-        <summary class="cursor-pointer select-none text-gray-600 dark:text-gray-300">Cum se calculeaza?</summary>
-        <p class="mt-1">Pretul FIX din contract, sau pretul OPCOM al orei curente + marja ta, la care se aduna distributia, transportul si alte taxe reglementate, apoi TVA (daca e configurat). Nu e pretul spot de piata -- vezi pagina Tarife pentru cifrele exacte din contract.</p>
-        <a class="mt-1 inline-block underline" href="/stations/{{ station.id }}/tariffs">Vezi tarifele statiei</a>
-      </details>
-    </div>
-    <div class="card">
-      <p class="label !mb-1">Venit efectiv export</p>
-      <p id="kpi-price-sell" class="text-lg font-semibold">Se incarca...</p>
-      <details class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-        <summary class="cursor-pointer select-none text-gray-600 dark:text-gray-300">Cum se calculeaza?</summary>
-        <p class="mt-1">Aceeasi formula ca la import (fix sau OPCOM + marja, plus taxele aplicabile exportului), aplicata pretului platit pentru energia exportata in retea. Nu e pretul spot de piata -- vezi pagina Tarife pentru cifrele exacte din contract.</p>
-        <a class="mt-1 inline-block underline" href="/stations/{{ station.id }}/tariffs">Vezi tarifele statiei</a>
-      </details>
-    </div>
-    <div class="card"><p class="label !mb-1">Automatizare</p><p id="kpi-automation" class="text-sm font-medium">Se incarca...</p><p class="mt-1 text-xs text-gray-500 dark:text-gray-400">Plan activ sau mod informativ.</p></div>
-    <div class="card"><p class="label !mb-1">Uzura baterie (EFC)</p><p id="kpi-efc" class="text-sm font-medium">Se incarca...</p><p class="mt-1 text-xs text-gray-500 dark:text-gray-400">Cicluri echivalente in ultimele 30 zile.</p></div>
-  </section>
-  <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
-    <div class="card">
-      <p class="label !mb-1">Beneficiu sistem PV/baterie</p>
-      <p id="kpi-savings" class="text-sm font-medium">Se incarca...</p>
-      <p id="kpi-savings-note" class="mt-1 text-xs text-gray-500"></p>
-      <p id="kpi-savings-coverage" class="mt-1 text-xs text-gray-400"></p>
-      <details class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-        <summary class="cursor-pointer select-none text-gray-600 dark:text-gray-300">Cum se calculeaza?</summary>
-        <p class="mt-1">Compara costul tau real (import - export, la preturile reale valabile in fiecare ora din ultimele 30 de zile) cu costul ipotetic daca TOT consumul ar fi fost cumparat din retea, fara panouri sau baterie instalate. Este o estimare fata de acest reper, nu o economie masurata cu un contor separat.</p>
-      </details>
-    </div>
-    <div class="card">
-      <p class="label !mb-1">Beneficiu incremental EMS</p>
-      <p id="kpi-ems-benefit" class="text-sm font-medium">Se incarca...</p>
-      <p id="kpi-ems-benefit-note" class="mt-1 text-xs text-gray-500"></p>
-      <details class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-        <summary class="cursor-pointer select-none text-gray-600 dark:text-gray-300">Cum se calculeaza?</summary>
-        <p class="mt-1">Compara costul tau real cu un al doilea reper: aceleasi panouri si baterie, dar FARA optimizare activa (surplusul PV s-ar exporta imediat, deficitul s-ar importa imediat, fara sa se astepte momentul cel mai ieftin/scump). Izoleaza astfel contributia proprie a platformei de beneficiul pe care l-ar aduce oricum orice sistem PV/baterie.</p>
-      </details>
-    </div>
-  </div>
-
-  <div class="grid grid-cols-1 gap-3 lg:grid-cols-2">
-    {% for period_key, period_label in [("today", "Astazi"), ("month", "Luna curenta")] %}
-    <section class="card" aria-labelledby="energy-{{ period_key }}-title">
-      <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
+{% macro period_card(period_key, period_label) %}
+    <section class="card energy-period-card" aria-labelledby="energy-{{ period_key }}-title">
+      <div class="panel-heading">
         <h2 id="energy-{{ period_key }}-title" class="font-medium">{{ period_label }}</h2>
         <span id="kpi-{{ period_key }}-quality" class="badge-muted">fara date</span>
       </div>
-      <div class="grid grid-cols-1 gap-3 md:grid-cols-3">
+      <div class="period-groups">
         {% call field_group("Productie / consum") %}
         <div>
           <p class="label !mb-1">PV</p>
-          <p id="kpi-{{ period_key }}-pv" class="text-sm font-semibold">Se incarca...</p>
-          <p id="kpi-{{ period_key }}-pv-context" class="text-xs text-gray-500 dark:text-gray-400"></p>
-          <p id="kpi-{{ period_key }}-pv-coverage" class="text-xs text-gray-500 dark:text-gray-400"></p>
+          <p id="kpi-{{ period_key }}-pv" class="period-value is-missing">Se incarca...</p>
+          <p id="kpi-{{ period_key }}-pv-context" class="period-context"></p>
+          <p id="kpi-{{ period_key }}-pv-coverage" class="period-coverage"></p>
         </div>
         <div>
           <p class="label !mb-1">Consum</p>
-          <p id="kpi-{{ period_key }}-load" class="text-sm font-semibold">Se incarca...</p>
-          <p id="kpi-{{ period_key }}-load-context" class="text-xs text-gray-500 dark:text-gray-400"></p>
-          <p id="kpi-{{ period_key }}-load-coverage" class="text-xs text-gray-500 dark:text-gray-400"></p>
+          <p id="kpi-{{ period_key }}-load" class="period-value is-missing">Se incarca...</p>
+          <p id="kpi-{{ period_key }}-load-context" class="period-context"></p>
+          <p id="kpi-{{ period_key }}-load-coverage" class="period-coverage"></p>
         </div>
         {% endcall %}
         {% call field_group("Retea: import / export") %}
         <div>
           <p class="label !mb-1">Import</p>
-          <p id="kpi-{{ period_key }}-grid-import" class="text-sm font-semibold">Se incarca...</p>
-          <p id="kpi-{{ period_key }}-grid-import-context" class="text-xs text-gray-500 dark:text-gray-400"></p>
-          <p id="kpi-{{ period_key }}-grid-import-coverage" class="text-xs text-gray-500 dark:text-gray-400"></p>
+          <p id="kpi-{{ period_key }}-grid-import" class="period-value is-missing">Se incarca...</p>
+          <p id="kpi-{{ period_key }}-grid-import-context" class="period-context"></p>
+          <p id="kpi-{{ period_key }}-grid-import-coverage" class="period-coverage"></p>
         </div>
         <div>
           <p class="label !mb-1">Export</p>
-          <p id="kpi-{{ period_key }}-grid-export" class="text-sm font-semibold">Se incarca...</p>
-          <p id="kpi-{{ period_key }}-grid-export-context" class="text-xs text-gray-500 dark:text-gray-400"></p>
-          <p id="kpi-{{ period_key }}-grid-export-coverage" class="text-xs text-gray-500 dark:text-gray-400"></p>
+          <p id="kpi-{{ period_key }}-grid-export" class="period-value is-missing">Se incarca...</p>
+          <p id="kpi-{{ period_key }}-grid-export-context" class="period-context"></p>
+          <p id="kpi-{{ period_key }}-grid-export-coverage" class="period-coverage"></p>
         </div>
         {% endcall %}
         {% call field_group("Baterie: incarcare / descarcare") %}
         <div>
           <p class="label !mb-1">Incarcata</p>
-          <p id="kpi-{{ period_key }}-battery-charge" class="text-sm font-semibold">Se incarca...</p>
-          <p id="kpi-{{ period_key }}-battery-charge-context" class="text-xs text-gray-500 dark:text-gray-400"></p>
-          <p id="kpi-{{ period_key }}-battery-charge-coverage" class="text-xs text-gray-500 dark:text-gray-400"></p>
+          <p id="kpi-{{ period_key }}-battery-charge" class="period-value is-missing">Se incarca...</p>
+          <p id="kpi-{{ period_key }}-battery-charge-context" class="period-context"></p>
+          <p id="kpi-{{ period_key }}-battery-charge-coverage" class="period-coverage"></p>
         </div>
         <div>
           <p class="label !mb-1">Descarcata</p>
-          <p id="kpi-{{ period_key }}-battery-discharge" class="text-sm font-semibold">Se incarca...</p>
-          <p id="kpi-{{ period_key }}-battery-discharge-context" class="text-xs text-gray-500 dark:text-gray-400"></p>
-          <p id="kpi-{{ period_key }}-battery-discharge-coverage" class="text-xs text-gray-500 dark:text-gray-400"></p>
+          <p id="kpi-{{ period_key }}-battery-discharge" class="period-value is-missing">Se incarca...</p>
+          <p id="kpi-{{ period_key }}-battery-discharge-context" class="period-context"></p>
+          <p id="kpi-{{ period_key }}-battery-discharge-coverage" class="period-coverage"></p>
         </div>
         {% endcall %}
       </div>
@@ -163,14 +57,49 @@
         <p class="mt-1">Totalurile sunt agregate in calendarul local al statiei. Daca o metrica nu are date suficiente, ramane marcata ca lipsa sau partiala; nu este inlocuita cu zero.</p>
       </details>
     </section>
-    {% endfor %}
+{% endmacro %}
+{% block content %}
+<div class="energy-dashboard" data-timezone="{{ station.timezone }}">
+  <header class="dashboard-header">
+    <div><span class="eyebrow">{{ station.name }} · {{ station.timezone }}</span><h1>Panou energetic</h1><div class="dashboard-subtitle live-meta"><span>Ultima actualizare <span id="kpi-last-update">—</span></span><span id="kpi-quality" class="badge-muted">—</span><span id="kpi-source" class="badge-muted" hidden></span><span id="sse-status" class="badge-muted" title="Stare conexiune actualizare live">conectare...</span></div></div>
+    <div class="dashboard-actions"><label class="sr-only" for="range-select">Interval analiza</label><select id="range-select" class="input w-auto"><option value="24h">Ultimele 24 ore</option><option value="7d">Ultimele 7 zile</option><option value="30d">Ultimele 30 zile</option><option value="1y">Ultimul an</option></select><a id="export-link" class="btn-secondary" href="/stations/{{ station.id }}/export.csv?range=24h">{{ icon('download') }} Export CSV</a></div>
+  </header>
+  {% if wizard_resume_url %}<div class="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl bg-amber-50 p-3 text-xs text-amber-800 dark:bg-amber-900/30 dark:text-amber-200"><span>Mai ai cativa pasi pentru a finaliza configurarea statiei.</span><a href="{{ wizard_resume_url }}" class="btn-primary">Continua configurarea {{ icon('arrow') }}</a></div>{% endif %}
+  {% if station.is_demo %}<p class="badge-warn mb-4">Date simulate · statie demonstrativa</p>{% endif %}
+  <section aria-labelledby="client-dashboard-title"><h2 id="client-dashboard-title" class="sr-only">Pe scurt, ce se intampla acum</h2>
+    <div class="overview-metrics">
+      <article class="card metric-card featured"><div class="metric-heading"><span>Produce acum</span><span class="metric-icon">{{ icon('sun') }}</span></div><p id="kpi-pv" class="metric-value is-missing" aria-live="polite">Se incarca...</p><p class="metric-note"><span class="status-dot"></span>Productie solara · putere instantanee</p></article>
+      <article class="card metric-card"><div class="metric-heading"><span>Consuma acum</span><span class="metric-icon">{{ icon('home') }}</span></div><p id="kpi-load" class="metric-value is-missing" aria-live="polite">Se incarca...</p><p class="metric-note"><span class="status-dot"></span>Consumul statiei · acum</p></article>
+      <article class="card metric-card battery-card"><div class="metric-heading"><span>Nivel baterie</span><span class="metric-icon">{{ icon('battery') }}</span></div><p id="kpi-soc" class="metric-value is-missing" aria-live="polite">Se incarca...</p><svg class="battery-gauge" viewBox="0 0 42 42" aria-hidden="true"><circle cx="21" cy="21" r="15.9155"/><circle id="battery-gauge-fill" class="gauge-fill" cx="21" cy="21" r="15.9155"/></svg><p class="metric-note">Energie stocata · SOC</p></article>
+      <article class="card metric-card"><div class="metric-heading"><span>Schimb cu reteaua</span><span class="metric-icon">{{ icon('grid') }}</span></div><p id="kpi-grid" class="metric-value is-missing" aria-live="polite">Se incarca...</p><p id="grid-direction-note" class="metric-note">Import / export · putere instantanee</p></article>
+    </div>
+  </section>
+  <div class="dashboard-hero">
+    <section class="card flow-panel"><div class="panel-heading"><div><h2>Flux energetic actual</h2><p class="panel-kicker">Cum circula energia prin statia ta</p></div><span class="badge-muted">kW · acum</span></div>{% include "dashboard/_flow_diagram.html" %}<div class="flow-footer"><div><span class="metric-icon">{{ icon('battery') }}</span><div><p id="battery-direction-note">Actiune baterie</p><p id="kpi-battery" class="metric-value is-missing">Se incarca...</p></div></div><div><span class="metric-icon">{{ icon('car') }}</span><div><p id="ev-state-note">Masina electrica</p><p id="kpi-ev" class="metric-value is-missing">Se incarca...</p></div></div></div></section>
+    {{ period_card('today', 'Astazi') }}
   </div>
-
-  <!-- Detaliere financiara (issue #49): valoare bruta PV / economie autoconsum /
-       venit export, fiecare cu formula proprie, ca sa nu fie confundate cu o
-       singura cifra de "economie totala". A NU se insuma orbeste cele trei
-       numere -- fiecare are propriul reper, vezi tooltip-urile. -->
-  <div class="card">
+  <div class="dashboard-chart">
+    <div class="card">
+      <div class="mb-2 flex items-center justify-between gap-2">
+        <h2 class="font-medium">PV, consum, baterie, retea + SOC baterie</h2>
+        <span id="chart-power-resolution" class="text-xs text-gray-400 dark:text-gray-500"></span>
+      </div>
+      <div class="empty-state text-sm text-gray-500" hidden>Fara date de telemetrie in intervalul selectat.</div>
+      <div class="error-state text-sm text-red-700 dark:text-red-300 bg-red-50 dark:bg-red-900/30 rounded p-3" hidden>
+        <p class="mb-2">Nu am putut incarca acest grafic. Celelalte grafice nu sunt afectate.</p>
+        <button type="button" class="btn-secondary retry-btn">Reincearca</button>
+      </div>
+      <div id="chart-power" style="height:320px"></div>
+    </div>
+  </div>
+  <section class="dashboard-finance" aria-label="Costuri si beneficii">
+    <article class="card finance-card"><div class="panel-heading"><h2>Valoarea energiei</h2>{{ icon('wallet') }}</div><p>Tarifele efective ale statiei, in acest moment</p><div class="price-pair"><div><p>Cost efectiv import</p><p id="kpi-price-buy" class="finance-stat is-missing">Se incarca...</p></div><div><p>Venit efectiv export</p><p id="kpi-price-sell" class="finance-stat is-missing">Se incarca...</p></div></div><details><summary>Cum se calculeaza?</summary><p>Tarif fix sau OPCOM + marja, componente de retea si TVA configurat. Pretul spot si costul efectiv sunt distincte.</p><a class="underline text-xs" href="/stations/{{ station.id }}/tariffs">Vezi tarifele statiei</a></details></article>
+    <article class="card finance-card"><div class="panel-heading"><h2>Beneficiu sistem PV/baterie</h2>{{ icon('sun') }}</div><p>Ultimele 30 de zile · estimare fata de reper</p><p id="kpi-savings" class="finance-stat is-missing">Se incarca...</p><p id="kpi-savings-coverage"></p><details><summary>Reper si metoda de calcul</summary><p id="kpi-savings-note"></p><p>Compara costul real cu energia cumparata integral din retea, fara panouri sau baterie. Nu este o economie masurata separat.</p></details></article>
+    <article class="card finance-card"><div class="panel-heading"><h2>Beneficiu incremental EMS</h2>{{ icon('leaf') }}</div><p>Ultimele 30 de zile · contributia optimizarii</p><p id="kpi-ems-benefit" class="finance-stat is-missing">Se incarca...</p><details><summary>Reper si metoda de calcul</summary><p id="kpi-ems-benefit-note"></p><p>Acelasi sistem PV/baterie, comparat cu operarea fara optimizare activa. Estimare, nu factura.</p></details></article>
+  </section>
+  <div class="automation-strip"><span class="metric-icon">{{ icon('shield') }}</span><div><h2>Control energetic</h2><p id="kpi-automation">Se incarca...</p></div><div><h2>Uzura baterie</h2><p id="kpi-efc">Se incarca...</p></div><a class="btn-secondary" href="/stations/{{ station.id }}/control">Vezi controlul {{ icon('arrow') }}</a></div>
+  <div class="month-section">{{ period_card('month', 'Luna curenta') }}</div>
+  <div class="card mt-4">
     <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
       <h2 class="font-medium">Detaliere valoare PV si export (30 zile)</h2>
       <span id="kpi-tariff-provenance" class="badge-muted" title="Daca pretul de import folosit e din contract/piata reala (masurat) sau dintr-un fixture de test/demo (estimat)">-</span>
@@ -195,28 +124,7 @@
     </p>
   </div>
 
-  <section class="space-y-3" aria-labelledby="charts-client-title">
-    <div>
-      <h2 id="charts-client-title" class="font-medium">Evolutii utile</h2>
-      <p class="text-sm text-gray-500 dark:text-gray-400">Grafice compacte pentru ultimele ore. Schimba intervalul daca ai nevoie de mai mult context.</p>
-    </div>
-    <div class="grid gap-4">
-    <div class="card">
-      <div class="mb-2 flex items-center justify-between gap-2">
-        <h2 class="font-medium">PV, consum, baterie, retea + SOC baterie</h2>
-        <span id="chart-power-resolution" class="text-xs text-gray-400 dark:text-gray-500"></span>
-      </div>
-      <div class="empty-state text-sm text-gray-500" hidden>Fara date de telemetrie in intervalul selectat.</div>
-      <div class="error-state text-sm text-red-700 dark:text-red-300 bg-red-50 dark:bg-red-900/30 rounded p-3" hidden>
-        <p class="mb-2">Nu am putut incarca acest grafic. Celelalte grafice nu sunt afectate.</p>
-        <button type="button" class="btn-secondary retry-btn">Reincearca</button>
-      </div>
-      <div id="chart-power" style="height:280px"></div>
-    </div>
-    </div>
-  </section>
-
-  <details id="advanced-dashboard-details" class="space-y-3 rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-900">
+  <details id="advanced-dashboard-details" class="dashboard-disclosure">
     <summary class="cursor-pointer select-none font-medium text-gray-700 dark:text-gray-200">Analiza avansata: preturi, planuri si prognoze</summary>
     <p class="mt-2 text-sm text-gray-500 dark:text-gray-400">Detalii tehnice pentru operare si diagnostic. Clientii pot ramane pe primul ecran fara sa interpreteze aceste grafice.</p>
     <div class="mt-3 grid gap-4 lg:grid-cols-2">
@@ -300,9 +208,6 @@
     </div>
   </details>
 </div>
-
 <script src="/static/js/dashboard.js"></script>
-<script>
-  document.addEventListener("DOMContentLoaded", () => emsInitDashboard("{{ station.id }}", {{ summary | tojson }}));
-</script>
+<script>document.addEventListener("DOMContentLoaded", () => emsInitDashboard("{{ station.id }}", {{ summary | tojson }}));</script>
 {% endblock %}

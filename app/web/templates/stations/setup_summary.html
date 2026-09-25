@@ -41,10 +41,10 @@
       </div>
       {% if config %}
       <dl class="space-y-1 text-sm">
-        <div class="flex justify-between"><dt class="text-gray-500">PV instalat</dt><dd>{{ config.pv_installed_power_kw }} kW</dd></div>
-        <div class="flex justify-between"><dt class="text-gray-500">Invertor</dt><dd>{{ config.inverter_power_kw }} kW</dd></div>
+        <div class="flex justify-between"><dt class="text-gray-500">PV instalat</dt><dd>{{ config.pv_installed_power_kw|number }} kW</dd></div>
+        <div class="flex justify-between"><dt class="text-gray-500">Invertor</dt><dd>{{ config.inverter_power_kw|number }} kW</dd></div>
         {% if config.battery_reference_capacity_kwh %}
-        <div class="flex justify-between"><dt class="text-gray-500">Baterie</dt><dd>{{ config.battery_reference_capacity_kwh }} kWh</dd></div>
+        <div class="flex justify-between"><dt class="text-gray-500">Baterie</dt><dd>{{ config.battery_reference_capacity_kwh|number }} kWh</dd></div>
         {% endif %}
         {% if config.ev_enabled %}<div class="flex justify-between"><dt class="text-gray-500">EV</dt><dd>da</dd></div>{% endif %}
       </dl>
@@ -84,8 +84,8 @@
       </div>
       {% if preference %}
       <dl class="grid gap-1 text-sm sm:grid-cols-3">
-        <div class="flex justify-between sm:block"><dt class="text-gray-500">SOC minim rezerva</dt><dd>{{ preference.min_reserve_soc_percent }}%</dd></div>
-        <div class="flex justify-between sm:block"><dt class="text-gray-500">SOC maxim normal</dt><dd>{{ preference.max_normal_soc_percent }}%</dd></div>
+        <div class="flex justify-between sm:block"><dt class="text-gray-500">SOC minim rezerva</dt><dd>{{ preference.min_reserve_soc_percent|number(1) }}%</dd></div>
+        <div class="flex justify-between sm:block"><dt class="text-gray-500">SOC maxim normal</dt><dd>{{ preference.max_normal_soc_percent|number(1) }}%</dd></div>
         <div class="flex justify-between sm:block"><dt class="text-gray-500">Prioritate</dt><dd>{{ preference.priority }}</dd></div>
       </dl>
       {% else %}

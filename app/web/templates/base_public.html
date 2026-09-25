@@ -1,29 +1,14 @@
 <!DOCTYPE html>
-<html lang="ro" class="h-full">
+<html lang="ro">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>{% block title %}{{ app_name }}{% endblock %}</title>
-  <link rel="stylesheet" href="/static/css/app.css" />
-  <script>
-    (function () {
-      const stored = localStorage.getItem("ems-theme");
-      const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-      if (stored === "dark" || (!stored && prefersDark)) {
-        document.documentElement.classList.add("dark");
-      }
-    })();
-  </script>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="theme-color" content="#15392b">
+<title>{% block title %}{{ app_name }}{% endblock %}</title>
+<link rel="stylesheet" href="/static/css/app.css">
+<script>try { if (localStorage.getItem('ems-theme') === 'dark') document.documentElement.classList.add('dark'); } catch (_) {}</script>
 </head>
-<body class="flex min-h-screen flex-col items-center justify-center bg-gray-50 px-4 dark:bg-gray-950 dark:text-gray-100">
-  <div class="mb-6 flex items-center gap-2 text-lg font-semibold text-brand-700 dark:text-brand-300">
-    <svg xmlns="http://www.w3.org/2000/svg" class="h-7 w-7" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-      <path stroke-linecap="round" stroke-linejoin="round" d="M13 2 3 14h7l-1 8 10-12h-7l1-8z" />
-    </svg>
-    {{ app_name }}
-  </div>
-  <div class="w-full max-w-sm">
-    {% block content %}{% endblock %}
-  </div>
+<body class="ems-public">
+{% from "partials/_icons.html" import icon %}
+<aside class="auth-story"><a href="/" class="auth-brand"><span class="brand-mark">{{ icon('bolt') }}</span>EMS / energy</a><div class="auth-message"><span class="eyebrow">O PERSPECTIVA MAI CLARA</span><h2>Energia ta.<br>In echilibru.</h2><p>Productie, consum si stocare.<br>Toate conectate, intr-un singur loc.</p><div class="auth-orbit" aria-hidden="true"><span>{{ icon('sun') }}</span><span>{{ icon('battery') }}</span><span>{{ icon('home') }}</span><div>{{ icon('bolt') }}</div></div></div><span class="auth-footnote">MONITORIZARE · CONTROL · OPTIMIZARE</span></aside>
+<main class="auth-form-area"><div class="auth-mobile-brand">{{ icon('bolt') }} {{ app_name }}</div><div class="auth-form-inner">{% block content %}{% endblock %}</div><p class="auth-privacy">Datele tale energetice. Acces securizat.</p></main>
 </body>
 </html>
