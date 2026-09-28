@@ -14,6 +14,7 @@
   <script>try { if (localStorage.getItem('ems-theme') === 'dark') document.documentElement.classList.add('dark'); } catch (_) {}</script>
   <script src="/static/js/app.js" defer></script>
   <script src="/static/js/form-errors.js" defer></script>
+  {% if current_station %}<link rel="stylesheet" href="/static/css/station-notifications.css"><script src="/static/js/station-notifications.js" defer></script>{% endif %}
 </head>
 <body class="ems-app" hx-headers='{"X-CSRF-Token": "{{ csrf_token(request) }}"}'>
 {% from "partials/_icons.html" import icon %}
@@ -24,12 +25,13 @@
   <div class="app-workspace" id="app-workspace">
     <header class="workspace-topbar">
       <div class="topbar-location"><button type="button" class="icon-button menu-toggle" data-menu-toggle aria-label="Deschide meniul" aria-expanded="false" aria-controls="app-sidebar">{{ icon('menu') }}</button><span class="topbar-brand">{{ icon('bolt') }}</span><span>{% if current_station %}{{ current_station.organization_name }}<span class="topbar-divider">/</span><strong>{{ current_station.name }}</strong>{% else %}{{ app_name }}<span class="topbar-divider">/</span><strong>Spatiul de lucru</strong>{% endif %}</span></div>
-      <div class="topbar-actions"><span class="workspace-label">ENERGY MANAGEMENT</span><button type="button" class="icon-button theme-toggle" onclick="emsToggleTheme()" aria-label="Comuta tema" title="Comuta tema">{{ icon('moon', 'theme-moon') }}{{ icon('sun', 'theme-sun') }}</button><a href="/notifications" class="icon-button" aria-label="Notificari" title="Notificari">{{ icon('bell') }}</a></div>
+      <div class="topbar-actions"><span class="workspace-label">ENERGY MANAGEMENT</span><button type="button" class="icon-button theme-toggle" onclick="emsToggleTheme()" aria-label="Comuta tema" title="Comuta tema">{{ icon('moon', 'theme-moon') }}{{ icon('sun', 'theme-sun') }}</button><a href="/notifications" class="icon-button notification-bell" aria-label="Notificari" title="Notificari" {% if current_station %}data-notifications-open aria-haspopup="dialog" aria-controls="station-notifications"{% endif %}>{{ icon('bell') }}{% if current_station %}<span class="notification-count" data-notification-count hidden></span>{% endif %}</a></div>
     </header>
     <main id="main-content" class="ems-main" tabindex="-1">{% block content %}{% endblock %}</main>
     {% include "partials/_footer.html" %}
   </div>
 </div>
+{% if current_station %}{% include "partials/_station_notifications.html" %}{% endif %}
 {% if current_station %}<nav class="mobile-dock" aria-label="Navigare rapida">
 <a href="/?station_id={{ current_station.id }}" {% if request.url.path == '/' %}aria-current="page"{% endif %}>{{ icon('dashboard') }}<span>Acasa</span></a>
 <a href="/market/prices?station_id={{ current_station.id }}" {% if request.url.path.startswith('/market') %}aria-current="page"{% endif %}>{{ icon('chart') }}<span>Energie</span></a>

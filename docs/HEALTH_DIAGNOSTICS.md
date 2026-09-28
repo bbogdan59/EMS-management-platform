@@ -1,5 +1,9 @@
 # Health, notifications and diagnostics
 
+The station bell also includes yesterday's energy card and phase-voltage
+warnings. See [STATION_NOTIFICATIONS.md](STATION_NOTIFICATIONS.md) for the
+pop-in, daily calendar/coverage contract, in-app scope and migration.
+
 This delivery covers #18, #180, #186, #188 and #190. The application navigation
 contains **Stare si alerte**, **Starea statiilor** and **Notificari**. All device
 control remains in the existing control services. Diagnostic grants do not confer

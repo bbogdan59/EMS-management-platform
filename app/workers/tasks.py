@@ -174,9 +174,10 @@ def alerts_task() -> dict:
 
 @celery_app.task(name="app.workers.tasks.notifications_task")
 def notifications_task() -> dict:
-    from app.services import notification_service
+    from app.services import notification_service, station_notification_service
     with session_scope() as db:
         created = notification_service.materialize(db)
+        day_cards = station_notification_service.materialize_days(db)
         routed = notification_service.route_pending(db)
         notification_service.weekly_reports(db)
     processed = 0
@@ -185,7 +186,7 @@ def notifications_task() -> dict:
             if not notification_service.deliver_one(db):
                 break
             processed += 1
-    return {"created": created, "routed": routed, "processed": processed}
+    return {"created": created, "day_cards": day_cards, "routed": routed, "processed": processed}
 
 
 @celery_app.task(name="app.workers.tasks.deye_cloud_poll_task")

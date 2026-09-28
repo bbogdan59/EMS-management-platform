@@ -93,6 +93,13 @@ RULES = {
             window_minutes=60,
         ),
         Rule(
+            "grid_voltage_high",
+            "Tensiune ridicata in retea",
+            "tensiune de faza grid, masurata si proaspata",
+            ">253 V; revenire <=248 V",
+            "Verifica tensiunea cu instalatorul sau operatorul de distributie.",
+        ),
+        Rule(
             "battery_temperature",
             "Temperatura bateriei ridicata",
             "temperatura masurata",
@@ -242,6 +249,15 @@ def findings(db, station, at, *, historical=False):
     yield Finding("data_quality", bool(missing) or q != "measured", {**base, "missing": missing})
     trusted = row is not None and q == "measured"
     ext = row.diagnostics if trusted else {}
+    phases = ext.get("phases", [])
+    for phase in ("L1", "L2", "L3"):
+        measured = next((p for p in phases if p["phase"] == phase and p.get("circuit", "grid") == "grid" and p.get("quality", "measured") == "measured"), {})
+        voltage = Decimal(str(measured["voltage_v"])) if measured.get("voltage_v") is not None else None
+        yield Finding(
+            "grid_voltage_high", None if voltage is None else voltage > 253,
+            {**base, "phase": phase, "value": _value(voltage), "threshold_v": "253"},
+            subject=f"grid:{phase}", recovered=voltage is not None and voltage <= 248,
+        )
     battery = ext.get("battery", {})
     status = ext.get("status", {})
     if battery.get("quality", "measured") != "measured":

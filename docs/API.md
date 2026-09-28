@@ -644,6 +644,8 @@ OptimizationRun (scenariu calculat)
 
 See [HEALTH_DIAGNOSTICS.md](HEALTH_DIAGNOSTICS.md) for the complete contract,
 retention policy, lifecycle, controls and verification scope.
+The station notification feed, read endpoint and daily-card payload are documented
+in [STATION_NOTIFICATIONS.md](STATION_NOTIFICATIONS.md).
 
 Telemetry schema versions 1 and 2 accept typed `inverter` temperatures/raw status,
 `battery.soh_percent`, grid/load `phases[].circuit`, and optional

@@ -7,7 +7,7 @@ from datetime import UTC, timedelta
 from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert
 
 from app.config import get_settings
@@ -15,7 +15,7 @@ from app.core.crypto import DecryptionError, decrypt_secret, encrypt_secret
 from app.core.email import get_email_adapter
 from app.core.security import constant_time_eq, hash_token, utcnow
 from app.models.alert import Alert
-from app.models.health import AlertEvent
+from app.models.health import AlertEvent, HealthEvaluation
 from app.models.notification import Notification, NotificationDelivery, NotificationPreference
 from app.models.organization import Membership, Organization
 from app.models.station import Station
@@ -140,6 +140,7 @@ def materialize(db, now=None):
                 Organization.status != "archived",
             )
         ).all()
+        payload = incident_card(db, event, alert, rule)
         for user_id in users:
             inserted = db.execute(
                 insert(Notification)
@@ -151,12 +152,38 @@ def materialize(db, now=None):
                     severity=alert.severity,
                     category=rule.category,
                     link=f"/stations/{station.id}/health#alert-{alert.id}",
+                    payload=payload,
                 )
                 .on_conflict_do_nothing(constraint="uq_notification_event_user")
                 .returning(Notification.id)
             ).scalar_one_or_none()
             count += inserted is not None
     return count
+
+
+def incident_card(db, event, alert, rule):
+    body = rule.action
+    if event.status == "resolved":
+        body = "Conditia de alarma a revenit in intervalul de recuperare. " + body
+    elif alert.category == "grid_voltage_high":
+        phase = alert.context.get("phase")
+        evaluation = db.scalar(select(HealthEvaluation).where(
+            HealthEvaluation.station_id == alert.station_id,
+            HealthEvaluation.rule == alert.category,
+            HealthEvaluation.subject == f"grid:{phase}",
+            HealthEvaluation.window_end == event.occurred_at,
+            HealthEvaluation.verdict == "bad",
+        ))
+        if evaluation is not None and evaluation.evidence.get("value") is not None:
+            evidence = evaluation.evidence
+            count = db.scalar(select(func.count(Alert.id)).where(
+                Alert.station_id == alert.station_id, Alert.category == alert.category,
+                Alert.created_at >= event.occurred_at - timedelta(days=30),
+                Alert.created_at <= event.occurred_at,
+            ))
+            body = (f"Faza {phase}: {evidence['value']} V, peste pragul de avertizare de {evidence['threshold_v']} V. "
+                    f"{count} incidente de tensiune pe faze in ultimele 30 de zile. " + body)
+    return {"kind": "alert", "body": body}
 
 
 def _enqueue(db, pref, channel, due, key, ids, kind="alert", payload=None):
@@ -186,7 +213,7 @@ def route_pending(db, now=None):
     now = now or utcnow()
     notices = db.scalars(
         select(Notification)
-        .where(Notification.routed_at.is_(None))
+        .where(Notification.routed_at.is_(None), Notification.event_id.is_not(None))
         .order_by(Notification.created_at)
         .limit(200)
         .with_for_update(skip_locked=True)
@@ -254,6 +281,7 @@ def weekly_reports(db, now=None):
                     Notification.user_id == pref.user_id,
                     Station.organization_id == pref.organization_id,
                     Notification.created_at >= now - timedelta(days=7),
+                    Notification.event_id.is_not(None),
                 )
             )
         ]
@@ -395,6 +423,7 @@ def deliver_one(db, now=None, *, email_adapter=None, push_adapter=None):
                 .where(
                     Notification.id.in_(delivery.notification_ids),
                     Notification.user_id == delivery.user_id,
+                    Notification.event_id.is_not(None),
                     Station.organization_id == delivery.organization_id,
                 )
                 .order_by(Notification.created_at, Notification.id)

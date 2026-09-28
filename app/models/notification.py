@@ -3,7 +3,17 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Entity
@@ -35,7 +45,11 @@ class NotificationPreference(Entity):
 
 class Notification(Entity):
     __tablename__ = "notifications"
-    __table_args__ = (UniqueConstraint("user_id", "event_id", name="uq_notification_event_user"),)
+    __table_args__ = (
+        UniqueConstraint("user_id", "event_id", name="uq_notification_event_user"),
+        UniqueConstraint("user_id", "station_id", "source_key", name="uq_notification_source_user"),
+        CheckConstraint("(event_id IS NULL) <> (source_key IS NULL)", name="ck_notification_source"),
+    )
 
     user_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"), index=True
@@ -43,9 +57,11 @@ class Notification(Entity):
     station_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("stations.id", ondelete="CASCADE"), index=True
     )
-    event_id: Mapped[uuid.UUID] = mapped_column(
+    event_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("alert_events.id", ondelete="CASCADE"), index=True
     )
+    source_key: Mapped[str | None] = mapped_column(String(80))
+    payload: Mapped[dict] = mapped_column(JSON, default=dict, server_default="{}")
     title: Mapped[str] = mapped_column(String(300))
     severity: Mapped[str] = mapped_column(String(16))
     category: Mapped[str] = mapped_column(String(48))

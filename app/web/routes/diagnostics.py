@@ -4,6 +4,7 @@ import json
 import uuid
 from datetime import date, datetime, timedelta
 from pathlib import Path
+from typing import Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request
@@ -30,6 +31,7 @@ from app.services import energy_assistant_service as assistant
 from app.services import fleet_diagnostics_service as fleet
 from app.services import health_service as health
 from app.services import notification_service as notifications
+from app.services import station_notification_service as station_notifications
 from app.web.context import build_nav_context
 from app.web.templating import templates
 
@@ -217,6 +219,43 @@ def runbooks(
     return templates.TemplateResponse(
         request, "diagnostics/runbooks.html", {**build_nav_context(db, user), "rules": health.RULES}
     )
+
+
+@router.get("/stations/{station_id}/notifications")
+def station_notification_feed(
+    station_id: uuid.UUID,
+    kind: Literal["all", "summary", "alert"] = "all",
+    unread: bool = False,
+    offset: int = Query(0, ge=0, le=10000),
+    access=Depends(station_viewer),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    return JSONResponse(station_notifications.inbox(db, access[0], user, kind, unread, offset),
+                        headers={"Cache-Control": "no-store"})
+
+
+@router.post("/stations/{station_id}/notifications/{notice_id}/read", dependencies=[Depends(verify_csrf)])
+def station_notification_read(
+    station_id: uuid.UUID,
+    notice_id: uuid.UUID,
+    access=Depends(station_viewer),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    notice = db.scalar(select(Notification).where(
+        Notification.id == notice_id, Notification.station_id == station_id,
+        Notification.user_id == user.id,
+    ).with_for_update())
+    if notice is None:
+        raise HTTPException(404, "Notificare inexistenta.")
+    if notice.read_at is None:
+        notice.read_at = utcnow()
+        record_audit(db, action="notification.read", resource_type="notification",
+                     resource_id=str(notice.id), actor_user_id=user.id,
+                     organization_id=access[0].organization_id)
+    db.commit()
+    return {"read": True}
 
 
 @router.get("/notifications")

@@ -1,0 +1,17 @@
+<dialog id="station-notifications" class="station-notifications" aria-labelledby="notification-title" data-station="{{ current_station.id }}" data-csrf="{{ csrf_token(request) }}">
+  <header class="notification-header">
+    <div><h2 id="notification-title">{{ icon('bell') }} Notificari <span data-panel-count></span></h2><p>{{ current_station.name }} · Zi de zi, la curent</p></div>
+    <button type="button" class="icon-button" data-notifications-close aria-label="Inchide notificarile">{{ icon('close') }}</button>
+  </header>
+  <div class="notification-filters">
+    <label>Tip <select data-notification-kind aria-label="Tipul notificarilor"><option value="all">Toate</option><option value="summary">Rezumate zilnice</option><option value="alert">Alerte</option></select></label>
+    <label>Stare <select data-notification-unread aria-label="Starea notificarilor"><option value="all">Toate</option><option value="unread">Necitite</option></select></label>
+  </div>
+  <div class="notification-scroll">
+    <p class="notification-feedback" data-notification-feedback role="status" aria-live="polite"></p>
+    <button type="button" class="notification-text-button" data-notification-retry hidden>Reincearca</button>
+    <div class="notification-list" data-notification-list></div>
+    <button type="button" class="notification-more" data-notification-more hidden>Mai multe notificari</button>
+  </div>
+  <footer class="notification-footer"><span>Rezumatul pentru ieri apare zilnic.</span><a href="/notifications">Istoric si preferinte →</a></footer>
+</dialog>

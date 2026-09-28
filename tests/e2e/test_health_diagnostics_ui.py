@@ -5,9 +5,11 @@ import socket
 import subprocess
 import sys
 import time
+from datetime import timedelta
 from decimal import Decimal
 from pathlib import Path
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 import httpx
 import psycopg
@@ -18,8 +20,8 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from app.core.security import utcnow
-from app.models.telemetry import TelemetryRaw
-from app.services import health_service, notification_service
+from app.models.telemetry import TelemetryAggregate, TelemetryRaw
+from app.services import health_service, notification_service, station_notification_service
 from tests.factories import make_device, make_membership, make_org, make_station, make_user
 
 
@@ -56,6 +58,7 @@ def diagnostics_server():
             org = make_org(db, "Browser Diagnostics")
             make_membership(db, user, org, "organization_admin")
             station = make_station(db, org, user, name="Browser Station")
+            station.created_at = utcnow() - timedelta(days=10)
             device = make_device(db, station)
             at = utcnow().replace(second=0, microsecond=0)
             at = at.replace(minute=at.minute // 5 * 5)
@@ -70,12 +73,24 @@ def diagnostics_server():
                     received_at=at,
                     pv_power_w=Decimal(1000),
                     battery_soc_percent=Decimal(50),
-                    diagnostics={"battery": {"quality": "measured", "temperature_c": "80"}},
+                    diagnostics={"battery": {"quality": "measured", "temperature_c": "80"},
+                                 "phases": [{"phase": "L1", "voltage_v": "262.1", "quality": "measured"}]},
                 )
             )
             db.flush()
             health_service.evaluate_station(db, station, at)
             notification_service.materialize(db, at)
+            yesterday = at.astimezone(ZoneInfo(station.timezone)).date() - timedelta(days=1)
+            for day, production in ((yesterday - timedelta(days=1), "18.2"), (yesterday, "21.1")):
+                start, end = station_notification_service.day_bounds(station, day)
+                db.add(TelemetryAggregate(
+                    station_id=station.id, period_type="day", period_start=start, period_end=end,
+                    pv_energy_kwh=Decimal(production), load_energy_kwh=Decimal("13.7"),
+                    grid_import_energy_kwh=Decimal(0), grid_export_energy_kwh=Decimal("7.4"),
+                    coverage={"pv": 1, "load": 1, "grid": 1}, data_quality="measured",
+                ))
+            db.flush()
+            station_notification_service.materialize_days(db, end + timedelta(hours=1))
             db.commit()
             station_id = station.id
         with socket.socket() as server_socket:
