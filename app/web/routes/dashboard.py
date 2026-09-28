@@ -18,7 +18,7 @@ from app.database import get_db
 from app.models.organization import Membership
 from app.models.station import StationConfigVersion
 from app.models.user import User
-from app.services import dashboard_service, station_service
+from app.services import dashboard_service, station_service, sun_map_service
 from app.web.context import build_nav_context
 from app.web.templating import templates
 from app.web.wizard import next_wizard_step, resume_url
@@ -103,6 +103,18 @@ def _parse_range(range_key: str) -> tuple[datetime, datetime]:
     if range_key == "1y":
         return now - timedelta(days=365), now
     return now - timedelta(hours=24), now
+
+
+@router.get("/stations/{station_id}/data/sun")
+def data_sun(
+    station_id: uuid.UUID,
+    station_role: tuple = Depends(StationAccess(min_role="viewer")),
+):
+    station, _role = station_role
+    return JSONResponse(
+        sun_map_service.sun_map(station.latitude, station.longitude, station.timezone, utcnow()),
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @router.get("/stations/{station_id}/data/timeseries")

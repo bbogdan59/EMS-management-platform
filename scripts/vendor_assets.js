@@ -19,3 +19,11 @@ for (const [src, destName] of files) {
   fs.copyFileSync(srcPath, destPath);
   console.log(`vendored ${src} -> ${path.relative(root, destPath)}`);
 }
+
+const leafletDir = path.join(destDir, "leaflet");
+fs.mkdirSync(leafletDir, { recursive: true });
+for (const file of ["leaflet.js", "leaflet.js.map", "leaflet.css"]) {
+  fs.copyFileSync(path.join(root, "node_modules/leaflet/dist", file), path.join(leafletDir, file));
+}
+fs.cpSync(path.join(root, "node_modules/leaflet/dist/images"), path.join(leafletDir, "images"), { recursive: true });
+fs.copyFileSync(path.join(root, "node_modules/leaflet/LICENSE"), path.join(leafletDir, "LICENSE"));

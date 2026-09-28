@@ -2,6 +2,7 @@
 {% from "partials/_icons.html" import icon %}
 {% from "partials/_field_group.html" import group as field_group %}
 {% block title %}{{ station.name }} - {{ app_name }}{% endblock %}
+{% block head %}{% include "partials/_map_assets.html" %}{% endblock %}
 {% macro period_card(period_key, period_label) %}
     <section class="card energy-period-card" aria-labelledby="energy-{{ period_key }}-title">
       <div class="panel-heading">
@@ -78,6 +79,7 @@
     <section class="card flow-panel"><div class="panel-heading"><div><h2>Flux energetic actual</h2><p class="panel-kicker">Cum circula energia prin statia ta</p></div><span class="badge-muted">kW · acum</span></div>{% include "dashboard/_flow_diagram.html" %}<div class="flow-footer"><div><span class="metric-icon">{{ icon('battery') }}</span><div><p id="battery-direction-note">Actiune baterie</p><p id="kpi-battery" class="metric-value is-missing">Se incarca...</p></div></div><div><span class="metric-icon">{{ icon('car') }}</span><div><p id="ev-state-note">Masina electrica</p><p id="kpi-ev" class="metric-value is-missing">Se incarca...</p></div></div></div></section>
     {{ period_card('today', 'Astazi') }}
   </div>
+  {% include "dashboard/_sun_map.html" %}
   <div class="dashboard-chart">
     <div class="card">
       <div class="mb-2 flex items-center justify-between gap-2">

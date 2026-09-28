@@ -1,0 +1,63 @@
+.sun-card { margin:24px 0; overflow:hidden; }
+.map-toolbar { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:14px; margin-bottom:18px; }
+.map-toolbar h2 { font-size:20px; font-weight:700; letter-spacing:-.5px; }
+.map-toolbar h3 { font-weight:600; }
+.map-toolbar p,.map-caption { font-size:12px; color:var(--muted); line-height:1.7; }
+.map-actions { display:flex; flex-wrap:wrap; align-items:center; gap:10px; }
+.sun-layout { display:grid; grid-template-columns:minmax(0,1fr) 265px; gap:26px; }
+.sun-map-wrap { position:relative; min-width:0; }
+.station-map { height:430px; width:100%; border-radius:14px; background:#eceeea; border:1px solid var(--line); isolation:isolate; z-index:0; color:#34493d; font-family:inherit; }
+.station-map .leaflet-tile-pane { filter:grayscale(1) contrast(.78) brightness(1.12); }
+.station-map .leaflet-control-attribution { font-size:10px; background:#ffffffeb; color:#34493d; }
+.station-map .leaflet-control-attribution a { color:#244b38; }
+.station-map .leaflet-control-zoom a { color:#34493d; background:#fff; }
+.station-map:empty { display:grid; place-items:center; padding:30px; text-align:center; font-size:13px; }
+.map-recenter { position:absolute; top:12px; right:12px; z-index:1; font-size:11px; box-shadow:0 2px 8px #00000010; }
+.sun-overlay { position:absolute; inset:0; width:100%; height:100%; z-index:450; pointer-events:none; }
+.sun-horizon { fill:#ffd45b0b; stroke:#5965537a; stroke-width:1; stroke-dasharray:4 5; }
+.sun-altitude-ring { fill:none; stroke:#59655330; stroke-width:1; stroke-dasharray:2 5; }
+.sun-day-path { fill:none; stroke:#df9e18; stroke-width:5; stroke-linecap:round; stroke-linejoin:round; }
+.sun-compass { fill:#485a4e; font-size:12px; font-weight:700; text-anchor:middle; paint-order:stroke; stroke:#fff; stroke-width:3px; }
+.sun-event-ray { stroke:#b88017; stroke-width:1; stroke-dasharray:5 5; }
+.sun-event-dot { fill:#f7c35a; stroke:#926719; stroke-width:1; }
+.sun-event-label { fill:#715313; font-size:11px; font-weight:600; paint-order:stroke; stroke:#fff; stroke-width:3px; }
+.sun-current-ray { stroke:#df9e18; stroke-width:2; }
+.sun-glow { fill:#f8c44145; }
+.sun-disc { fill:#ffd661; stroke:#9f690e; stroke-width:1.5; }
+.sun-disc-ray { stroke:#b2770c; stroke-width:1.8; stroke-linecap:round; }
+.sun-current.is-night .sun-current-ray { stroke:#627588; stroke-dasharray:4 5; }
+.sun-current.is-night .sun-glow { fill:#64748b20; }
+.sun-current.is-night .sun-disc { fill:#dbe2e7; stroke:#627588; }
+.house-map-pin { background:#294e3b; border:3px solid #fff; border-radius:50%; box-shadow:0 2px 8px #0003; }
+.house-map-pin svg { width:100%; height:100%; padding:4px; fill:none; stroke:#fff; stroke-width:1.7; stroke-linecap:round; stroke-linejoin:round; }
+.sun-details { padding:8px 4px; }
+.sun-date { font-size:11px; color:var(--muted); overflow-wrap:anywhere; }
+.sun-clock { font-size:42px; letter-spacing:-2px; line-height:1.4; font-weight:600; }
+.sun-condition { font-size:12px; color:var(--muted); margin-bottom:18px; }
+.sun-stats { display:grid; gap:12px; margin-bottom:22px; }
+.sun-stats>div { display:flex; justify-content:space-between; align-items:baseline; gap:12px; border-bottom:1px solid var(--line); padding-bottom:9px; }
+.sun-stats dt { font-size:11px; color:var(--muted); }
+.sun-stats dd { font-size:13px; font-weight:600; white-space:nowrap; }
+.sun-legend { display:flex; flex-wrap:wrap; gap:12px; font-size:10px; margin-bottom:12px; }
+.sun-legend span { display:flex; align-items:center; gap:7px; }
+.sun-legend i { display:inline-block; background:#df9e18; }
+.legend-path { width:17px; height:3px; border-radius:2px; }
+.legend-now { width:9px; height:9px; border-radius:50%; }
+.sun-footnote { margin-top:15px; }
+.map-notice { font-size:12px; color:#7c571e; background:#fff4d6; padding:8px 12px; border-radius:8px; margin-top:8px; }
+.location-picker { padding:14px; border:1px solid var(--line); border-radius:12px; }
+.picker-map { height:350px; }
+.location-picker .map-caption { margin-top:10px; }
+html.dark .station-map .leaflet-tile-pane { filter:grayscale(1) contrast(.75) brightness(.8); }
+@media (max-width:1100px) {
+  .sun-layout { grid-template-columns:minmax(0,1fr); gap:18px; }
+  .sun-stats { grid-template-columns:1fr 1fr; column-gap:26px; }
+  .sun-details { padding:0; }
+}
+@media (max-width:480px) {
+  .sun-map { height:350px; }
+  .picker-map { height:300px; }
+  .sun-stats { grid-template-columns:1fr; gap:8px; }
+  .map-actions .btn-secondary { font-size:11px; }
+  .sun-event-label { font-size:10px; }
+}

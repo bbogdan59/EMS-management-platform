@@ -1,0 +1,27 @@
+<section class="card sun-card" data-sun-map data-url="/stations/{{ station.id }}/data/sun" aria-labelledby="sun-map-title">
+  <div class="map-toolbar">
+    <div><span class="eyebrow">Soarele la tine acasa</span><h2 id="sun-map-title">Traseul soarelui</h2><p>Pozitia de acum, raportata la locatia statiei tale.</p></div>
+    <div class="map-actions"><span class="badge-muted" data-sun-status role="status">Se calculeaza...</span><a class="btn-secondary" href="/stations/{{ station.id }}/config">Configureaza locatia</a></div>
+  </div>
+  <div class="sun-layout">
+    <div class="sun-map-wrap">
+      <div class="station-map sun-map" data-map-canvas aria-label="Harta casei cu directia soarelui si traseul de astazi"></div>
+      <button type="button" class="btn-secondary map-recenter" data-recenter>Centreaza casa</button>
+      <p class="map-notice" data-map-error role="status" hidden>Fundalul hartii nu este disponibil. Directiile solare raman vizibile.</p>
+    </div>
+    <div class="sun-details">
+      <p class="sun-date" data-sun-date>Astazi · {{ station.timezone }}</p>
+      <p class="sun-clock" data-sun-clock>—</p>
+      <p class="sun-condition" data-sun-condition>Se calculeaza pozitia...</p>
+      <dl class="sun-stats">
+        <div><dt>Directie (azimut)</dt><dd data-sun-azimuth>—</dd></div>
+        <div><dt>Inaltime deasupra orizontului</dt><dd data-sun-elevation>—</dd></div>
+        <div><dt>Rasarit</dt><dd data-sun-sunrise>—</dd></div>
+        <div><dt>Apus</dt><dd data-sun-sunset>—</dd></div>
+      </dl>
+      <div class="sun-legend"><span><i class="legend-path"></i>Traseul de astazi</span><span><i class="legend-now"></i>Pozitia curenta</span></div>
+      <p class="map-caption">Nordul este sus. Cercul arata orizontul; centrul, cerul deasupra casei. Distantele din diagrama reprezinta unghiuri.</p>
+    </div>
+  </div>
+  <p class="map-caption sun-footnote">Pozitie astronomica calculata, actualizata la 30 de secunde. Cladirile, relieful si norii pot schimba vizibilitatea soarelui.</p>
+</section>
