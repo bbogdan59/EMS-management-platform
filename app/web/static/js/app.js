@@ -126,7 +126,7 @@ function emsApplyChartAppearance(chart) {
   const line = dark ? '#344b39' : '#e8ede3';
   const options = chart.getOption();
   const axes = (items) => (items || []).map(() => ({ axisLabel: { color: text, fontSize: 10, fontFamily: 'Manrope' }, nameTextStyle: { color: text, fontSize: 10 }, axisLine: { lineStyle: { color: line } }, splitLine: { lineStyle: { color: line, type: 'dashed' } }, axisTick: { show: false } }));
-  chart.setOption({ backgroundColor: 'transparent', textStyle: { fontFamily: 'Manrope', color: text }, legend: { type: 'scroll', textStyle: { color: text, fontSize: 10 }, icon: 'roundRect', itemWidth: 10, itemHeight: 5, itemGap: 17 }, xAxis: axes(options.xAxis), yAxis: axes(options.yAxis), tooltip: { backgroundColor: dark ? '#253b2c' : '#fff', borderColor: line, borderWidth: 1, padding: 12, textStyle: { color: dark ? '#eef3e8' : '#23422b', fontSize: 11, fontFamily: 'Manrope' }, extraCssText: 'border-radius:12px;box-shadow:0 8px 30px #11251615;', confine: true } });
+  chart.setOption({ backgroundColor: 'transparent', textStyle: { fontFamily: 'Manrope', color: text }, legend: { type: 'scroll', show: options.legend?.[0]?.show !== false, textStyle: { color: text, fontSize: 10 }, icon: 'roundRect', itemWidth: 10, itemHeight: 5, itemGap: 17 }, xAxis: axes(options.xAxis), yAxis: axes(options.yAxis), tooltip: { backgroundColor: dark ? '#253b2c' : '#fff', borderColor: line, borderWidth: 1, padding: 12, textStyle: { color: dark ? '#eef3e8' : '#23422b', fontSize: 11, fontFamily: 'Manrope' }, extraCssText: 'border-radius:12px;box-shadow:0 8px 30px #11251615;', confine: true } });
 }
 
 function emsCreateChart(element) {

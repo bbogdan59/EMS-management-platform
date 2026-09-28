@@ -381,6 +381,111 @@ function emsInitDashboard(stationId, initialSummary = null) {
     return data;
   }
 
+  const historyMetrics = [
+    {id: "pv", key: "pv_kw", label: "Productie solara", unit: "kW", color: "#eee49a"},
+    {id: "load", key: "load_kw", label: "Consum", unit: "kW", color: "#e1e8c5"},
+    {id: "soc", key: "soc_pct", label: "Nivel baterie", unit: "%", color: "#d7df98"},
+    {id: "grid", key: "grid_kw", label: "Retea", unit: "kW", color: "#ede0ad"},
+  ];
+  let historyLoading = false;
+  let historyTimer;
+
+  function historyQuality(point) {
+    const labels = [];
+    if (point.is_simulated || point.data_quality === "simulated") labels.push("simulat");
+    if (point.is_late || point.data_quality === "stale") labels.push("intarziat");
+    if (point.data_quality === "estimated") labels.push("estimat");
+    return labels;
+  }
+
+  function renderMetricHistories(data) {
+    const end = Date.now(), start = end - 24 * 60 * 60 * 1000;
+    const step = 15 * 60 * 1000;
+    const startBucket = Math.floor(start / step) * step;
+    const endBucket = Math.floor(end / step) * step;
+    const points = (data.points || []).filter(point => {
+      const time = Date.parse(point.t);
+      return time >= startBucket && time <= endBucket;
+    }).sort((a, b) => Date.parse(a.t) - Date.parse(b.t));
+    const samples = [];
+    for (const point of points) {
+      const previous = samples[samples.length - 1];
+      // The API omits entirely empty buckets; a null sample prevents bridging outages.
+      if (previous && Date.parse(point.t) - Date.parse(previous.t) > step) {
+        samples.push({t: new Date(Date.parse(previous.t) + step).toISOString()});
+      }
+      samples.push(point);
+    }
+    const timeZone = data.timezone || document.querySelector(".energy-dashboard").dataset.timezone;
+    for (const metric of historyMetrics) {
+      const root = document.querySelector(`[data-history="${metric.id}"]`);
+      if (!root) continue;
+      const chartEl = $("history-" + metric.id);
+      const valid = point => hasValue(point[metric.key]) && point[metric.key] !== "" && Number.isFinite(Number(point[metric.key]));
+      const known = points.filter(valid);
+      const status = root.querySelector("[data-history-status]");
+      const qualities = [...new Set(known.flatMap(historyQuality))];
+      const expected = (endBucket - startBucket) / step + 1;
+      chartEl.hidden = !known.length;
+      root.querySelector(".history-empty").hidden = known.length > 0;
+      root.querySelector(".history-empty").textContent = "Fara date istorice";
+      root.querySelector(".history-retry").hidden = true;
+      status.textContent = known.length ? ["medii 15 min", known.length < expected ? "partial" : "", ...qualities].filter(Boolean).join(" · ") : "fara date";
+      root.title = `${known.length} din ${expected} intervale cu valori. Golurile reprezinta date lipsa.`;
+      if (!known.length) continue;
+      const chart = emsCreateChart(chartEl);
+      chart.setOption({
+        animation: false,
+        grid: {left: 2, right: 2, top: 7, bottom: 3},
+        legend: {show: false},
+        xAxis: {type: "time", show: false, min: startBucket, max: end},
+        yAxis: {type: "value", show: false, min: metric.id === "grid" ? undefined : 0, max: metric.id === "soc" ? 100 : undefined},
+        tooltip: {
+          trigger: "axis", confine: true,
+          formatter: rows => {
+            const sample = rows[0]?.data;
+            if (!sample) return "";
+            const value = sample.value[1];
+            const when = new Date(sample.value[0]).toLocaleString("ro-RO", {timeZone, day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit"});
+            const direction = metric.id === "grid" && value !== null ? (value < 0 ? " · export" : value > 0 ? " · import" : " · fara schimb") : "";
+            return `${when}<br>${metric.label}: ${value === null ? "fara date" : `${fmt(value, metric.id === "soc" ? 1 : 2)} ${metric.unit}`}${direction}${sample.quality ? `<br>${sample.quality}` : ""}`;
+          },
+        },
+        series: [{
+          name: metric.label, type: "line", smooth: false, connectNulls: false,
+          showSymbol: known.length <= EMS_CHART_SYMBOL_THRESHOLD, symbolSize: 4,
+          lineStyle: {color: metric.color, width: 2}, itemStyle: {color: metric.color},
+          areaStyle: {color: metric.color, opacity: 0.16},
+          data: samples.map(point => ({
+            value: [point.t, valid(point) ? Number(point[metric.key]) : null],
+            quality: historyQuality(point).join(" · "),
+          })),
+        }],
+      });
+      chartEl.setAttribute("aria-label", `${metric.label}: ${known.length} intervale cu date in ultimele 24 de ore. ${status.textContent}`);
+    }
+  }
+
+  async function loadMetricHistories() {
+    clearTimeout(historyTimer);
+    if (historyLoading || document.hidden) return;
+    historyLoading = true;
+    try {
+      renderMetricHistories(await fetchTimeseries("24h", new AbortController()));
+    } catch (_) {
+      for (const root of document.querySelectorAll("[data-history]")) {
+        root.querySelector(".metric-sparkline").hidden = true;
+        root.querySelector(".history-empty").hidden = false;
+        root.querySelector(".history-empty").textContent = "Istoric indisponibil";
+        root.querySelector("[data-history-status]").textContent = "actualizare esuata";
+        root.querySelector(".history-retry").hidden = false;
+      }
+    } finally {
+      historyLoading = false;
+      historyTimer = setTimeout(loadMetricHistories, 60000);
+    }
+  }
+
   // Doua zecimale peste tot in acest grafic -- tooltip si axe -- ca sa nu se
   // vada precizia bruta a float-urilor JS (ex. 3.455999999999) (cerere client).
   function powerChartTooltipFormatter(params) {
@@ -1070,6 +1175,12 @@ function emsInitDashboard(stationId, initialSummary = null) {
 
   // Bootstrap initial
   if (initialSummary) setKpis(initialSummary);
+  loadMetricHistories();
+  document.querySelectorAll(".history-retry").forEach(button => button.addEventListener("click", loadMetricHistories));
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) clearTimeout(historyTimer);
+    else loadMetricHistories();
+  });
   lazyLoadWidget("chart-power", () => loadPowerChart("24h"));
   lazyLoadWidget("chart-prices", loadPricesChart);
   lazyLoadWidget("chart-plan", loadPlanChart);

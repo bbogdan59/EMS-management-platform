@@ -2,7 +2,18 @@
 {% from "partials/_icons.html" import icon %}
 {% from "partials/_field_group.html" import group as field_group %}
 {% block title %}{{ station.name }} - {{ app_name }}{% endblock %}
-{% block head %}{% include "partials/_map_assets.html" %}{% endblock %}
+{% block head %}
+{% include "partials/_map_assets.html" %}
+<link rel="stylesheet" href="/static/css/station-dashboard.css">
+{% endblock %}
+{% macro metric_history(key, label) %}
+<div class="metric-history" data-history="{{ key }}">
+  <div id="history-{{ key }}" class="metric-sparkline" role="img" aria-label="{{ label }}: istoric ultimele 24 de ore"></div>
+  <p class="history-empty" hidden>Fara date istorice</p>
+  <div class="history-caption"><span>Ultimele 24 h</span><span data-history-status>Se incarca...</span></div>
+  <button type="button" class="history-retry" hidden>Reincearca istoricul</button>
+</div>
+{% endmacro %}
 {% macro period_card(period_key, period_label) %}
     <section class="card energy-period-card" aria-labelledby="energy-{{ period_key }}-title">
       <div class="panel-heading">
@@ -69,17 +80,17 @@
   {% if station.is_demo %}<p class="badge-warn mb-4">Date simulate · statie demonstrativa</p>{% endif %}
   <section aria-labelledby="client-dashboard-title"><h2 id="client-dashboard-title" class="sr-only">Pe scurt, ce se intampla acum</h2>
     <div class="overview-metrics">
-      <article class="card metric-card featured"><div class="metric-heading"><span>Produce acum</span><span class="metric-icon">{{ icon('sun') }}</span></div><p id="kpi-pv" class="metric-value is-missing" aria-live="polite">Se incarca...</p><p class="metric-note"><span class="status-dot"></span>Productie solara · putere instantanee</p></article>
-      <article class="card metric-card"><div class="metric-heading"><span>Consuma acum</span><span class="metric-icon">{{ icon('home') }}</span></div><p id="kpi-load" class="metric-value is-missing" aria-live="polite">Se incarca...</p><p class="metric-note"><span class="status-dot"></span>Consumul statiei · acum</p></article>
-      <article class="card metric-card battery-card"><div class="metric-heading"><span>Nivel baterie</span><span class="metric-icon">{{ icon('battery') }}</span></div><p id="kpi-soc" class="metric-value is-missing" aria-live="polite">Se incarca...</p><svg class="battery-gauge" viewBox="0 0 42 42" aria-hidden="true"><circle cx="21" cy="21" r="15.9155"/><circle id="battery-gauge-fill" class="gauge-fill" cx="21" cy="21" r="15.9155"/></svg><p class="metric-note">Energie stocata · SOC</p></article>
-      <article class="card metric-card"><div class="metric-heading"><span>Schimb cu reteaua</span><span class="metric-icon">{{ icon('grid') }}</span></div><p id="kpi-grid" class="metric-value is-missing" aria-live="polite">Se incarca...</p><p id="grid-direction-note" class="metric-note">Import / export · putere instantanee</p></article>
+      <article class="card metric-card featured"><div class="metric-heading"><span>Produce acum</span><span class="metric-icon">{{ icon('sun') }}</span></div><p id="kpi-pv" class="metric-value is-missing" aria-live="polite">Se incarca...</p><p class="metric-note"><span class="status-dot"></span>Productie solara · putere instantanee</p>{{ metric_history('pv', 'Productie solara') }}</article>
+      <article class="card metric-card consumption-card"><div class="metric-heading"><span>Consuma acum</span><span class="metric-icon">{{ icon('home') }}</span></div><p id="kpi-load" class="metric-value is-missing" aria-live="polite">Se incarca...</p><p class="metric-note"><span class="status-dot"></span>Consumul statiei · acum</p>{{ metric_history('load', 'Consum') }}</article>
+      <article class="card metric-card battery-card"><div class="metric-heading"><span>Nivel baterie</span><span class="metric-icon">{{ icon('battery') }}</span></div><p id="kpi-soc" class="metric-value is-missing" aria-live="polite">Se incarca...</p><p class="metric-note">Energie stocata · SOC</p>{{ metric_history('soc', 'Nivel baterie') }}</article>
+      <article class="card metric-card grid-card"><div class="metric-heading"><span>Schimb cu reteaua</span><span class="metric-icon">{{ icon('grid') }}</span></div><p id="kpi-grid" class="metric-value is-missing" aria-live="polite">Se incarca...</p><p id="grid-direction-note" class="metric-note">Import / export · putere instantanee</p>{{ metric_history('grid', 'Schimb cu reteaua') }}</article>
     </div>
   </section>
   <div class="dashboard-hero">
     <section class="card flow-panel"><div class="panel-heading"><div><h2>Flux energetic actual</h2><p class="panel-kicker">Cum circula energia prin statia ta</p></div><span class="badge-muted">kW · acum</span></div>{% include "dashboard/_flow_diagram.html" %}<div class="flow-footer"><div><span class="metric-icon">{{ icon('battery') }}</span><div><p id="battery-direction-note">Actiune baterie</p><p id="kpi-battery" class="metric-value is-missing">Se incarca...</p></div></div><div><span class="metric-icon">{{ icon('car') }}</span><div><p id="ev-state-note">Masina electrica</p><p id="kpi-ev" class="metric-value is-missing">Se incarca...</p></div></div></div></section>
-    {{ period_card('today', 'Astazi') }}
+    {% include "dashboard/_sun_map.html" %}
   </div>
-  {% include "dashboard/_sun_map.html" %}
+  <div class="today-section">{{ period_card('today', 'Astazi') }}</div>
   <div class="dashboard-chart">
     <div class="card">
       <div class="mb-2 flex items-center justify-between gap-2">

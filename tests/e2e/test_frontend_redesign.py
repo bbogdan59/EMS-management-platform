@@ -6,6 +6,8 @@ from datetime import UTC, datetime, timedelta
 
 from playwright.sync_api import expect, sync_playwright
 
+from tests.e2e.test_station_sun_map import TILE
+
 pytest_plugins = ["tests.e2e.test_health_diagnostics_ui"]
 
 
@@ -20,7 +22,7 @@ def _no_overflow(page):
     page.evaluate("() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))")
     if not page.evaluate("document.documentElement.scrollWidth <= window.innerWidth"):
         page.screenshot(path="/tmp/ems-redesign-overflow.png", full_page=True)
-        raise AssertionError(page.evaluate("[...document.querySelectorAll('main *')].filter(el => el.getBoundingClientRect().right > innerWidth + 1).map(el => [el.tagName, el.id, el.className, Math.round(el.getBoundingClientRect().right)]).slice(0,30)"))
+        raise AssertionError(page.evaluate("({width: innerWidth, scroll: document.documentElement.scrollWidth, elements: [...document.querySelectorAll('body *')].filter(el => el.getBoundingClientRect().right > innerWidth + 1).map(el => [el.tagName, el.id, String(el.className), Math.round(el.getBoundingClientRect().right), getComputedStyle(el).position]).slice(0,30)})"))
 
 
 def test_responsive_dashboard_metrics_navigation_and_charts(diagnostics_server):
@@ -30,6 +32,7 @@ def test_responsive_dashboard_metrics_navigation_and_charts(diagnostics_server):
             executable_path=os.environ.get("PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH")
         )
         page = browser.new_page(viewport={"width": 1440, "height": 1100}, reduced_motion="reduce")
+        page.route("https://tile.openstreetmap.org/**", lambda route: route.fulfill(content_type="image/svg+xml", body=TILE))
         errors = []
         page.on("pageerror", lambda error: errors.append(str(error)))
         # A controllable transport exercises real snapshot/delta rendering without

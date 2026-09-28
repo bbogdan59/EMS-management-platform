@@ -9,7 +9,13 @@
 
   function createMap(root, location, zoom) {
     const canvas = root.querySelector("[data-map-canvas]");
-    const map = L.map(canvas, {scrollWheelZoom: false, zoomAnimation: false, maxZoom: 20})
+    const interactive = root.hasAttribute("data-location-picker");
+    const map = L.map(canvas, {
+      scrollWheelZoom: false, zoomAnimation: false, maxZoom: 20,
+      dragging: interactive, touchZoom: interactive, doubleClickZoom: interactive,
+      boxZoom: interactive, keyboard: interactive, zoomControl: interactive,
+      tapHold: interactive,
+    })
       .setView(location, zoom);
     const tiles = L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
       maxNativeZoom: 19, maxZoom: 20, referrerPolicy: "strict-origin-when-cross-origin",
@@ -164,14 +170,13 @@
         write("condition", "Fixeaza casa pe harta din configurarea statiei.");
         for (const key of ["clock", "azimuth", "elevation", "sunrise", "sunset"]) write(key, "—");
         root.querySelector("[data-map-canvas]").textContent = "Alege locatia casei pentru a vedea traseul soarelui.";
-        root.querySelector("[data-recenter]").hidden = true;
         return;
       }
       const location = [data.location.latitude, data.location.longitude];
       if (!map) {
         root.querySelector("[data-map-canvas]").textContent = "";
         map = createMap(root, location, 19);
-        marker = L.marker(location, {icon: pinIcon(), title: "Casa ta"}).addTo(map);
+        marker = L.marker(location, {icon: pinIcon(), title: "Casa ta", interactive: false, keyboard: false}).addTo(map);
         overlay = svgNode("svg", {class: "sun-overlay", "aria-hidden": "true"});
         map.getContainer().appendChild(overlay);
         map.on("move zoom resize", draw);
@@ -179,7 +184,6 @@
         marker.setLatLng(location);
         map.setView(location, map.getZoom());
       }
-      root.querySelector("[data-recenter]").hidden = false;
       write("date", new Intl.DateTimeFormat("ro-RO", {timeZone: data.timezone, day: "numeric", month: "long", year: "numeric"}).format(new Date(data.calculated_at)) + " · " + data.timezone);
       write("clock", formatTime(data.calculated_at));
       write("status", "Live · 30 s");
@@ -214,9 +218,6 @@
         timer = setTimeout(refresh, 30000);
       }
     }
-    root.querySelector("[data-recenter]").addEventListener("click", () => {
-      if (map && marker) map.setView(marker.getLatLng(), 19);
-    });
     document.addEventListener("visibilitychange", () => {
       if (document.hidden) clearTimeout(timer);
       else refresh();

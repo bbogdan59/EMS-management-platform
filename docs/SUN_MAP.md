@@ -5,6 +5,19 @@ traseul solar al zilei locale, directia curenta, elevatia si orele de rasarit/ap
 Pozitia se recalculeaza la 30 de secunde si la revenirea in tab. Noaptea,
 indicatorul devine gri si arata explicit ca soarele este sub orizont.
 
+Harta se afla langa animatia fluxului energetic. Pe dashboard este doar
+pentru vizualizare: fara deplasare, zoom, editarea pinului sau capturarea
+scroll-ului. Casa ramane centrata inclusiv la redimensionarea ecranului.
+Rezumatul „Astazi” apare sub cele doua panouri, pe un rand la desktop.
+
+Cardurile de putere/SOC includ istoricul ultimelor 24 de ore, cu medii la
+15 minute din acelasi API de telemetrie ca graficul principal. Istoricul se
+actualizeaza la un minut si la revenirea in tab, independent de intervalul
+selectat pentru analiza detaliata. Golurile raman intreruperi, zero ramane
+valoare valida, iar schimbul cu reteaua pastreaza semnul import/export.
+Provenienta simulata, estimata sau intarziata este afisata pe fiecare card;
+lipsa datelor si erorile de incarcare au stari distincte.
+
 Configurarea tehnica, asistentul de creare si formularul avansat de creare
 permit alegerea coordonatelor prin click, tragerea pinului, centrul hartii sau
 geolocalizarea browserului la cerere. Coordonatele raman editabile manual si
