@@ -17,7 +17,7 @@ from app.models.tariff import (
 )
 
 DEFAULT_SETTLEMENT_METHOD = "net_metering_15min"
-SUPPORTED_SETTLEMENT_METHODS = frozenset({DEFAULT_SETTLEMENT_METHOD})
+SUPPORTED_SETTLEMENT_METHODS = frozenset({DEFAULT_SETTLEMENT_METHOD, "ro_prosumer_monthly"})
 
 
 def validate_tariff_kind(kind: str) -> None:
@@ -43,6 +43,8 @@ def validate_tariff_direction(direction: str) -> None:
 def get_or_create_tariff(db: Session, station: Station, direction: str, kind: str, name: str) -> Tariff:
     validate_tariff_direction(direction)
     validate_tariff_kind(kind)
+    # Both the guided pair and the advanced form must serialize contract creation.
+    db.execute(select(Station.id).where(Station.id == station.id).with_for_update(key_share=True)).scalar_one()
     tariff = db.scalar(
         select(Tariff).where(Tariff.station_id == station.id, Tariff.direction == direction, Tariff.is_active.is_(True))
     )
@@ -180,6 +182,7 @@ def add_tariff_version(
     vat_rate_percent: Decimal | None = None,
     economic_calculation_disabled: bool = False,
     limitation_note: str | None = None,
+    invoice_breakdown: dict | None = None,
 ) -> TariffVersion:
     _validate_version_time(valid_from)
     _validate_version_matches_contract_kind(
@@ -203,6 +206,10 @@ def add_tariff_version(
         economic_calculation_disabled=economic_calculation_disabled,
         limitation_note=limitation_note,
     )
+    if settlement_method == "ro_prosumer_monthly" and not invoice_breakdown:
+        raise ValueError("Configurarea compensarii lunare necesita formularul Prosumator Romania.")
+
+    db.execute(select(Tariff.id).where(Tariff.id == tariff.id).with_for_update()).scalar_one()
 
     open_version = db.scalar(
         select(TariffVersion)
@@ -234,6 +241,7 @@ def add_tariff_version(
         settlement_interval_days=settlement_interval_days,
         economic_calculation_disabled=economic_calculation_disabled,
         limitation_note=limitation_note,
+        invoice_breakdown=invoice_breakdown,
     )
     db.add(version)
     db.flush()

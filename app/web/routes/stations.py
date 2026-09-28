@@ -7,7 +7,8 @@ from decimal import Decimal, InvalidOperation
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, Form, Request
-from fastapi.responses import RedirectResponse
+from fastapi.encoders import jsonable_encoder
+from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -27,8 +28,16 @@ from app.models.equipment_catalog import EquipmentModel
 from app.models.station import PanelGroup, Station, StationConfigVersion
 from app.models.tariff import Tariff
 from app.models.user import User
+from app.schemas.romanian_tariff import (
+    COMPONENTS,
+    INVOICE_EXAMPLE,
+    RomanianTariffInput,
+    RomanianTariffPreview,
+    effective_instant,
+)
 from app.schemas.station_forms import PreferenceInput, StationConfigInput
 from app.services import device_service, equipment_catalog_service, station_service, tariff_service
+from app.services import romanian_tariff_service as romanian_tariffs
 from app.web.context import build_nav_context
 from app.web.templating import templates
 from app.web.wizard import STEP_ORDER, wizard_chrome_context
@@ -644,9 +653,81 @@ def tariffs_page(
         "errors": request.query_params.getlist("error"),
         **build_nav_context(db, user, station.id),
     }
-    if request.query_params.get("wizard") == "1":
+    versions = romanian_tariffs.latest_versions(db, station)
+    configured = versions["import"].invoice_breakdown if versions["import"] else None
+    ro_values = {"name": "Prosumator Romania", "import_vat": "21", "export_vat": "0", "monthly_fee": "0", "tg_in_active": False}
+    if configured:
+        ro_values.update({k: v for k, v in configured.items() if k in RomanianTariffInput.model_fields})
+    context.update({
+        "ro_components": COMPONENTS, "ro_example": INVOICE_EXAMPLE,
+        "ro_values": getattr(request.state, "ro_values", ro_values),
+        "ro_revision": getattr(request.state, "ro_revision", romanian_tariffs.revision(versions)),
+        "ro_effective_from": getattr(request.state, "ro_effective_from", ""),
+        "ro_errors": getattr(request.state, "ro_errors", []),
+    })
+    if request.query_params.get("wizard") == "1" or getattr(request.state, "ro_wizard", False):
         context.update(wizard_chrome_context(db, "tariffs", station=station))
     return templates.TemplateResponse(request, "stations/tariffs.html", context)
+
+
+@router.post("/stations/{station_id}/tariffs/romania/preview", dependencies=[Depends(verify_csrf)])
+def romanian_tariff_preview(
+    payload: RomanianTariffPreview,
+    station_role: tuple = Depends(StationAccess(min_role="viewer")),
+):
+    result = romanian_tariffs.monthly_preview(payload.tariff, payload.import_kwh, payload.export_kwh)
+    return JSONResponse(jsonable_encoder(result, custom_encoder={Decimal: str}), headers={"Cache-Control": "no-store"})
+
+
+@router.post("/stations/{station_id}/tariffs/romania", dependencies=[Depends(verify_csrf)])
+async def romanian_tariffs_submit(
+    request: Request,
+    db: Session = Depends(get_db),
+    station_role: tuple = Depends(StationAccess(min_role="organization_admin")),
+    user: User = Depends(get_current_user),
+):
+    station, _role = station_role
+    form = await request.form()
+    values = {k: form[k] for k in RomanianTariffInput.model_fields if k in form}
+    values["tg_in_active"] = form.get("tg_in_active") == "true"
+    expected = str(form.get("expected_revision", ""))
+    effective = str(form.get("effective_from", ""))
+    try:
+        config = RomanianTariffInput.model_validate(values)
+        valid_from = effective_instant(effective, station.timezone, utcnow())
+        versions = romanian_tariffs.save_pair(db, station, config, valid_from, expected)
+    except ValueError as exc:
+        db.rollback()
+        labels = {**dict(COMPONENTS), "import_vat": "TVA import", "export_vat": "TVA export", "monthly_fee": "Abonament", "name": "Denumire contract"}
+        messages = []
+        if isinstance(exc, ValidationError):
+            for error in exc.errors():
+                key = str(error["loc"][0]) if error["loc"] else ""
+                if not key:
+                    messages.append(str(error["msg"]).removeprefix("Value error, "))
+                    continue
+                rule = ("completeaza intre 1 si 200 de caractere" if key == "name" else
+                        "introdu o cota intre 0 si 100, cu cel mult 2 zecimale" if key in ("import_vat", "export_vat") else
+                        "introdu intre 0 si 999999 lei, cu cel mult 2 zecimale" if key == "monthly_fee" else
+                        "introdu intre 0 si 9999 lei/kWh, cu cel mult 8 zecimale")
+                messages.append(f"{labels.get(key, 'Formular')}: {rule}.")
+        else:
+            messages.append(str(exc))
+        request.state.ro_errors = messages
+        request.state.ro_values = values
+        request.state.ro_revision = expected
+        request.state.ro_effective_from = effective
+        request.state.ro_wizard = form.get("wizard") == "1"
+        response = tariffs_page(request, db, station_role, user)
+        response.status_code = 422
+        return response
+    record_audit(db, action="tariff_pair_created", resource_type="station", resource_id=str(station.id),
+                 actor_user_id=user.id, actor_label=user.email, station_id=station.id,
+                 metadata={"version_ids": [str(v.id) for v in versions], "settlement_method": romanian_tariffs.SETTLEMENT})
+    db.commit()
+    if form.get("wizard") == "1":
+        return _next_step_redirect(station.id, "tariffs")
+    return RedirectResponse(f"/stations/{station.id}/tariffs?saved=1", status_code=303)
 
 
 @router.post("/stations/{station_id}/tariffs", dependencies=[Depends(verify_csrf)])

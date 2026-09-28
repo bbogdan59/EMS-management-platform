@@ -42,9 +42,8 @@ def fmt_lei(value) -> str:
 
 
 def fmt_lei_per_kwh(value) -> str:
-    """Pretul pe kWh e stocat cu 5 zecimale (`Numeric(10, 5)`, vezi
-    `app/models/tariff.py`) -- rotunjirea la 2 zecimale a `fmt_lei` ar
-    ascunde marje mici reale (ex. 0.00085 lei/kWh ar aparea ca 0.00)."""
+    """Afisare compacta a pretului efectiv. Defalcarea facturii pastreaza
+    toate cele 8 zecimale separat; doua zecimale ar ascunde marje mici."""
     if value is None:
         return "-"
     return f"{fmt_number(value, 5)} lei/kWh"

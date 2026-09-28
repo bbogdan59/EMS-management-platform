@@ -1,0 +1,49 @@
+<section class="ro-tariffs" aria-labelledby="ro-title">
+  <header class="ro-heading"><div><span class="ro-eyebrow">CONFIGURARE DIN FACTURA</span><h2 id="ro-title">Prosumator Romania</h2><p>Un singur formular pentru energia cumparata si energia livrata in retea.</p></div><span class="ro-chip">Compensare lunara 1:1</span></header>
+  {{ error_summary(ro_errors) }}
+  <form id="ro-tariff-form" method="post" action="/stations/{{ station.id }}/tariffs/romania" data-preview-url="/stations/{{ station.id }}/tariffs/romania/preview">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+    <input type="hidden" name="expected_revision" value="{{ ro_revision }}">
+    {% if wizard_step %}<input type="hidden" name="wizard" value="1">{% endif %}
+    <div class="ro-layout">
+      <div class="ro-inputs">
+        <section class="ro-section">
+          <div class="ro-section-heading"><h3><span>1</span> Preturile de pe factura</h3><button type="button" class="ro-text-button" data-ro-example>Completeaza exemplul</button></div>
+          <p class="ro-help">Pentru un contract cu pret fix si compensare lunara 1:1. Copiaza pretul unitar <strong>fara TVA</strong>, in lei/kWh. Poti folosi virgula sau punct. Pentru o taxa care nu se aplica, introdu 0.</p>
+          <p class="ro-example-note" data-ro-example-note hidden>Exemplu dintr-o factura, nu tarife universale. Verifica fiecare valoare fata de factura ta.</p>
+          <div class="ro-fields">
+            {% for key, label in ro_components %}<label class="ro-field {% if key == 'active_energy' %}ro-active-field{% endif %}" for="ro-{{ key }}"><span>{{ label }}</span><div><input id="ro-{{ key }}" name="{{ key }}" type="text" inputmode="decimal" pattern="[0-9]+([.,][0-9]{1,8})?" maxlength="20" value="{{ ro_values.get(key, '') }}" placeholder="0,00000000" required data-ro-rate><small>lei/kWh</small></div></label>{% endfor %}
+          </div>
+          <label class="ro-check"><input type="checkbox" name="tg_in_active" value="true" {% if ro_values.get('tg_in_active') %}checked{% endif %}> <span>TG este deja inclus in pretul energiei active<small>Daca TG apare separat, ca in exemplul facturii, lasa debifat. La export, TG se scade din pretul energiei active.</small></span></label>
+        </section>
+        <section class="ro-section">
+          <div class="ro-section-heading"><h3><span>2</span> TVA si contract</h3></div>
+          <div class="ro-fields">
+            <label class="ro-field" for="ro-import-vat"><span>TVA la consum (%)</span><input id="ro-import-vat" name="import_vat" type="text" inputmode="decimal" pattern="[0-9]+([.,][0-9]{1,2})?" value="{{ ro_values.get('import_vat', '') }}" required data-ro-rate></label>
+            <label class="ro-field" for="ro-export-vat"><span>TVA la export (%)</span><input id="ro-export-vat" name="export_vat" type="text" inputmode="decimal" pattern="[0-9]+([.,][0-9]{1,2})?" value="{{ ro_values.get('export_vat', '') }}" required data-ro-rate><small>0 daca nu colectezi TVA la export. Verifica factura de prosumator.</small></label>
+            <label class="ro-field" for="ro-fee"><span>Abonament lunar fara TVA (lei)</span><input id="ro-fee" name="monthly_fee" type="text" inputmode="decimal" pattern="[0-9]+([.,][0-9]{1,2})?" value="{{ ro_values.get('monthly_fee', '0') }}" required data-ro-rate></label>
+            <label class="ro-field" for="ro-name"><span>Denumire contract</span><input id="ro-name" name="name" maxlength="200" value="{{ ro_values.get('name', '') }}" required></label>
+          </div>
+          <details class="ro-validity"><summary>Data de inceput a noilor tarife</summary><label for="ro-from">Valabil de la · {{ station.timezone }}<input id="ro-from" type="datetime-local" name="effective_from" value="{{ ro_effective_from }}"></label><p class="ro-help">Gol = de acum. Versiunile anterioare raman in istoric. Pentru o schimbare de pret in cursul lunii, salveaza o versiune noua cu data corespunzatoare.</p></details>
+        </section>
+      </div>
+      <aside class="ro-preview" aria-labelledby="ro-preview-title">
+        <span class="ro-eyebrow">VERIFICA INAINTE DE SALVARE</span><h3 id="ro-preview-title">Cum se calculeaza</h3>
+        <p class="ro-help">Importul include toate componentele aplicabile. Exportul foloseste energia activa minus TG.</p>
+        <p class="ro-preview-status" data-ro-status role="status" aria-live="polite">Completeaza preturile pentru a vedea calculul.</p>
+        <div data-ro-prices hidden><div class="ro-price-pair"><div><span>Platesti la import</span><strong data-ro-import-price>—</strong><small>lei/kWh · cu TVA configurat</small></div><div><span>Valoare la export</span><strong data-ro-export-price>—</strong><small>lei/kWh · cu TVA configurat</small></div></div><p class="ro-formula" data-ro-export-formula></p></div>
+        <div class="ro-simulation"><h4>Simulare lunara</h4><p class="ro-help">Introdu cantitatile dintr-o luna pentru a verifica compensarea. Aceste valori sunt doar pentru exemplu.</p><div class="ro-fields"><label class="ro-field" for="ro-import-kwh"><span>Extras din retea (kWh)</span><input id="ro-import-kwh" type="text" inputmode="decimal" value="300" data-ro-import-kwh></label><label class="ro-field" for="ro-export-kwh"><span>Introdus in retea (kWh)</span><input id="ro-export-kwh" type="text" inputmode="decimal" value="200" data-ro-export-kwh></label></div></div>
+        <div data-ro-month hidden>
+          <div class="ro-compensation" data-ro-compensation></div>
+          <dl class="ro-month-lines" data-ro-lines></dl>
+          <div class="ro-total"><span>Estimare de plata</span><strong data-ro-total></strong></div>
+          <p class="ro-surplus" data-ro-surplus hidden></p>
+          <details class="ro-invoice-details"><summary>Vezi fiecare componenta de import</summary><div data-ro-detail></div></details>
+          <p class="ro-help">Taxele se aplica intregii cantitati extrase, inclusiv kWh compensati. TVA se calculeaza separat la import si export. Simularea foloseste un singur set de preturi si nu include solduri din lunile precedente.</p>
+        </div>
+      </aside>
+    </div>
+    <footer class="ro-form-footer"><p>Se salveaza impreuna tariful de import si cel de export, cu aceeasi data de inceput.</p><button type="submit" class="btn-primary">Salveaza tarifele de prosumator</button></footer>
+  </form>
+  <script type="application/json" id="ro-tariff-example">{{ ro_example | tojson }}</script>
+</section>

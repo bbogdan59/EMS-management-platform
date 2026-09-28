@@ -2,6 +2,7 @@
 {% from "partials/_breadcrumb.html" import trail as breadcrumb %}
 {% from "partials/_form_errors.html" import summary as error_summary %}
 {% block title %}Tarife {{ station.name }} - {{ app_name }}{% endblock %}
+{% block head %}<link rel="stylesheet" href="/static/css/romanian-tariffs.css"><script src="/static/js/romanian-tariffs.js" defer></script>{% endblock %}
 {% block content %}
 <div class="space-y-6">
   {{ breadcrumb([
@@ -15,6 +16,10 @@
 
   {{ error_summary(errors) }}
 
+  {% if request.query_params.get('saved') == '1' %}<p class="ro-saved" role="status">Tarifele de import si export au fost salvate impreuna.</p>{% endif %}
+  {% if can_edit %}{% include "stations/_romanian_tariff_setup.html" %}{% endif %}
+
+  <details class="card tariff-history" {% if not can_edit %}open{% endif %}><summary>Tarife salvate si istoric</summary>
   {% for t in tariffs %}
   <div class="card">
     <div class="mb-2 flex items-center justify-between">
@@ -35,8 +40,9 @@
           <td>{{ v.transport_lei_per_kwh | lei_per_kwh }}</td>
           <td>{{ v.other_regulated_lei_per_kwh | lei_per_kwh }}</td>
           <td>{{ (v.vat_rate_percent|number(1) ~ "%") if v.vat_rate_percent is not none else "neinclus" }}</td>
-          <td>{{ v.settlement_method }}</td>
+          <td>{{ 'Compensare lunara 1:1' if v.settlement_method == 'ro_prosumer_monthly' else v.settlement_method }}</td>
         </tr>
+        {% if v.invoice_breakdown %}<tr><td colspan="9"><details class="ro-breakdown-history"><summary>Defalcarea din factura (fara TVA)</summary><dl>{% for key, label in ro_components %}<div><dt>{{ label }}</dt><dd>{{ v.invoice_breakdown[key] }} lei/kWh</dd></div>{% endfor %}</dl><p>TG {{ 'inclus deja in energia activa' if v.invoice_breakdown.tg_in_active else 'adaugat separat la import' }}. Export = energie activa − TG. TVA import: {{ v.invoice_breakdown.import_vat }}%; TVA export: {{ v.invoice_breakdown.export_vat }}%.</p></details></td></tr>{% endif %}
         {% if v.economic_calculation_disabled %}
         <tr><td colspan="9" class="pb-2 text-xs text-amber-700 dark:text-amber-300">Calcul economic dezactivat: {{ v.limitation_note or "formula contractuala neimplementata" }}</td></tr>
         {% elif previews.get(v.id) %}
@@ -44,7 +50,7 @@
         <tr>
           <td colspan="9" class="pb-3 pt-1 text-xs text-gray-500 dark:text-gray-400">
             {% if p.available %}
-            Exemplu pentru {{ preview_sample_kwh }} kWh/luna (foloseste ultimul pret OPCOM disponibil, NU e o factura reala):
+            Exemplu pentru {{ preview_sample_kwh }} kWh/luna ({% if t.kind == 'indexed_opcom' %}foloseste ultimul pret OPCOM disponibil; {% endif %}NU e o factura reala):
             pret efectiv <strong>{{ p.effective_price_lei_per_kwh|number(5) }} lei/kWh</strong>
             &rarr; energie {{ p.energy_cost_lei|number }} lei
             + abonament {{ p.fixed_monthly_fee_with_vat_lei|number }} lei{% if p.vat_rate_percent is not none %} (cu TVA){% endif %}
@@ -62,9 +68,11 @@
   {% else %}
   <p class="text-sm text-gray-500">Nu exista tarife configurate.</p>
   {% endfor %}
+  </details>
 
   {% if can_edit %}
-  <div class="card">
+  <details class="card">
+    <summary class="mb-3 font-medium">Configurare avansata · tarif individual sau OPCOM</summary>
     <h2 class="mb-3 font-medium">Adauga / actualizeaza tarif</h2>
     <form id="tariff-form" method="post" action="/stations/{{ station.id }}/tariffs" class="space-y-4" data-preview-kwh="{{ preview_sample_kwh }}" data-market-price="{{ latest_market_price if latest_market_price is not none else '' }}">
       <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}" />
@@ -161,7 +169,7 @@
       </div>
       <button type="submit" class="btn-primary">Salveaza</button>
     </form>
-  </div>
+  </details>
   {% endif %}
 </div>
 {% if can_edit %}

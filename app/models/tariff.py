@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import DateTime, ForeignKey, Numeric, String
+from sqlalchemy import JSON, DateTime, ForeignKey, Numeric, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Entity
@@ -87,16 +87,17 @@ class TariffVersion(Entity):
     valid_from: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     valid_to: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
-    fixed_price_lei_per_kwh: Mapped[Decimal | None] = mapped_column(Numeric(10, 5), nullable=True)
-    opcom_margin_lei_per_kwh: Mapped[Decimal | None] = mapped_column(Numeric(10, 5), nullable=True)
+    fixed_price_lei_per_kwh: Mapped[Decimal | None] = mapped_column(Numeric(16, 8), nullable=True)
+    opcom_margin_lei_per_kwh: Mapped[Decimal | None] = mapped_column(Numeric(16, 8), nullable=True)
 
     fixed_monthly_fee_lei: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=0, nullable=False)
-    variable_component_lei_per_kwh: Mapped[Decimal] = mapped_column(Numeric(10, 5), default=0, nullable=False)
+    variable_component_lei_per_kwh: Mapped[Decimal] = mapped_column(Numeric(16, 8), default=0, nullable=False)
 
-    distribution_lei_per_kwh: Mapped[Decimal] = mapped_column(Numeric(10, 5), default=0, nullable=False)
-    transport_lei_per_kwh: Mapped[Decimal] = mapped_column(Numeric(10, 5), default=0, nullable=False)
-    other_regulated_lei_per_kwh: Mapped[Decimal] = mapped_column(Numeric(10, 5), default=0, nullable=False)
+    distribution_lei_per_kwh: Mapped[Decimal] = mapped_column(Numeric(16, 8), default=0, nullable=False)
+    transport_lei_per_kwh: Mapped[Decimal] = mapped_column(Numeric(16, 8), default=0, nullable=False)
+    other_regulated_lei_per_kwh: Mapped[Decimal] = mapped_column(Numeric(16, 8), default=0, nullable=False)
     vat_rate_percent: Mapped[Decimal | None] = mapped_column(Numeric(5, 2), nullable=True)
+    invoice_breakdown: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
     settlement_method: Mapped[str] = mapped_column(String(64), default="net_metering_15min", nullable=False)
     settlement_interval_days: Mapped[int] = mapped_column(default=30, nullable=False)

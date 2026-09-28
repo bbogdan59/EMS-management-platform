@@ -642,6 +642,9 @@ OptimizationRun (scenariu calculat)
 
 ## Health, diagnostic access and notifications
 
+Pentru introducerea tarifelor din factura, cele doua directii import/export si
+simularea compensarii lunare, vezi [ROMANIAN_TARIFF_SETUP.md](ROMANIAN_TARIFF_SETUP.md).
+
 See [HEALTH_DIAGNOSTICS.md](HEALTH_DIAGNOSTICS.md) for the complete contract,
 retention policy, lifecycle, controls and verification scope.
 The station notification feed, read endpoint and daily-card payload are documented
