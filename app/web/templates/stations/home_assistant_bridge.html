@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}Home Assistant prin HACS · {{ station.name }}{% endblock %}
+{% block head %}<script src="/static/js/home-assistant-bridge.js" defer></script>{% endblock %}
+{% block content %}
+<div class="space-y-6" data-ha-bridge data-url="/api/v1/stations/{{ station.id }}/home-assistant" data-csrf="{{ csrf_token(request) }}">
+  <header><h1>Home Assistant prin HACS · {{ station.name }}</h1><p>Partajeaza doar contextul energetic ales in Home Assistant. Conexiunea porneste din locuinta, fara port forwarding sau token Home Assistant.</p></header>
+  <section class="card space-y-3"><h2>Starea conexiunii</h2><p data-ha-status>{{ bridge.status }}</p><p data-ha-instance>{{ bridge.instance_name or 'Nicio instanta confirmata' }}</p><p>Ultima sincronizare: <span data-ha-seen>{{ bridge.last_seen_at or '—' }}</span></p><p role="status" data-ha-message></p></section>
+  {% if not bridge_enabled %}<section class="card"><p>Administratorul platformei trebuie sa activeze HOME_ASSISTANT_BRIDGE_ENABLED pentru conectare.</p></section>{% endif %}
+  {% if can_edit %}
+  <section class="card space-y-3"><h2>Conecteaza Home Assistant</h2><ol><li>Instaleaza integrarea EMS Home Assistant din repository-ul HACS personal.</li><li>Genereaza codul de mai jos. Un cod nou revoca orice conexiune anterioara si sterge contextul ei.</li><li>In Home Assistant → Dispozitive si servicii → Adauga integrare → EMS Home Assistant, introdu adresa HTTPS a EMS si codul.</li><li>Confirma statia, alege senzorii, acorda consimtamantul si testeaza sincronizarea.</li></ol>
+    {% if bridge_enabled %}<button class="btn-primary" type="button" data-ha-pair>Genereaza cod de conectare</button><p><output data-ha-code aria-live="polite"></output></p><p data-ha-expires></p>{% endif %}
+    <button class="btn-secondary" type="button" data-ha-disconnect>Deconecteaza si sterge contextul</button>
+  </section>
+  {% endif %}
+  <section class="card space-y-3"><h2>Confidentialitate si provenienta</h2><p>Se importa exclusiv senzorii selectati. Ocuparea agregata necesita acord separat. Nu se importa persoane, camere, incuietori, alarme sau localizare. Nu sunt permise comenzi fizice.</p><p>Contextul Home Assistant ramane separat de contorul Deye. Valorile lipsa nu devin zero. Se pastreaza ultima valoare pe entitate, stearsa dupa 24 de ore (curatare orara); dupa expirarea pragului de prospetime valoarea este ascunsa imediat. Deconectarea sterge imediat contextul si credentialele.</p><p>Insights si notificarile bazate pe acest context sunt opt-in; procesarea lor in aplicatia mobila este o integrare separata.</p></section>
+</div>
+{% endblock %}

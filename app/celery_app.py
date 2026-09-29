@@ -36,6 +36,10 @@ celery_app.conf.update(
 )
 
 celery_app.conf.beat_schedule = {
+    "home-assistant-bridge-retention": {
+        "task": "app.workers.tasks.home_assistant_bridge_retention_task",
+        "schedule": 3600.0,
+    },
     "home-assistant-context-every-30-sec": {
         "task": "app.workers.tasks.home_assistant_schedule_task",
         "schedule": 30.0,

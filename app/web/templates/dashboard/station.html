@@ -77,6 +77,10 @@
     </section>
 {% endmacro %}
 {% block content %}
+{% if home_assistant_bridge.enabled %}
+<section class="card" aria-label="Casa inteligenta prin HACS"><h2>Casa inteligenta</h2><p>Home Assistant prin HACS · {{ home_assistant_bridge.status }} · sursa separata de contorul invertorului</p><a href="/stations/{{ station.id }}/integrations/home-assistant-bridge">Stare si confidentialitate HACS</a></section>
+{% endif %}
+<a class="btn-secondary" href="/stations/{{ station.id }}/integrations/home-assistant-bridge">Home Assistant prin HACS</a>
 <div class="energy-dashboard" data-timezone="{{ station.timezone }}">
   <header class="dashboard-header">
     <div><span class="eyebrow">{{ station.name }} · {{ station.timezone }}</span><h1>Panou energetic</h1><div class="dashboard-subtitle live-meta"><span>Ultima actualizare <span id="kpi-last-update">—</span></span><span id="kpi-quality" class="badge-muted">—</span><span id="kpi-source" class="badge-muted" hidden></span><span id="sse-status" class="badge-muted" title="Stare conexiune actualizare live">conectare...</span></div></div>
