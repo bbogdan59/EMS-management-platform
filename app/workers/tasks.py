@@ -526,6 +526,7 @@ def telemetry_backfill_task() -> dict:
 @celery_app.task(name="app.workers.tasks.retention_task")
 def retention_task() -> dict:
     from app.models.audit import AuditLog
+    from app.models.grid_voltage import GridVoltageSample
     from app.models.solar import SolarInputAggregate, SolarInputSample
     from app.models.telemetry import TelemetryAggregate, TelemetryRaw
     from app.services.ev_service import retention as ev_retention
@@ -544,6 +545,7 @@ def retention_task() -> dict:
         if pending_start is not None:
             raw_cutoff = min(raw_cutoff, pending_start - timedelta(hours=1))
         raw_deleted = db.query(TelemetryRaw).filter(TelemetryRaw.measured_at < raw_cutoff).delete(synchronize_session=False)
+        db.query(GridVoltageSample).filter(GridVoltageSample.measured_at < raw_cutoff).delete(synchronize_session=False)
         db.query(SolarInputSample).filter(SolarInputSample.measured_at < raw_cutoff).delete(synchronize_session=False)
         db.query(SolarInputAggregate).filter(SolarInputAggregate.period_start < agg_cutoff).delete(synchronize_session=False)
         agg_deleted = db.query(TelemetryAggregate).filter(TelemetryAggregate.period_start < agg_cutoff).delete(synchronize_session=False)

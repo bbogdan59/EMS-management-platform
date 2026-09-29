@@ -35,6 +35,7 @@ from app.models.firmware import (
     FirmwareRollout,
 )
 from app.models.forecast import ConsumptionForecast, PvForecast, WeatherForecast
+from app.models.grid_voltage import GridVoltageSample
 from app.models.health import AlertEvent, DiagnosticGrant, HealthEvaluation, HealthState
 from app.models.home_assistant import HomeAssistantConnection, HomeAssistantMapping
 from app.models.home_assistant_bridge import HomeAssistantBridge
@@ -88,6 +89,7 @@ __all__ = [
     "FirmwareDeploymentEvent",
     "FirmwareRelease",
     "FirmwareRollout",
+    "GridVoltageSample",
     "HealthEvaluation",
     "HealthState",
     "HomeAssistantBridge",

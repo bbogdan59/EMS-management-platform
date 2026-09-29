@@ -86,6 +86,7 @@ def create_app() -> FastAPI:
     from app.web.routes import deye_integration as deye_integration_routes
     from app.web.routes import diagnostics as diagnostics_routes
     from app.web.routes import energy_operations as energy_operations_routes
+    from app.web.routes import grid_voltage as grid_voltage_routes
     from app.web.routes import home_assistant as home_assistant_routes
     from app.web.routes import home_assistant_bridge as home_assistant_bridge_routes
     from app.web.routes import inverter_config as inverter_config_routes
@@ -97,6 +98,7 @@ def create_app() -> FastAPI:
     from app.web.routes import stations as stations_routes
 
     app.include_router(battery_routes.router, tags=["battery-health"])
+    app.include_router(grid_voltage_routes.router, tags=["grid-voltage"])
     app.include_router(solar_routes.router, tags=["solar-inputs"])
     app.include_router(mobile_router)
     app.include_router(diagnostics_routes.router, tags=["web-diagnostics"])

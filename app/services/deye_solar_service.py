@@ -5,6 +5,7 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 
 from app.models.device import Device
+from app.services.grid_voltage_service import ingest_deye, parse_deye
 from app.services.solar_service import ingest
 
 # Labels come from the response, not a fixed count inferred from a model name.
@@ -90,6 +91,12 @@ def poll(db, connection, access_token, now):
                 continue
             if not now - timedelta(minutes=10) <= at <= now + timedelta(seconds=30):
                 continue
+            phases = parse_deye(item)
+            if phases:
+                ingest_deye(
+                    db, connection.station_id, links[serial].id,
+                    f"Invertor Deye {serials.index(serial) + 1}", at, now, phases,
+                )
             inputs = parse_inputs(item)
             if inputs:
                 ingest(

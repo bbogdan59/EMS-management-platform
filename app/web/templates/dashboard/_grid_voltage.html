@@ -1,0 +1,20 @@
+<section class="card voltage-panel" data-grid-voltage data-station="{{ station.id }}" aria-labelledby="voltage-title">
+  <div class="voltage-heading">
+    <div><p class="voltage-eyebrow">MONITORIZARE · V</p><h2 id="voltage-title">Tensiunea retelei</h2><p>Tensiunea pe parcursul zilei, pentru fiecare faza raportata.</p></div>
+    <span class="voltage-live">↻ Actualizare la 60 s</span>
+  </div>
+  <div class="voltage-controls">
+    <label>Sursa<select data-voltage-source aria-label="Sursa tensiunii" disabled><option>Se incarca...</option></select></label>
+    <label>Ziua<input type="date" data-voltage-day aria-label="Ziua tensiunii" disabled></label>
+    <button type="button" class="btn-secondary" data-voltage-today>Astazi</button>
+  </div>
+  <p class="voltage-status" data-voltage-status role="status">Se incarca tensiunea retelei...</p>
+  <div data-voltage-error role="alert" hidden><p>Nu am putut actualiza tensiunea. Valorile anterioare au fost ascunse.</p><button type="button" class="btn-secondary" data-voltage-retry>Reincearca</button></div>
+  <div data-voltage-content hidden>
+    <div class="voltage-phases" data-voltage-phases></div>
+    <p class="voltage-empty" data-voltage-empty hidden>Fara citiri de tensiune pentru aceasta zi. Datele apar cand dispozitivul raporteaza tensiunea retelei.</p>
+    <div data-voltage-chart class="voltage-chart" role="img" aria-label="Grafic zilnic al tensiunii L1, L2 si L3 in volti"></div>
+    <p class="voltage-method">Medii ale citirilor pe minut · liniile subtiri arata minimul si maximul. Atinge graficul pentru detalii; foloseste bara de jos pentru zoom. Golurile inseamna lipsa de date.</p>
+    <details class="voltage-table"><summary>Citirile pe minute, in tabel</summary><div class="voltage-table-scroll"><table><caption>Tensiuni in V · media [minim – maxim]</caption><thead><tr><th>Ora</th><th>L1</th><th>L2</th><th>L3</th></tr></thead><tbody data-voltage-rows></tbody></table></div></details>
+  </div>
+</section>
