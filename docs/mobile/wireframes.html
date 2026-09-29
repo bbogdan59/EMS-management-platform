@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="ro">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>EMS · Mobile v1 wireframes · #197</title>
+  <link rel="stylesheet" href="wireframes.css">
+  <script src="wireframes.js" defer></script>
+</head>
+<body>
+  <aside class="review" aria-labelledby="review-title">
+    <a href="README.md" class="eyebrow">EMS / PRODUCT NOTES / 197</a>
+    <h1 id="review-title">Energia casei,<br>într-o privire.</h1>
+    <p>Wireflow de produs pentru iOS și Android. Exemple fictive, fără conexiuni sau operații reale.</p>
+    <div class="controls">
+      <label for="screen">Ecran</label><select id="screen"></select>
+      <label for="state">Stare de review</label>
+      <select id="state">
+        <option value="ready">Ready · exemplu</option><option value="loading">Loading</option>
+        <option value="empty">Empty</option><option value="error">Error</option>
+        <option value="stale">Stale</option><option value="offline">Offline</option>
+      </select>
+      <label for="size">Telefon</label>
+      <select id="size"><option value="small">Mic · 320 × 640</option><option value="large" selected>Mare · 430 × 860</option></select>
+      <label for="theme">Temă</label>
+      <select id="theme"><option value="light">Luminoasă</option><option value="dark">Întunecată</option></select>
+      <label for="locale">Limbă în prototip</label>
+      <select id="locale"><option value="ro">Română · v1</option><option value="en">English · preview</option></select>
+      <label for="stations">Stații autorizate</label>
+      <select id="stations"><option value="1">O stație</option><option value="2">Mai multe stații</option></select>
+      <label class="check"><input id="ha" type="checkbox"> Context HA de exemplu</label>
+    </div>
+    <p class="hint">Butoanele din telefon sunt navigabile. Selectorul de stare arată situațiile alternative pentru ecranul ales. Datele și confirmările sunt simulate.</p>
+    <nav class="review-links" aria-label="Documentație">
+      <a href="JOURNEYS.md">Parcursuri ↗</a><a href="STATES.md">Toate stările ↗</a><a href="MEASUREMENT.md">Criterii de review ↗</a>
+    </nav>
+  </aside>
+  <main class="stage">
+    <div id="phone" class="phone" data-theme="light" data-size="large" lang="ro">
+      <div class="device-bar" aria-hidden="true"><span>12:00</span><span>EMS ◒</span></div>
+      <p id="demo-banner" class="demo-banner">PROTOTIP · DATE FICTIVE · FĂRĂ OPERAȚII REALE</p>
+      <header id="phone-header"></header>
+      <div id="content" class="content" tabindex="-1"><p>Se încarcă prototipul…</p></div>
+      <nav id="tabs" class="tabs" aria-label="Navigație principală"></nav>
+      <div class="home-indicator" aria-hidden="true"></div>
+    </div>
+    <p id="frame-note" class="frame-note" aria-live="polite"></p>
+  </main>
+  <noscript>Prototipul necesită JavaScript. Specificația și parcursurile sunt disponibile în fișierele Markdown alăturate.</noscript>
+</body>
+</html>

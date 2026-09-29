@@ -16,6 +16,7 @@ Home Assistant -- acestea fac parte dintr-un proiect separat (viitorul
 
 - [Stack tehnologic](#stack-tehnologic)
 - [Arhitectura](#arhitectura) -- vezi [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+- [Produs mobil v1: scope, parcursuri și wireframes](docs/mobile/README.md)
 - [Instalare locala (fara Docker)](#instalare-locala-fara-docker)
 - [Instalare cu Docker Compose](#instalare-cu-docker-compose)
 - [Mod demonstrativ](#mod-demonstrativ)
