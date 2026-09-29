@@ -37,6 +37,7 @@ from app.models.firmware import (
 from app.models.forecast import ConsumptionForecast, PvForecast, WeatherForecast
 from app.models.health import AlertEvent, DiagnosticGrant, HealthEvaluation, HealthState
 from app.models.home_assistant import HomeAssistantConnection, HomeAssistantMapping
+from app.models.home_assistant_bridge import HomeAssistantBridge
 from app.models.inverter_config import InverterDesired, InverterProfile, InverterReport
 from app.models.market import ImportRun, MarketPriceInterval
 from app.models.notification import Notification, NotificationDelivery, NotificationPreference
@@ -87,6 +88,7 @@ __all__ = [
     "FirmwareRollout",
     "HealthEvaluation",
     "HealthState",
+    "HomeAssistantBridge",
     "HomeAssistantConnection",
     "HomeAssistantMapping",
     "ImportRun",

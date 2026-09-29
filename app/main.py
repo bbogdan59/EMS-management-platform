@@ -63,6 +63,7 @@ def create_app() -> FastAPI:
     from app.web.routes import diagnostics as diagnostics_routes
     from app.web.routes import energy_operations as energy_operations_routes
     from app.web.routes import home_assistant as home_assistant_routes
+    from app.web.routes import home_assistant_bridge as home_assistant_bridge_routes
     from app.web.routes import inverter_config as inverter_config_routes
     from app.web.routes import market as market_routes
     from app.web.routes import organizations as organizations_routes
@@ -71,6 +72,7 @@ def create_app() -> FastAPI:
 
     app.include_router(diagnostics_routes.router, tags=["web-diagnostics"])
     app.include_router(energy_operations_routes.router, tags=["energy-operations"])
+    app.include_router(home_assistant_bridge_routes.router, tags=["home-assistant-bridge"])
     app.include_router(auth_routes.router, tags=["web-auth"])
     app.include_router(dashboard_routes.router, tags=["web-dashboard"])
     app.include_router(stations_routes.router, tags=["web-stations"])

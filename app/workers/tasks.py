@@ -40,6 +40,18 @@ logger = structlog.get_logger(__name__)
 settings = get_settings()
 
 
+@celery_app.task(name="app.workers.tasks.home_assistant_bridge_retention_task")
+def home_assistant_bridge_retention_task() -> dict:
+    from app.services.home_assistant_bridge import purge_context
+
+    with _task_lock("home_assistant_bridge_retention", timeout=300) as acquired:
+        if not acquired:
+            return {"skipped": "already_running"}
+        with session_scope() as db:
+            purge_context(db)
+    return {"retention_hours": 24}
+
+
 @celery_app.task(name="app.workers.tasks.home_assistant_schedule_task")
 def home_assistant_schedule_task() -> dict:
     from app.models.home_assistant import HomeAssistantConnection

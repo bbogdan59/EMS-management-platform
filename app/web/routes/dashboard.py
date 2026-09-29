@@ -13,12 +13,13 @@ from sqlalchemy.orm import Session
 from app.api.deps import StationAccess, get_current_user
 from app.core.audit import record_audit
 from app.core.rbac import can_export_data, can_manage_station_config
+from app.config import get_settings
 from app.core.security import utcnow
 from app.database import get_db
 from app.models.organization import Membership
 from app.models.station import StationConfigVersion
 from app.models.user import User
-from app.services import dashboard_service, station_service, sun_map_service
+from app.services import dashboard_service, home_assistant_bridge, station_service, sun_map_service
 from app.web.context import build_nav_context
 from app.web.templating import templates
 from app.web.wizard import next_wizard_step, resume_url
@@ -83,7 +84,16 @@ def home(
 
     station = db.get(Station, station_id)
     summary = dashboard_service.get_summary(db, station)
+    bridge = home_assistant_bridge.get_bridge(db, station.id)
+    bridge_status = home_assistant_bridge.snapshot(
+        bridge,
+        enabled=(
+            get_settings().home_assistant_bridge_enabled
+            and bool(bridge and home_assistant_bridge.owner_active(db, bridge))
+        ),
+    )
     context = {
+        "home_assistant_bridge": bridge_status,
         "station": station,
         "summary": summary,
         "wizard_resume_url": _wizard_resume_url(db, user, station),
