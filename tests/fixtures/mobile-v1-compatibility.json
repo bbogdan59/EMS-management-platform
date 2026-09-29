@@ -1,0 +1,1980 @@
+{
+  "/api/v1/mobile/charging-sessions": {
+    "id": "charging_sessions_api_v1_mobile_charging_sessions_get",
+    "parameters": {
+      "cursor": {
+        "in": "query",
+        "name": "cursor",
+        "required": false,
+        "schema": {
+          "anyOf": [
+            {
+              "maxLength": 2048,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "limit": {
+        "in": "query",
+        "name": "limit",
+        "required": false,
+        "schema": {
+          "maximum": 50,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "station_id": {
+        "in": "query",
+        "name": "station_id",
+        "required": false,
+        "schema": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "responses": {
+      "200": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/MobileChargingSessions"
+            }
+          }
+        }
+      },
+      "401": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/MobileError"
+            }
+          }
+        }
+      },
+      "403": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/MobileError"
+            }
+          }
+        }
+      },
+      "404": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/MobileError"
+            }
+          }
+        }
+      },
+      "409": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/MobileError"
+            }
+          }
+        }
+      },
+      "422": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/MobileError"
+            }
+          }
+        }
+      },
+      "429": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/MobileError"
+            }
+          }
+        }
+      },
+      "503": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/MobileError"
+            }
+          }
+        }
+      }
+    },
+    "security": [
+      {
+        "APIKeyCookie": []
+      }
+    ]
+  },
+  "/api/v1/mobile/charts/energy": {
+    "id": "chart_api_v1_mobile_charts_energy_get",
+    "parameters": {
+      "end": {
+        "in": "query",
+        "name": "end",
+        "required": false,
+        "schema": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "range": {
+        "in": "query",
+        "name": "range",
+        "required": false,
+        "schema": {
+          "enum": [
+            "24h",
+            "7d",
+            "30d",
+            "1y"
+          ],
+          "type": "string"
+        }
+      },
+      "resolution": {
+        "in": "query",
+        "name": "resolution",
+        "required": false,
+        "schema": {
+          "anyOf": [
+            {
+              "enum": [
+                "15m",
+                "1h",
+                "1d"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "station_id": {
+        "in": "query",
+        "name": "station_id",
+        "required": false,
+        "schema": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "responses": {
+      "200": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/MobileChart"
+            }
+          }
+        }
+      },
+      "304": {},
+      "401": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/MobileError"
+            }
+          }
+        }
+      },
+      "403": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/MobileError"
+            }
+          }
+        }
+      },
+      "404": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/MobileError"
+            }
+          }
+        }
+      },
+      "409": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/MobileError"
+            }
+          }
+        }
+      },
+      "422": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/MobileError"
+            }
+          }
+        }
+      },
+      "429": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/MobileError"
+            }
+          }
+        }
+      },
+      "503": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/MobileError"
+            }
+          }
+        }
+      }
+    },
+    "security": [
+      {
+        "APIKeyCookie": []
+      }
+    ]
+  },
+  "/api/v1/mobile/home-assistant/context": {
+    "id": "context_api_v1_mobile_home_assistant_context_get",
+    "parameters": {
+      "provider": {
+        "in": "query",
+        "name": "provider",
+        "required": false,
+        "schema": {
+          "enum": [
+            "home_assistant_bridge",
+            "home_assistant_mqtt"
+          ],
+          "type": "string"
+        }
+      },
+      "station_id": {
+        "in": "query",
+        "name": "station_id",
+        "required": false,
+        "schema": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "responses": {
+      "200": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/MobileHAContext"
+            }
+          }
+        }
+      },
+      "401": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/MobileError"
+            }
+          }
+        }
+      },
+      "403": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/MobileError"
+            }
+          }
+        }
+      },
+      "404": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/MobileError"
+            }
+          }
+        }
+      },
+      "409": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/MobileError"
+            }
+          }
+        }
+      },
+      "422": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/MobileError"
+            }
+          }
+        }
+      },
+      "429": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/MobileError"
+            }
+          }
+        }
+      },
+      "503": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/MobileError"
+            }
+          }
+        }
+      }
+    },
+    "security": [
+      {
+        "APIKeyCookie": []
+      }
+    ]
+  },
+  "/api/v1/mobile/notifications": {
+    "id": "notifications_api_v1_mobile_notifications_get",
+    "parameters": {
+      "cursor": {
+        "in": "query",
+        "name": "cursor",
+        "required": false,
+        "schema": {
+          "anyOf": [
+            {
+              "maxLength": 2048,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "limit": {
+        "in": "query",
+        "name": "limit",
+        "required": false,
+        "schema": {
+          "maximum": 50,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "station_id": {
+        "in": "query",
+        "name": "station_id",
+        "required": false,
+        "schema": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "unread": {
+        "in": "query",
+        "name": "unread",
+        "required": false,
+        "schema": {
+          "type": "boolean"
+        }
+      }
+    },
+    "responses": {
+      "200": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/MobileNotifications"
+            }
+          }
+        }
+      },
+      "401": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/MobileError"
+            }
+          }
+        }
+      },
+      "403": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/MobileError"
+            }
+          }
+        }
+      },
+      "404": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/MobileError"
+            }
+          }
+        }
+      },
+      "409": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/MobileError"
+            }
+          }
+        }
+      },
+      "422": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/MobileError"
+            }
+          }
+        }
+      },
+      "429": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/MobileError"
+            }
+          }
+        }
+      },
+      "503": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/MobileError"
+            }
+          }
+        }
+      }
+    },
+    "security": [
+      {
+        "APIKeyCookie": []
+      }
+    ]
+  },
+  "/api/v1/mobile/overview": {
+    "id": "overview_api_v1_mobile_overview_get",
+    "parameters": {
+      "station_id": {
+        "in": "query",
+        "name": "station_id",
+        "required": false,
+        "schema": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "responses": {
+      "200": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/MobileOverview"
+            }
+          }
+        }
+      },
+      "304": {},
+      "401": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/MobileError"
+            }
+          }
+        }
+      },
+      "403": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/MobileError"
+            }
+          }
+        }
+      },
+      "404": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/MobileError"
+            }
+          }
+        }
+      },
+      "409": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/MobileError"
+            }
+          }
+        }
+      },
+      "422": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/MobileError"
+            }
+          }
+        }
+      },
+      "429": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/MobileError"
+            }
+          }
+        }
+      },
+      "503": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/MobileError"
+            }
+          }
+        }
+      }
+    },
+    "security": [
+      {
+        "APIKeyCookie": []
+      }
+    ]
+  },
+  "MobileChargingSession.connector_id": {
+    "required": true,
+    "schema": {
+      "format": "uuid",
+      "type": "string"
+    }
+  },
+  "MobileChargingSession.ended_at": {
+    "required": true,
+    "schema": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "MobileChargingSession.energy": {
+    "required": true,
+    "schema": {
+      "$ref": "#/components/schemas/MobileMetric"
+    }
+  },
+  "MobileChargingSession.id": {
+    "required": true,
+    "schema": {
+      "format": "uuid",
+      "type": "string"
+    }
+  },
+  "MobileChargingSession.reason_codes": {
+    "required": true,
+    "schema": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    }
+  },
+  "MobileChargingSession.started_at": {
+    "required": true,
+    "schema": {
+      "format": "date-time",
+      "type": "string"
+    }
+  },
+  "MobileChargingSession.state": {
+    "required": true,
+    "schema": {
+      "type": "string"
+    }
+  },
+  "MobileChargingSession.vehicle_id": {
+    "required": true,
+    "schema": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "MobileChargingSessions.items": {
+    "required": true,
+    "schema": {
+      "items": {
+        "$ref": "#/components/schemas/MobileChargingSession"
+      },
+      "type": "array"
+    }
+  },
+  "MobileChargingSessions.next_cursor": {
+    "required": true,
+    "schema": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "MobileChargingSessions.schema_version": {
+    "required": false,
+    "schema": {
+      "const": 1,
+      "type": "integer"
+    }
+  },
+  "MobileChargingSessions.station_id": {
+    "required": true,
+    "schema": {
+      "format": "uuid",
+      "type": "string"
+    }
+  },
+  "MobileChart.aggregation": {
+    "required": true,
+    "schema": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "type": "object"
+    }
+  },
+  "MobileChart.end": {
+    "required": true,
+    "schema": {
+      "format": "date-time",
+      "type": "string"
+    }
+  },
+  "MobileChart.measured_at": {
+    "required": false,
+    "schema": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "MobileChart.points": {
+    "required": true,
+    "schema": {
+      "items": {
+        "$ref": "#/components/schemas/MobileChartPoint"
+      },
+      "type": "array"
+    }
+  },
+  "MobileChart.received_at": {
+    "required": false,
+    "schema": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "MobileChart.resolution": {
+    "required": true,
+    "schema": {
+      "enum": [
+        "15m",
+        "1h",
+        "1d"
+      ],
+      "type": "string"
+    }
+  },
+  "MobileChart.schema_version": {
+    "required": false,
+    "schema": {
+      "const": 1,
+      "type": "integer"
+    }
+  },
+  "MobileChart.source": {
+    "required": false,
+    "schema": {
+      "type": "string"
+    }
+  },
+  "MobileChart.start": {
+    "required": true,
+    "schema": {
+      "format": "date-time",
+      "type": "string"
+    }
+  },
+  "MobileChart.station_id": {
+    "required": true,
+    "schema": {
+      "format": "uuid",
+      "type": "string"
+    }
+  },
+  "MobileChart.timezone": {
+    "required": true,
+    "schema": {
+      "type": "string"
+    }
+  },
+  "MobileChart.units": {
+    "required": true,
+    "schema": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "type": "object"
+    }
+  },
+  "MobileChartPoint.coverage": {
+    "required": true,
+    "schema": {
+      "additionalProperties": {
+        "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+        "type": "string"
+      },
+      "type": "object"
+    }
+  },
+  "MobileChartPoint.end": {
+    "required": true,
+    "schema": {
+      "format": "date-time",
+      "type": "string"
+    }
+  },
+  "MobileChartPoint.quality": {
+    "required": true,
+    "schema": {
+      "enum": [
+        "measured",
+        "estimated",
+        "declared",
+        "simulated",
+        "stale",
+        "partial",
+        "missing",
+        "unknown"
+      ],
+      "type": "string"
+    }
+  },
+  "MobileChartPoint.start": {
+    "required": true,
+    "schema": {
+      "format": "date-time",
+      "type": "string"
+    }
+  },
+  "MobileChartPoint.updated_at": {
+    "required": true,
+    "schema": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "MobileChartPoint.values": {
+    "required": true,
+    "schema": {
+      "additionalProperties": {
+        "anyOf": [
+          {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "type": "object"
+    }
+  },
+  "MobileComparison.delta": {
+    "required": true,
+    "schema": {
+      "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+      "type": "string"
+    }
+  },
+  "MobileComparison.delta_percent": {
+    "required": true,
+    "schema": {
+      "anyOf": [
+        {
+          "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "MobileComparison.previous_value": {
+    "required": true,
+    "schema": {
+      "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+      "type": "string"
+    }
+  },
+  "MobileComparison.quality": {
+    "required": true,
+    "schema": {
+      "enum": [
+        "measured",
+        "estimated",
+        "declared",
+        "simulated",
+        "stale",
+        "partial",
+        "missing",
+        "unknown"
+      ],
+      "type": "string"
+    }
+  },
+  "MobileCost.currency": {
+    "required": false,
+    "schema": {
+      "const": "RON",
+      "type": "string"
+    }
+  },
+  "MobileCost.excludes": {
+    "required": false,
+    "schema": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    }
+  },
+  "MobileCost.method": {
+    "required": false,
+    "schema": {
+      "type": "string"
+    }
+  },
+  "MobileCost.net_cost": {
+    "required": true,
+    "schema": {
+      "$ref": "#/components/schemas/MobileMetric"
+    }
+  },
+  "MobileCost.reason": {
+    "required": true,
+    "schema": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "MobileCost.system_benefit": {
+    "required": true,
+    "schema": {
+      "$ref": "#/components/schemas/MobileMetric"
+    }
+  },
+  "MobileDevice.freshness": {
+    "required": true,
+    "schema": {
+      "enum": [
+        "fresh",
+        "stale",
+        "missing"
+      ],
+      "type": "string"
+    }
+  },
+  "MobileDevice.id": {
+    "required": true,
+    "schema": {
+      "format": "uuid",
+      "type": "string"
+    }
+  },
+  "MobileDevice.last_heartbeat_at": {
+    "required": true,
+    "schema": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "MobileDevice.measured_at": {
+    "required": true,
+    "schema": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "MobileDevice.name": {
+    "required": true,
+    "schema": {
+      "type": "string"
+    }
+  },
+  "MobileDevice.quality": {
+    "required": true,
+    "schema": {
+      "enum": [
+        "measured",
+        "estimated",
+        "declared",
+        "simulated",
+        "stale",
+        "partial",
+        "missing",
+        "unknown"
+      ],
+      "type": "string"
+    }
+  },
+  "MobileDevice.received_at": {
+    "required": true,
+    "schema": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "MobileDevice.source": {
+    "required": true,
+    "schema": {
+      "type": "string"
+    }
+  },
+  "MobileDevice.status": {
+    "required": true,
+    "schema": {
+      "type": "string"
+    }
+  },
+  "MobileEnergyMetric.comparison": {
+    "required": false,
+    "schema": {
+      "anyOf": [
+        {
+          "$ref": "#/components/schemas/MobileComparison"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "MobileEnergyMetric.coverage": {
+    "required": false,
+    "schema": {
+      "anyOf": [
+        {
+          "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "MobileEnergyMetric.flags": {
+    "required": false,
+    "schema": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    }
+  },
+  "MobileEnergyMetric.measured_at": {
+    "required": false,
+    "schema": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "MobileEnergyMetric.quality": {
+    "required": true,
+    "schema": {
+      "enum": [
+        "measured",
+        "estimated",
+        "declared",
+        "simulated",
+        "stale",
+        "partial",
+        "missing",
+        "unknown"
+      ],
+      "type": "string"
+    }
+  },
+  "MobileEnergyMetric.received_at": {
+    "required": false,
+    "schema": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "MobileEnergyMetric.source": {
+    "required": true,
+    "schema": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "MobileEnergyMetric.unit": {
+    "required": true,
+    "schema": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "MobileEnergyMetric.updated_at": {
+    "required": false,
+    "schema": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "MobileEnergyMetric.value": {
+    "required": true,
+    "schema": {
+      "anyOf": [
+        {
+          "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+          "type": "string"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "MobileError.error": {
+    "required": true,
+    "schema": {
+      "$ref": "#/components/schemas/MobileIssue"
+    }
+  },
+  "MobileError.schema_version": {
+    "required": false,
+    "schema": {
+      "const": 1,
+      "type": "integer"
+    }
+  },
+  "MobileForecast.confidence": {
+    "required": true,
+    "schema": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "MobileForecast.end": {
+    "required": true,
+    "schema": {
+      "format": "date-time",
+      "type": "string"
+    }
+  },
+  "MobileForecast.issued_at": {
+    "required": true,
+    "schema": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "MobileForecast.method": {
+    "required": false,
+    "schema": {
+      "type": "string"
+    }
+  },
+  "MobileForecast.pv_energy": {
+    "required": true,
+    "schema": {
+      "$ref": "#/components/schemas/MobileMetric"
+    }
+  },
+  "MobileForecast.start": {
+    "required": true,
+    "schema": {
+      "format": "date-time",
+      "type": "string"
+    }
+  },
+  "MobileHAContext.entities": {
+    "required": true,
+    "schema": {
+      "items": {
+        "$ref": "#/components/schemas/MobileHAEntity"
+      },
+      "type": "array"
+    }
+  },
+  "MobileHAContext.insights_consent": {
+    "required": true,
+    "schema": {
+      "type": "boolean"
+    }
+  },
+  "MobileHAContext.integration": {
+    "required": true,
+    "schema": {
+      "$ref": "#/components/schemas/MobileIntegration"
+    }
+  },
+  "MobileHAContext.physical_control": {
+    "required": false,
+    "schema": {
+      "const": false,
+      "type": "boolean"
+    }
+  },
+  "MobileHAContext.schema_version": {
+    "required": false,
+    "schema": {
+      "const": 1,
+      "type": "integer"
+    }
+  },
+  "MobileHAContext.station_id": {
+    "required": true,
+    "schema": {
+      "format": "uuid",
+      "type": "string"
+    }
+  },
+  "MobileHAContext.timezone": {
+    "required": true,
+    "schema": {
+      "type": "string"
+    }
+  },
+  "MobileHAEntity.available": {
+    "required": true,
+    "schema": {
+      "type": "boolean"
+    }
+  },
+  "MobileHAEntity.control_authorized": {
+    "required": false,
+    "schema": {
+      "const": false,
+      "type": "boolean"
+    }
+  },
+  "MobileHAEntity.entity_id": {
+    "required": true,
+    "schema": {
+      "type": "string"
+    }
+  },
+  "MobileHAEntity.is_simulated": {
+    "required": true,
+    "schema": {
+      "type": "boolean"
+    }
+  },
+  "MobileHAEntity.is_stale": {
+    "required": true,
+    "schema": {
+      "type": "boolean"
+    }
+  },
+  "MobileHAEntity.kind": {
+    "required": true,
+    "schema": {
+      "type": "string"
+    }
+  },
+  "MobileHAEntity.mapped_unit": {
+    "required": true,
+    "schema": {
+      "type": "string"
+    }
+  },
+  "MobileHAEntity.max_age_seconds": {
+    "required": true,
+    "schema": {
+      "type": "integer"
+    }
+  },
+  "MobileHAEntity.metric": {
+    "required": true,
+    "schema": {
+      "$ref": "#/components/schemas/MobileMetric"
+    }
+  },
+  "MobileHAEntity.source_quality": {
+    "required": true,
+    "schema": {
+      "enum": [
+        "measured",
+        "estimated",
+        "declared",
+        "simulated",
+        "stale",
+        "partial",
+        "missing",
+        "unknown"
+      ],
+      "type": "string"
+    }
+  },
+  "MobileIntegration.available_entities": {
+    "required": false,
+    "schema": {
+      "type": "integer"
+    }
+  },
+  "MobileIntegration.enabled": {
+    "required": true,
+    "schema": {
+      "type": "boolean"
+    }
+  },
+  "MobileIntegration.entity_count": {
+    "required": false,
+    "schema": {
+      "type": "integer"
+    }
+  },
+  "MobileIntegration.issues": {
+    "required": false,
+    "schema": {
+      "items": {
+        "$ref": "#/components/schemas/MobileIssue"
+      },
+      "type": "array"
+    }
+  },
+  "MobileIntegration.last_seen_at": {
+    "required": true,
+    "schema": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "MobileIntegration.mapping_version": {
+    "required": false,
+    "schema": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "MobileIntegration.provider": {
+    "required": true,
+    "schema": {
+      "enum": [
+        "deye_cloud",
+        "home_assistant_bridge",
+        "home_assistant_mqtt"
+      ],
+      "type": "string"
+    }
+  },
+  "MobileIntegration.status": {
+    "required": true,
+    "schema": {
+      "type": "string"
+    }
+  },
+  "MobileIssue.code": {
+    "required": true,
+    "schema": {
+      "enum": [
+        "unauthenticated",
+        "forbidden",
+        "no_station",
+        "station_required",
+        "integration_disconnected",
+        "provider_disconnected",
+        "reauth_required",
+        "stale",
+        "rate_limited",
+        "invalid_request",
+        "invalid_cursor",
+        "service_unavailable"
+      ],
+      "type": "string"
+    }
+  },
+  "MobileIssue.message": {
+    "required": true,
+    "schema": {
+      "type": "string"
+    }
+  },
+  "MobileIssue.resource": {
+    "required": false,
+    "schema": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "MobileIssue.retry_after_seconds": {
+    "required": false,
+    "schema": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "MobileMetric.coverage": {
+    "required": false,
+    "schema": {
+      "anyOf": [
+        {
+          "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "MobileMetric.flags": {
+    "required": false,
+    "schema": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    }
+  },
+  "MobileMetric.measured_at": {
+    "required": false,
+    "schema": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "MobileMetric.quality": {
+    "required": true,
+    "schema": {
+      "enum": [
+        "measured",
+        "estimated",
+        "declared",
+        "simulated",
+        "stale",
+        "partial",
+        "missing",
+        "unknown"
+      ],
+      "type": "string"
+    }
+  },
+  "MobileMetric.received_at": {
+    "required": false,
+    "schema": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "MobileMetric.source": {
+    "required": true,
+    "schema": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "MobileMetric.unit": {
+    "required": true,
+    "schema": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "MobileMetric.updated_at": {
+    "required": false,
+    "schema": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "MobileMetric.value": {
+    "required": true,
+    "schema": {
+      "anyOf": [
+        {
+          "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+          "type": "string"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "MobileNotification.body": {
+    "required": true,
+    "schema": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "MobileNotification.category": {
+    "required": true,
+    "schema": {
+      "type": "string"
+    }
+  },
+  "MobileNotification.created_at": {
+    "required": true,
+    "schema": {
+      "format": "date-time",
+      "type": "string"
+    }
+  },
+  "MobileNotification.id": {
+    "required": true,
+    "schema": {
+      "format": "uuid",
+      "type": "string"
+    }
+  },
+  "MobileNotification.link": {
+    "required": true,
+    "schema": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "MobileNotification.read_at": {
+    "required": true,
+    "schema": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "MobileNotification.severity": {
+    "required": true,
+    "schema": {
+      "type": "string"
+    }
+  },
+  "MobileNotification.state": {
+    "required": true,
+    "schema": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "MobileNotification.title": {
+    "required": true,
+    "schema": {
+      "type": "string"
+    }
+  },
+  "MobileNotifications.items": {
+    "required": true,
+    "schema": {
+      "items": {
+        "$ref": "#/components/schemas/MobileNotification"
+      },
+      "type": "array"
+    }
+  },
+  "MobileNotifications.next_cursor": {
+    "required": true,
+    "schema": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "MobileNotifications.schema_version": {
+    "required": false,
+    "schema": {
+      "const": 1,
+      "type": "integer"
+    }
+  },
+  "MobileNotifications.station_id": {
+    "required": true,
+    "schema": {
+      "format": "uuid",
+      "type": "string"
+    }
+  },
+  "MobileNotifications.unread_count": {
+    "required": true,
+    "schema": {
+      "type": "integer"
+    }
+  },
+  "MobileOverview.costs": {
+    "required": true,
+    "schema": {
+      "additionalProperties": {
+        "$ref": "#/components/schemas/MobileCost"
+      },
+      "propertyNames": {
+        "enum": [
+          "today",
+          "month"
+        ]
+      },
+      "type": "object"
+    }
+  },
+  "MobileOverview.energy": {
+    "required": true,
+    "schema": {
+      "additionalProperties": {
+        "$ref": "#/components/schemas/MobilePeriod"
+      },
+      "propertyNames": {
+        "enum": [
+          "today",
+          "month"
+        ]
+      },
+      "type": "object"
+    }
+  },
+  "MobileOverview.evaluated_at": {
+    "required": true,
+    "schema": {
+      "format": "date-time",
+      "type": "string"
+    }
+  },
+  "MobileOverview.forecast": {
+    "required": true,
+    "schema": {
+      "$ref": "#/components/schemas/MobileForecast"
+    }
+  },
+  "MobileOverview.integrations": {
+    "required": true,
+    "schema": {
+      "items": {
+        "$ref": "#/components/schemas/MobileIntegration"
+      },
+      "type": "array"
+    }
+  },
+  "MobileOverview.issues": {
+    "required": true,
+    "schema": {
+      "items": {
+        "$ref": "#/components/schemas/MobileIssue"
+      },
+      "type": "array"
+    }
+  },
+  "MobileOverview.live": {
+    "required": true,
+    "schema": {
+      "additionalProperties": {
+        "$ref": "#/components/schemas/MobileMetric"
+      },
+      "type": "object"
+    }
+  },
+  "MobileOverview.schema_version": {
+    "required": false,
+    "schema": {
+      "const": 1,
+      "type": "integer"
+    }
+  },
+  "MobileOverview.sources": {
+    "required": true,
+    "schema": {
+      "$ref": "#/components/schemas/MobileSourceSummary"
+    }
+  },
+  "MobileOverview.station": {
+    "required": true,
+    "schema": {
+      "$ref": "#/components/schemas/MobileStation"
+    }
+  },
+  "MobileOverview.unread_notifications": {
+    "required": true,
+    "schema": {
+      "type": "integer"
+    }
+  },
+  "MobilePeriod.comparison_label": {
+    "required": true,
+    "schema": {
+      "type": "string"
+    }
+  },
+  "MobilePeriod.end": {
+    "required": true,
+    "schema": {
+      "format": "date-time",
+      "type": "string"
+    }
+  },
+  "MobilePeriod.metrics": {
+    "required": true,
+    "schema": {
+      "additionalProperties": {
+        "$ref": "#/components/schemas/MobileEnergyMetric"
+      },
+      "type": "object"
+    }
+  },
+  "MobilePeriod.start": {
+    "required": true,
+    "schema": {
+      "format": "date-time",
+      "type": "string"
+    }
+  },
+  "MobileSourceSummary.devices": {
+    "required": true,
+    "schema": {
+      "items": {
+        "$ref": "#/components/schemas/MobileDevice"
+      },
+      "type": "array"
+    }
+  },
+  "MobileSourceSummary.total_devices": {
+    "required": true,
+    "schema": {
+      "type": "integer"
+    }
+  },
+  "MobileSourceSummary.truncated": {
+    "required": true,
+    "schema": {
+      "type": "boolean"
+    }
+  },
+  "MobileStation.currency": {
+    "required": false,
+    "schema": {
+      "const": "RON",
+      "type": "string"
+    }
+  },
+  "MobileStation.id": {
+    "required": true,
+    "schema": {
+      "format": "uuid",
+      "type": "string"
+    }
+  },
+  "MobileStation.name": {
+    "required": true,
+    "schema": {
+      "type": "string"
+    }
+  },
+  "MobileStation.organization_id": {
+    "required": true,
+    "schema": {
+      "format": "uuid",
+      "type": "string"
+    }
+  },
+  "MobileStation.role": {
+    "required": true,
+    "schema": {
+      "type": "string"
+    }
+  },
+  "MobileStation.timezone": {
+    "required": true,
+    "schema": {
+      "type": "string"
+    }
+  }
+}

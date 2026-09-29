@@ -6,9 +6,12 @@
     "build:css": "tailwindcss -i ./app/web/static/css/input.css -o ./app/web/static/css/app.css --minify",
     "watch:css": "tailwindcss -i ./app/web/static/css/input.css -o ./app/web/static/css/app.css --watch",
     "vendor": "node scripts/vendor_assets.js",
-    "build": "npm run vendor && npm run build:css"
+    "build": "npm run vendor && npm run build:css",
+    "mobile:types": "openapi-typescript contracts/mobile/mobile-v1.openapi.json -o contracts/mobile/mobile-v1.d.ts",
+    "mobile:types:check": "npm run mobile:types -- --check"
   },
   "devDependencies": {
+    "openapi-typescript": "7.10.1",
     "tailwindcss": "^3.4.14"
   },
   "dependencies": {
