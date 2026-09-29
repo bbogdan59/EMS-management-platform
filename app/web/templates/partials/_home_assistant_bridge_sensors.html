@@ -1,0 +1,35 @@
+{% set status_labels = {'connected': 'Conectat', 'connecting': 'Conectare in curs', 'stale': 'Date partiale sau intarziate', 'offline': 'Fara conexiune', 'reauth_required': 'Reconectare necesara', 'disconnected': 'Deconectat'} %}
+{% set kind_labels = {'temperature': 'Temperatura interioara', 'power': 'Putere', 'energy': 'Energie', 'occupancy': 'Ocupare locuinta', 'boiler_status': 'Stare boiler', 'hvac_status': 'Stare climatizare', 'evse_status': 'Stare incarcare EV', 'flexibility': 'Putere flexibila declarata'} %}
+{% set quality_labels = {'estimated': 'estimat', 'declared': 'declarat', 'simulated': 'simulat', 'unknown': 'necunoscut'} %}
+{% set state_labels = {'on': 'Pornit', 'off': 'Oprit', 'idle': 'In repaus', 'heating': 'Incalzire', 'cooling': 'Racire', 'defrosting': 'Dezghetare', 'charging': 'Incarcare', 'connected': 'Conectat', 'disconnected': 'Deconectat'} %}
+<div data-ha-snapshot>
+  <div class="ha-bridge-heading">
+    <div><p class="ha-bridge-eyebrow">HOME ASSISTANT · HACS</p><h2>Senzori din locuinta</h2></div>
+    <span class="ha-bridge-status" data-ha-status data-state="{{ bridge.status }}">{{ status_labels.get(bridge.status, bridge.status) }}</span>
+  </div>
+  <p class="ha-bridge-muted"><span data-ha-instance>{{ bridge.instance_name or 'Nicio instanta confirmata' }}</span> · Ultima sincronizare: <time data-ha-seen>{{ bridge.last_seen_at|local_dt(station.timezone) }}</time></p>
+  {% if bridge.status == 'reauth_required' %}<p class="ha-bridge-notice">Genereaza un cod nou pe pagina Home Assistant si reconecteaza integrarea.</p>{% elif bridge.status == 'offline' %}<p class="ha-bridge-notice">Home Assistant nu mai trimite date. Verifica integrarea si conexiunea la internet.</p>{% endif %}
+  {% if bridge.observations %}
+  <div class="ha-bridge-sensors" data-ha-sensors>
+    {% for o in bridge.observations %}
+    <article class="ha-bridge-sensor" data-ha-entity="{{ o.entity_id }}">
+      <p class="ha-bridge-kind">{{ kind_labels.get(o.kind, o.kind) }}</p>
+      <h3>{{ o.entity_id.split('.', 1)[-1]|replace('_', ' ')|capitalize }}</h3>
+      <p class="ha-bridge-value{% if not o.available or o.value is none %} is-missing{% endif %}" data-ha-value>
+        {%- if not o.available or o.value is none -%}Indisponibil
+        {%- elif o.kind == 'occupancy' -%}{{ 'Ocupat' if o.value else 'Liber' }}
+        {%- elif o.unit == 'state' -%}{{ state_labels.get(o.value, o.value) }}
+        {%- else -%}{{ o.value|number(2 if o.kind == 'temperature' else 3) }} <span>{{ o.unit }}</span>
+        {%- endif -%}
+      </p>
+      <p class="ha-bridge-muted" data-ha-quality>Home Assistant · {{ quality_labels.get(o.source_quality, o.source_quality) }}{% if not o.observed_at %} · In asteptarea primei citiri{% elif o.is_stale %} · Citire expirata{% elif not o.available %} · Citire indisponibila{% endif %}</p>
+      <p class="ha-bridge-muted">Ultima citire: <time>{{ o.observed_at|default(none)|local_dt(station.timezone) }}</time></p>
+      <p class="ha-bridge-entity">{{ o.entity_id }}</p>
+    </article>
+    {% endfor %}
+  </div>
+  <p class="ha-bridge-footnote">Sunt afisate ultimele citiri ale senzorilor partajati, separat de datele invertorului. Istoricul ramane in Home Assistant.</p>
+  {% else %}
+  <p class="ha-bridge-empty" data-ha-empty>{% if bridge.status == 'connecting' %}Finalizeaza conectarea si selectia senzorilor in Home Assistant.{% else %}Nu sunt senzori partajati. Conecteaza integrarea EMS Home Assistant si selecteaza senzorii pe care vrei sa ii vezi aici.{% endif %}</p>
+  {% endif %}
+</div>

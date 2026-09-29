@@ -1,0 +1,21 @@
+.ems-main .ha-bridge-panel { --ha-ink: #263a31; --ha-muted: #5f7066; --ha-line: #d5dfd2; --ha-soft: #f3f6ef; color: var(--ha-ink); margin-bottom: 20px; }
+.dark .ha-bridge-panel { --ha-ink: #f1f4e9; --ha-muted: #b9c8b8; --ha-line: #43594a; --ha-soft: #263b33; }
+.ha-bridge-heading { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 10px; }
+.ha-bridge-heading h2 { font-size: 20px; font-weight: 700; }
+.ha-bridge-eyebrow { font-size: 10px; font-weight: 700; letter-spacing: .12em; color: var(--ha-muted); }
+.ha-bridge-status { border: 1px solid var(--ha-line); border-radius: 20px; padding: 5px 12px; font-size: 12px; }
+.ha-bridge-status[data-state="connected"] { background: var(--ha-soft); }
+.ha-bridge-muted, .ha-bridge-footnote, .ha-bridge-refresh { font-size: 12px; color: var(--ha-muted); line-height: 1.7; overflow-wrap: anywhere; }
+.ha-bridge-sensors { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)); gap: 14px; margin: 20px 0 14px; }
+.ha-bridge-sensor { min-width: 0; border: 1px solid var(--ha-line); border-radius: 16px; background: var(--ha-soft); padding: 18px; }
+.ha-bridge-kind { color: var(--ha-muted); font-size: 11px; margin-bottom: 4px; }
+.ha-bridge-sensor h3 { font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
+.ha-bridge-value { font-size: 32px; font-weight: 700; line-height: 1.4; margin: 12px 0; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.ha-bridge-value span { font-size: 18px; font-weight: 500; }
+.ha-bridge-value.is-missing { font-size: 20px; color: var(--ha-muted); }
+.ha-bridge-entity { font-family: monospace; font-size: 10px; color: var(--ha-muted); overflow-wrap: anywhere; margin-top: 10px; }
+.ha-bridge-empty, .ha-bridge-notice { font-size: 14px; line-height: 1.7; margin: 18px 0; }
+.ha-bridge-actions { display: flex; flex-wrap: wrap; gap: 10px 20px; align-items: center; margin-top: 16px; }
+.ha-bridge-actions a { text-decoration: underline; text-underline-offset: 3px; font-size: 13px; }
+.ha-bridge-refresh { margin-top: 10px; }
+@media (max-width: 480px) { .ha-bridge-sensor { padding: 15px; } .ha-bridge-value { font-size: 28px; } }

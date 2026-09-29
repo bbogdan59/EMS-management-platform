@@ -18,6 +18,7 @@
 <div class="ha-page space-y-6" data-ha-root data-status-url="/stations/{{ station.id }}/integrations/home-assistant/status" data-poll="{{ 'yes' if connection and connection.enabled else 'no' }}">
   {{ breadcrumb([{"label": station.name, "url": "/?station_id=" ~ station.id}, {"label": "Home Assistant", "url": none}]) }}
   <header class="ha-intro"><div><p class="ha-eyebrow">CONTEXT LOCAL</p><h1>Home Assistant &amp; MQTT</h1><p>Alege ce informatii din locuinta ajung in statia ta. Integrarea este optionala; functiile EMS raman disponibile independent.</p></div><span class="ha-badge">Senzori &amp; recomandari</span></header>
+  <p>Ai instalat integrarea EMS prin HACS? <a class="btn-secondary" href="/stations/{{ station.id }}/integrations/home-assistant-bridge">Deschide senzorii si conectarea HACS</a> Aceasta conexiune foloseste HTTPS si nu necesita broker MQTT.</p>
   {% if error %}<div role="alert" class="badge-error rounded p-3">{{ error }}</div>{% endif %}
   {% if request.query_params.get('saved') %}<div role="status" class="badge-ok rounded p-3">Configuratie salvata. Instaleaza pachetul Home Assistant de mai jos; workerul va verifica separat conexiunea.</div>{% endif %}
   {% if not enabled_globally or not brokers %}<div class="card"><h2>Integrare disponibila la activare</h2><p>Administratorul platformei trebuie sa activeze conectorul si sa configureze un broker MQTT cu TLS accesibil workerului. Nu este necesar pentru monitorizarea statiei.</p></div>{% endif %}
