@@ -3,6 +3,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
+from threading import Event
 from uuid import uuid4
 
 import pytest
@@ -13,9 +14,11 @@ from sqlalchemy.orm import Session
 from app.config import get_settings
 from app.core.security import hash_token, utcnow
 from app.models.home_assistant_bridge import HomeAssistantBridge
+from app.models.station import Station
+from app.models.telemetry import TelemetryRaw
 from app.schemas.home_assistant_bridge import Ingest, MappingUpdate, PairingRedeem
 from app.services import home_assistant_bridge as service
-from tests.factories import make_membership, make_org, make_station, make_user
+from tests.factories import make_device, make_membership, make_org, make_station, make_user
 from tests.web_helpers import login
 
 API = "/api/v1/home-assistant"
@@ -251,6 +254,24 @@ def test_retention_preserves_replay_watermarks_and_migration_keeps_other_data(db
     assert bridge.observations["sensor.power"]["value"] is None
     assert bridge.observations["sensor.power"]["sample_id"] == old["sample_id"]
     station_id = bridge.station_id
+    device = make_device(db, db.get(Station, station_id))
+    for sequence, value in enumerate((None, 0, "1234.567")):
+        db.add(
+            TelemetryRaw(
+                station_id=station_id,
+                device_id=device.id,
+                boot_id="ha-migration",
+                sequence=sequence,
+                measured_at=utcnow(),
+                received_at=utcnow(),
+                pv_power_w=value,
+            )
+        )
+    db.flush()
+    from sqlalchemy import text
+
+    query = text("SELECT pv_power_w FROM telemetry_raw WHERE device_id=:id ORDER BY sequence")
+    before = db.execute(query, {"id": device.id}).all()
     spec = spec_from_file_location(
         "bridge_migration",
         Path(__file__).parents[2] / "alembic/versions/a216b40c912e_home_assistant_bridge.py",
@@ -260,9 +281,9 @@ def test_retention_preserves_replay_watermarks_and_migration_keeps_other_data(db
     db.flush()
     monkeypatch.setattr(migration, "op", Operations(MigrationContext.configure(db.connection())))
     migration.downgrade()
+    assert db.execute(query, {"id": device.id}).all() == before
     migration.upgrade()
-    from app.models.station import Station
-
+    assert db.execute(query, {"id": device.id}).all() == before
     assert db.get(Station, station_id) is not None
     assert migration.down_revision == "f189a27c803e"
 
@@ -290,3 +311,80 @@ def test_postgres_pairing_replay_race_only_one_winner(engine):
     assert sorted(outcomes) == ["accepted", "rejected"]
     with Session(engine) as db:
         assert db.get(HomeAssistantBridge, bridge_id).pairing_hash is None
+
+
+def test_postgres_ingest_lock_fences_revoke(engine):
+    with Session(engine) as db:
+        bridge, token = configured(db)
+        bridge_id = bridge.id
+        db.commit()
+    locked, release = Event(), Event()
+
+    def ingest():
+        with Session(engine) as db:
+            bridge = service.authenticate(db, token)
+            locked.set()
+            assert release.wait(10)
+            service.ingest(bridge, ingest_data(bridge, [sample()]))
+            db.commit()
+
+    def revoke():
+        with Session(engine) as db:
+            bridge = service.authenticate(db, token)
+            service.revoke(bridge)
+            db.commit()
+
+    try:
+        with ThreadPoolExecutor(2) as pool:
+            ingesting = pool.submit(ingest)
+            assert locked.wait(10)
+            revoking = pool.submit(revoke)
+            release.set()
+            ingesting.result(10)
+            revoking.result(10)
+        with Session(engine) as db:
+            assert service.authenticate(db, token) is None
+            assert not db.get(HomeAssistantBridge, bridge_id).observations
+    finally:
+        release.set()
+
+
+def test_ui_and_disabled_feature(db, client, monkeypatch):
+    user, _, station = setup(db, client)
+    page = f"/stations/{station.id}/integrations/home-assistant-bridge"
+    assert client.get(page).status_code == 200
+    assert (
+        'aria-label="Casa inteligenta prin HACS"'
+        not in client.get(f"/?station_id={station.id}").text
+    )
+    bridge, token = configured(db, station, user)
+    db.flush()
+    assert (
+        'aria-label="Casa inteligenta prin HACS"' in client.get(f"/?station_id={station.id}").text
+    )
+    monkeypatch.setattr(get_settings(), "home_assistant_bridge_enabled", False)
+    assert client.get(f"/api/v1/stations/{station.id}/home-assistant").json()["enabled"] is False
+    assert (
+        client.post(
+            API + "/bridge/samples",
+            headers={"Authorization": f"Bearer {token}"},
+            json={"mapping_version": bridge.mapping_version, "samples": []},
+        ).status_code
+        == 503
+    )
+    assert (
+        client.delete(API + "/bridge", headers={"Authorization": f"Bearer {token}"}).status_code
+        == 200
+    )
+
+
+def test_simulated_provenance_survives_unknown_and_stale(db):
+    bridge, _ = configured(db)
+    bridge.mappings = [{**bridge.mappings[0], "quality": "simulated"}]
+    service.ingest(bridge, ingest_data(bridge, [sample(quality="simulated")]))
+    service.ingest(
+        bridge, ingest_data(bridge, [sample(value=None, available=False, quality="unknown")])
+    )
+    observed = service.snapshot(bridge)["observations"][0]
+    assert observed["value"] is None
+    assert observed["is_simulated"] and observed["source_quality"] == "simulated"
