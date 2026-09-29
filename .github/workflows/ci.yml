@@ -60,6 +60,17 @@ jobs:
       - name: Lint (ruff check) -- see docs/CODE_STANDARDS.md
         run: ruff check .
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Check published mobile contract and generated types
+        run: |
+          npm ci --ignore-scripts
+          python -m scripts.export_mobile_contract --check
+          npm run mobile:types:check
+
       - name: Unit + integration tests
         run: pytest tests/ -q --ignore=tests/e2e
 

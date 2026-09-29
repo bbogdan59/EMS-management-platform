@@ -200,8 +200,8 @@ def ingest(bridge, data):
     return {"accepted": accepted, "ignored": ignored, "mapping_version": bridge.mapping_version}
 
 
-def snapshot(bridge, *, enabled=True):
-    now = utcnow()
+def snapshot(bridge, *, enabled=True, now=None):
+    now = now or utcnow()
     state = "disconnected"
     observations = []
     if bridge and enabled:

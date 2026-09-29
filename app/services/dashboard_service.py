@@ -109,7 +109,7 @@ def get_summary(db: Session, station: Station) -> dict:
     }
 
 
-def get_live_metrics(db: Session, station: Station) -> list[dict]:
+def get_live_metrics(db: Session, station: Station, *, now=None, exact=False) -> list[dict]:
     """Contract per-metrica versionat pentru fluxul SSE (issue #50): fiecare
     intrare descrie explicit `metric`/`value`/`unit`/`measured_at`/
     `received_at`/`quality`/`source`, distinct de `get_summary` (folosit
@@ -122,7 +122,7 @@ def get_live_metrics(db: Session, station: Station) -> list[dict]:
     din stare evaluata "acum" (pret efectiv, plan, status device) poarta
     `measured_at`=acum si `received_at`=None (nu sunt masuratori telemetrice)."""
     latest = get_latest_telemetry(db, station.id)
-    now = utcnow()
+    now = now or utcnow()
 
     data_quality = "missing"
     measured_at_iso: str | None = None
@@ -151,8 +151,8 @@ def get_live_metrics(db: Session, station: Station) -> list[dict]:
         .order_by(MarketPriceInterval.interval_start.desc())
         .limit(1)
     )
-    price_buy = _effective_price(import_tariff, market_price)
-    price_sell = _effective_price(export_tariff, market_price)
+    price_buy = _effective_price(import_tariff, market_price, exact=exact)
+    price_sell = _effective_price(export_tariff, market_price, exact=exact)
 
     plan = db.scalar(
         select(Plan)
@@ -166,12 +166,27 @@ def get_live_metrics(db: Session, station: Station) -> list[dict]:
 
     now_iso = now.isoformat()
 
+    def power(value):
+        return value / Decimal(1000) if exact and value is not None else _w_to_kw(value)
+
     def _telemetry_metric(name: str, value, unit: str | None) -> dict:
-        return {
+        result = {
             "metric": name, "value": value, "unit": unit,
             "measured_at": measured_at_iso, "received_at": received_at_iso,
             "quality": data_quality, "source": "telemetry",
         }
+        if exact:
+            flags = {key for key, flag in (latest.quality_flags or {}).items() if flag is True} if latest else set()
+            if latest and latest.is_simulated:
+                flags.add("simulated")
+            if latest and (now - latest.measured_at > STALE_AFTER or latest.measured_at > now + timedelta(seconds=30)):
+                flags.add("stale")
+            if latest and latest.is_late:
+                flags.add("late")
+            result["flags"] = sorted(flags)
+            if "stale" in flags and data_quality != "simulated":
+                result["quality"] = "stale"
+        return result
 
     def _evaluated_metric(name: str, value, unit: str | None, *, quality: str = "measured", source: str) -> dict:
         return {
@@ -181,17 +196,17 @@ def get_live_metrics(db: Session, station: Station) -> list[dict]:
         }
 
     return [
-        _telemetry_metric("pv_power_kw", _w_to_kw(latest.pv_power_w) if latest else None, "kW"),
-        _telemetry_metric("load_power_kw", _w_to_kw(latest.load_power_w) if latest else None, "kW"),
-        _telemetry_metric("battery_power_kw", _w_to_kw(latest.battery_power_w) if latest else None, "kW"),
-        _telemetry_metric("grid_power_kw", _w_to_kw(latest.grid_power_w) if latest else None, "kW"),
+        _telemetry_metric("pv_power_kw", power(latest.pv_power_w) if latest else None, "kW"),
+        _telemetry_metric("load_power_kw", power(latest.load_power_w) if latest else None, "kW"),
+        _telemetry_metric("battery_power_kw", power(latest.battery_power_w) if latest else None, "kW"),
+        _telemetry_metric("grid_power_kw", power(latest.grid_power_w) if latest else None, "kW"),
         _telemetry_metric(
             "battery_soc_percent",
-            float(latest.battery_soc_percent) if latest and latest.battery_soc_percent is not None else None,
+            (latest.battery_soc_percent if exact else float(latest.battery_soc_percent)) if latest and latest.battery_soc_percent is not None else None,
             "%",
         ),
         _telemetry_metric("ev_connected", latest.ev_connected if latest else None, None),
-        _telemetry_metric("ev_power_kw", _w_to_kw(latest.ev_power_w) if latest else None, "kW"),
+        _telemetry_metric("ev_power_kw", power(latest.ev_power_w) if latest else None, "kW"),
         # Duplica in `value` propriul `quality`/`measured_at` -- clientul (dashboard.js)
         # citeste aceste doua metrici pentru badge-ul global de prospetime,
         # separat de KPI-urile individuale de mai sus.
@@ -215,7 +230,7 @@ def _w_to_kw(value: Decimal | None) -> float | None:
     return float(value) / 1000.0
 
 
-def _effective_price(tariff_version: TariffVersion | None, market_price: MarketPriceInterval | None) -> float | None:
+def _effective_price(tariff_version: TariffVersion | None, market_price: MarketPriceInterval | None, *, exact=False) -> Decimal | float | None:
     """Deleaga la `tariff_service.compute_effective_price_lei_per_kwh` (issue
     #46) -- SINGURA formula, include acum si distributie/transport/alte taxe
     reglementate/TVA, nu doar pret de energie + o componenta variabila
@@ -223,7 +238,7 @@ def _effective_price(tariff_version: TariffVersion | None, market_price: MarketP
     calculul insusi ramane Decimal in `tariff_service`."""
     market_price_lei_per_kwh = market_price.price_lei_per_kwh if market_price is not None else None
     result = tariff_service.compute_effective_price_lei_per_kwh(tariff_version, market_price_lei_per_kwh)
-    return round(float(result), 6) if result is not None else None
+    return (result if exact else round(float(result), 6)) if result is not None else None
 
 
 def _tariff_versions_for_range(db: Session, station_id: uuid.UUID, direction: str, start: datetime, end: datetime) -> list[TariffVersion]:
@@ -278,10 +293,10 @@ def _lookup_at(sorted_items: list, at: datetime, start_attr: str, end_attr: str)
     return item
 
 
-def _effective_price_at(tariff_versions: list[TariffVersion], market_intervals: list[MarketPriceInterval], at: datetime) -> float | None:
+def _effective_price_at(tariff_versions: list[TariffVersion], market_intervals: list[MarketPriceInterval], at: datetime, *, exact=False) -> Decimal | float | None:
     tariff = _lookup_at(tariff_versions, at, "valid_from", "valid_to")
     market = _lookup_at(market_intervals, at, "interval_start", "interval_end")
-    return _effective_price(tariff, market)
+    return _effective_price(tariff, market, exact=exact)
 
 
 def _price_provenance_at(tariff_versions: list[TariffVersion], market_intervals: list[MarketPriceInterval], at: datetime) -> str:
@@ -635,7 +650,7 @@ def _elapsed_window_totals(
     totals: dict[str, Decimal | None] = {}
     for field in _ENERGY_KPI_ENERGY_FIELDS:
         values = [getattr(r, field) for r in rows if getattr(r, field) is not None]
-        totals[field] = Decimal(str(round(sum(float(v) for v in values), 6))) if values else None
+        totals[field] = sum(values, Decimal(0)) if values else None
     coverage: dict[str, float] = {}
     for key in _ENERGY_KPI_COVERAGE_KEYS:
         covered_seconds = sum(
@@ -653,6 +668,7 @@ def _energy_kpi_value(
     current_elapsed_coverage: dict[str, float] | None = None,
     comparison_totals: dict[str, Decimal | None] | None = None,
     comparison_coverage: dict[str, float] | None = None,
+    *, exact=False,
 ) -> dict:
     current_elapsed_coverage = current_elapsed_coverage or {}
     comparison_totals = comparison_totals or {}
@@ -674,14 +690,14 @@ def _energy_kpi_value(
         if previous_value is not None and previous_coverage >= ENERGY_KPI_COVERAGE_PARTIAL_BELOW:
             delta = value - previous_value
             comparison = {
-                "previous_value": float(previous_value),
-                "delta": float(delta),
-                "delta_percent": float((delta / previous_value) * Decimal("100")) if previous_value != 0 else None,
+                "previous_value": previous_value if exact else float(previous_value),
+                "delta": delta if exact else float(delta),
+                "delta_percent": ((delta / previous_value) * Decimal("100") if exact else float((delta / previous_value) * Decimal("100"))) if previous_value != 0 else None,
             }
-    return {"value": float(value), "coverage": round(coverage, 4), "quality": quality, "comparison": comparison}
+    return {"value": value if exact else float(value), "coverage": round(coverage, 4), "quality": quality, "comparison": comparison}
 
 
-def get_energy_period_kpis(db: Session, station: Station) -> dict:
+def get_energy_period_kpis(db: Session, station: Station, *, now=None, exact=False) -> dict:
     """KPI-uri client pentru ziua/luna curenta (issue #45).
 
     Agregatele sunt cautate dupa inceputul perioadei in calendarul statiei.
@@ -694,7 +710,7 @@ def get_energy_period_kpis(db: Session, station: Station) -> dict:
     comparata corect cu una INCHEIATA fara sa alunece pragul de acoperire
     dincolo de orice moment realist inainte de finalul perioadei.
     """
-    now = utcnow()
+    now = now or utcnow()
     # (period_type-ul propriului rand, granularitatea sursa mai fina pentru
     # fereastra "aceeasi durata scursa")
     periods = {
@@ -737,17 +753,29 @@ def get_energy_period_kpis(db: Session, station: Station) -> dict:
             for key in _ENERGY_KPI_COVERAGE_KEYS
         }
         comparison_totals, comparison_coverage = _elapsed_window_totals(
-            db, station.id, source_period_type, previous_starts[name], previous_starts[name] + timedelta(seconds=elapsed_seconds)
+            db, station.id, source_period_type, previous_starts[name], min(period_start, previous_starts[name] + timedelta(seconds=elapsed_seconds))
         )
+        if previous_starts[name] + timedelta(seconds=elapsed_seconds) > period_start:
+            comparison_totals, comparison_coverage = {}, {}
         out[name] = {
             "period_start": period_start.isoformat(),
             "period_type": period_type,
             "comparison_label": "ieri" if name == "today" else "luna anterioara",
             "metrics": {
-                metric: _energy_kpi_value(row, field, coverage_key, current_elapsed_coverage, comparison_totals, comparison_coverage)
+                metric: _energy_kpi_value(row, field, coverage_key, current_elapsed_coverage, comparison_totals, comparison_coverage, exact=exact)
                 for metric, (field, coverage_key) in metric_fields.items()
             },
         }
+        if exact:
+            prior_quality = db.execute(select(TelemetryAggregate.data_quality).where(
+                TelemetryAggregate.station_id == station.id,
+                TelemetryAggregate.period_type == source_period_type,
+                TelemetryAggregate.period_start >= previous_starts[name],
+                TelemetryAggregate.period_start < previous_starts[name] + timedelta(seconds=elapsed_seconds),
+            ).distinct()).scalars().all()
+            out[name].update(period_end=period_end, updated_at=row.updated_at if row else None,
+                             source_quality=row.data_quality if row else "missing",
+                             comparison_qualities=prior_quality)
     return out
 
 
@@ -789,7 +817,7 @@ def get_efc_used(db: Session, station: Station, config: StationConfigVersion | N
     return float(total_discharge) / float(config.battery_reference_capacity_kwh)
 
 
-def get_forecast_vs_actual(db: Session, station: Station, metric: str, start: datetime, end: datetime) -> list[dict]:
+def get_forecast_vs_actual(db: Session, station: Station, metric: str, start: datetime, end: datetime, *, now=None, exact=False) -> list[dict]:
     """Fiecare prognoza e regenerata periodic (batch-uri noi cu `issued_at` mai
     recent), iar randurile vechi raman in baza -- fara sa alegem explicit,
     interogarea de mai jos ar returna MAI MULTE randuri pentru acelasi
@@ -836,25 +864,27 @@ def get_forecast_vs_actual(db: Session, station: Station, metric: str, start: da
             return None
         return float(energy_total) / (total_seconds / 3600)
 
+    now = now or utcnow()
     if metric == "pv":
         rows = db.scalars(
             select(PvForecast).where(
                 PvForecast.station_id == station.id,
                 PvForecast.scenario == "expected",
-                PvForecast.interval_start >= start,
+                PvForecast.interval_end > start if exact else PvForecast.interval_start >= start,
                 PvForecast.interval_start < end,
+                PvForecast.issued_at <= now if exact else True,
             )
         ).all()
     else:
         rows = db.scalars(
             select(ConsumptionForecast).where(
                 ConsumptionForecast.station_id == station.id,
-                ConsumptionForecast.interval_start >= start,
+                ConsumptionForecast.interval_end > start if exact else ConsumptionForecast.interval_start >= start,
                 ConsumptionForecast.interval_start < end,
+                ConsumptionForecast.issued_at <= now if exact else True,
             )
         ).all()
 
-    now = utcnow()
     latest_issued_at = max((f.issued_at for f in rows), default=None)
     best_by_start: dict[datetime, object] = {}
     for f in rows:
@@ -878,7 +908,9 @@ def get_forecast_vs_actual(db: Session, station: Station, metric: str, start: da
     out = []
     for f in forecasts:
         actual_kw = actual_average_kw(f.interval_start, f.interval_end)
-        forecast_kw = float(f.predicted_power_kw) if metric == "pv" else float(f.base_load_kw + f.ev_component_kw + f.flexible_component_kw)
+        forecast_kw = f.predicted_power_kw if metric == "pv" else f.base_load_kw + f.ev_component_kw + f.flexible_component_kw
+        if not exact:
+            forecast_kw = float(forecast_kw)
         point = {
             "t": f.interval_start.isoformat(),
             "forecast_kw": forecast_kw,
@@ -889,6 +921,8 @@ def get_forecast_vs_actual(db: Session, station: Station, metric: str, start: da
             "forecast_source_version": f.source_version,
             "forecast_issued_at": f.issued_at.isoformat(),
         }
+        if exact:
+            point["interval_end"] = f.interval_end
         if metric == "pv":
             weather = weather_by_id.get(f.based_on_weather_forecast_id)
             point["weather"] = None if weather is None else {
@@ -909,7 +943,7 @@ def get_forecast_vs_actual(db: Session, station: Station, metric: str, start: da
     return out
 
 
-def get_estimated_savings(db: Session, station: Station, start: datetime, end: datetime) -> dict:
+def get_estimated_savings(db: Session, station: Station, start: datetime, end: datetime, *, exact=False) -> dict:
     """Economie estimata fata de DOUA repere explicite si distincte, fiecare
     documentat in UI (nu prezentate ca economie masurata):
 
@@ -960,16 +994,18 @@ def get_estimated_savings(db: Session, station: Station, start: datetime, end: d
     hours_with_load_but_no_price = 0
     hours_with_incomplete_energy_data = 0
     hours_export_price_missing = 0
-    total_load_kwh = 0.0
-    total_pv_kwh = 0.0
-    actual_net_cost = 0.0
-    whole_system_baseline_cost = 0.0
-    ems_incremental_baseline_cost = 0.0
-    gross_pv_value = 0.0
-    self_consumption_savings = 0.0
-    export_revenue = 0.0
+    total_load_kwh = Decimal(0)
+    total_pv_kwh = Decimal(0)
+    actual_net_cost = Decimal(0)
+    whole_system_baseline_cost = Decimal(0)
+    ems_incremental_baseline_cost = Decimal(0)
+    gross_pv_value = Decimal(0)
+    self_consumption_savings = Decimal(0)
+    export_revenue = Decimal(0)
     tariff_buy_provenance = {"fixed_contract": 0, "indexed_settled": 0, "indexed_synthetic": 0, "unknown": 0}
 
+    input_qualities = set()
+    covered_seconds = Decimal(0)
     for r in rows:
         # NULL inseamna necunoscut in TelemetryAggregate. Un calcul financiar
         # necesita toate fluxurile; inlocuirea oricaruia cu zero ar fabrica o
@@ -985,33 +1021,39 @@ def get_estimated_savings(db: Session, station: Station, start: datetime, end: d
         ):
             hours_with_incomplete_energy_data += 1
             continue
-        price_buy = _effective_price_at(tariff_versions_buy, market_intervals, r.period_start)
+        price_buy = _effective_price_at(tariff_versions_buy, market_intervals, r.period_start, exact=True)
         if price_buy is None:
             hours_with_load_but_no_price += 1
             continue
 
-        load = float(r.load_energy_kwh)
-        pv = float(r.pv_energy_kwh)
-        grid_import = float(r.grid_import_energy_kwh)
-        grid_export = float(r.grid_export_energy_kwh)
-        self_export = max(pv - load, 0.0)
+        load = r.load_energy_kwh
+        pv = r.pv_energy_kwh
+        grid_import = r.grid_import_energy_kwh
+        grid_export = r.grid_export_energy_kwh
+        self_export = max(pv - load, Decimal(0))
 
         # Pretul de export este obligatoriu numai daca scenariul real sau
         # baseline-ul au export. Daca lipseste, excludem ora din toate sumele
         # comparabile; necunoscutul nu devine venit zero.
-        price_sell_resolved = _effective_price_at(tariff_versions_sell, market_intervals, r.period_start)
-        if price_sell_resolved is None and (grid_export > 0.0 or self_export > 0.0):
+        price_sell_resolved = _effective_price_at(tariff_versions_sell, market_intervals, r.period_start, exact=True)
+        if price_sell_resolved is None and (grid_export > 0 or self_export > 0):
             hours_export_price_missing += 1
             continue
-        price_sell = price_sell_resolved if price_sell_resolved is not None else 0.0
+        price_sell = price_sell_resolved if price_sell_resolved is not None else Decimal(0)
 
+        input_qualities.add(r.data_quality)
+        duration = Decimal(str((min(end, r.period_end) - max(start, r.period_start)).total_seconds()))
+        coverage = min(Decimal(str((r.coverage or {}).get(key, 0))) for key in ("pv", "load", "grid"))
+        covered_seconds += max(duration, Decimal(0)) * coverage
+        if (grid_export > 0 or self_export > 0) and _price_provenance_at(tariff_versions_sell, market_intervals, r.period_start) == "indexed_synthetic":
+            input_qualities.add("simulated")
         hours_priced += 1
         total_load_kwh += load
         total_pv_kwh += pv
         actual_net_cost += grid_import * price_buy - grid_export * price_sell
         whole_system_baseline_cost += load * price_buy
 
-        self_import = max(load - pv, 0.0)
+        self_import = max(load - pv, Decimal(0))
         ems_incremental_baseline_cost += self_import * price_buy - self_export * price_sell
 
         # Detaliere issue #49: NU sunt trei numere independente insumabile la
@@ -1030,7 +1072,7 @@ def get_estimated_savings(db: Session, station: Station, start: datetime, end: d
     has_synthetic_buy_price = tariff_buy_provenance["indexed_synthetic"] > 0
     tariff_provenance_summary = "estimated" if has_synthetic_buy_price else "measured"
 
-    return {
+    result = {
         "available": True,
         "hours_priced": hours_priced,
         "hours_expected": hours_expected,
@@ -1091,3 +1133,11 @@ def get_estimated_savings(db: Session, station: Station, start: datetime, end: d
         ),
         "tariff_provenance_summary": tariff_provenance_summary,
     }
+
+    if exact:
+        elapsed = Decimal(str((end - start).total_seconds()))
+        result["coverage_ratio"] = min(covered_seconds / elapsed, Decimal(1)) if elapsed > 0 else None
+        result["input_qualities"] = sorted(input_qualities | ({"simulated"} if has_synthetic_buy_price else set()))
+        result["updated_at"] = max((r.updated_at for r in rows), default=None)
+        return result
+    return {key: float(value) if isinstance(value, Decimal) else value for key, value in result.items()}
