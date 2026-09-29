@@ -646,12 +646,6 @@ OptimizationRun (scenariu calculat)
 
 ## Health, diagnostic access and notifications
 
-Battery diagnostics also expose typed, station-authorized read endpoints at
-`/api/v1/stations/{station_id}/battery-health` and `/battery-health/summary`.
-See [Battery diagnostics](BATTERY_DIAGNOSTICS.md) for parameters, per-pack
-identity, optional v1/v2 telemetry extensions, coverage, SOH provenance and
-the observed-throughput EFC formula. Models are in `/api/openapi.json`.
-
 Pentru introducerea tarifelor din factura, cele doua directii import/export si
 simularea compensarii lunare, vezi [ROMANIAN_TARIFF_SETUP.md](ROMANIAN_TARIFF_SETUP.md).
 
@@ -687,3 +681,11 @@ Web endpoints use session authentication. All POSTs require CSRF:
 | `POST /organizations/{id}/notifications/verify` | Own email; blank code requests queued verification, otherwise verifies expiring code |
 | `POST /organizations/{id}/notifications/push` | Own browser; validated `PushSubscription` JSON, encrypted storage |
 | `POST /stations/{id}/assistant` | Viewer membership (grants excluded), CSRF, feature flag; form `question`, optional local `day`; bounded read-only evidence response |
+
+## Mobile user authentication
+
+The additive `/api/v1/mobile/auth` API is separate from device bearer credentials
+and browser cookies. Its canonical schemas and rollout/threat model are documented
+in [ADR 0005](adr/0005-mobile-user-authentication.md). Generate consumers from
+`/api/openapi.json`; access tokens expire in five minutes and refresh must never be
+automatically replayed. Mobile and web Settings can revoke installation sessions.

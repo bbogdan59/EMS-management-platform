@@ -4,11 +4,14 @@ from pathlib import Path
 
 import structlog
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.config import get_settings
 from app.core.csrf import finalize_csrf_cookie, prepare_csrf_token
+from app.services.mobile_auth_service import MobileAuthError
 from app.web.templating import templates
 
 logger = structlog.get_logger(__name__)
@@ -30,6 +33,11 @@ def create_app() -> FastAPI:
 
     @app.middleware("http")
     async def csrf_cookie_middleware(request: Request, call_next):
+        if request.url.path.startswith("/api/v1/mobile/auth"):
+            response = await call_next(request)
+            response.headers["Cache-Control"] = "no-store"
+            response.headers["Pragma"] = "no-cache"
+            return response
         # Trebuie generat/atasat la request.state INAINTE de a apela handler-ul,
         # altfel un formular randat la prima vizita (fara cookie inca) ar
         # imbraca un camp ascuns gol -- necorelat cu cookie-ul setat abia dupa.
@@ -37,6 +45,19 @@ def create_app() -> FastAPI:
         response = await call_next(request)
         finalize_csrf_cookie(request, response, pending_token)
         return response
+
+    @app.exception_handler(MobileAuthError)
+    async def mobile_auth_error(request: Request, exc: MobileAuthError):
+        headers = {"Cache-Control": "no-store"}
+        if exc.retry_after:
+            headers["Retry-After"] = str(exc.retry_after)
+        return JSONResponse({"code": exc.code}, status_code=exc.status, headers=headers)
+
+    @app.exception_handler(RequestValidationError)
+    async def safe_validation_error(request: Request, exc: RequestValidationError):
+        if request.url.path.startswith("/api/v1/mobile/auth"):
+            return JSONResponse({"code": "invalid_request"}, status_code=422)
+        return await request_validation_exception_handler(request, exc)
 
     @app.exception_handler(HTTPException)
     async def http_exception_handler(request: Request, exc: HTTPException):
@@ -54,6 +75,7 @@ def create_app() -> FastAPI:
         )
 
     from app.api.mobile import router as mobile_router
+    from app.api.mobile_auth import router as mobile_auth_router
     from app.api.v1.router import api_v1_router
     from app.web.routes import admin as admin_routes
     from app.web.routes import admin_catalog as admin_catalog_routes
@@ -68,6 +90,7 @@ def create_app() -> FastAPI:
     from app.web.routes import home_assistant_bridge as home_assistant_bridge_routes
     from app.web.routes import inverter_config as inverter_config_routes
     from app.web.routes import market as market_routes
+    from app.web.routes import mobile_sessions as mobile_session_routes
     from app.web.routes import organizations as organizations_routes
     from app.web.routes import sse as sse_routes
     from app.web.routes import stations as stations_routes
@@ -78,6 +101,7 @@ def create_app() -> FastAPI:
     app.include_router(energy_operations_routes.router, tags=["energy-operations"])
     app.include_router(home_assistant_bridge_routes.router, tags=["home-assistant-bridge"])
     app.include_router(auth_routes.router, tags=["web-auth"])
+    app.include_router(mobile_session_routes.router, tags=["web-auth"])
     app.include_router(dashboard_routes.router, tags=["web-dashboard"])
     app.include_router(stations_routes.router, tags=["web-stations"])
     app.include_router(organizations_routes.router, tags=["web-organizations"])
@@ -90,6 +114,7 @@ def create_app() -> FastAPI:
     app.include_router(admin_firmware_routes.router, prefix="/admin", tags=["web-admin-firmware"])
     app.include_router(sse_routes.router, tags=["web-sse"])
     app.include_router(api_v1_router, prefix="/api/v1", tags=["device-api"])
+    app.include_router(mobile_auth_router)
 
     @app.get("/health", tags=["ops"])
     def health():

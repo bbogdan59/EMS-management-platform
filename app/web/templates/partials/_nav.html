@@ -15,6 +15,7 @@
     {% else %}<span class="workspace-name">Toate statiile</span>{% endif %}</div>
   </div>
   <nav class="sidebar-navigation">
+    {{ item('/settings/mobile-sessions', 'Sesiuni mobile', 'shield', path == '/settings/mobile-sessions') }}
     <p class="sidebar-caption nav-caption">MONITORIZARE</p>
     {{ item('/?station_id=' ~ current_station.id if current_station else '/', 'Privire de ansamblu', 'dashboard', path == '/') }}
     {% if current_station %}
