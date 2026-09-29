@@ -8,8 +8,14 @@
 {% endblock %}
 {% macro metric_history(key, label) %}
 <div class="metric-history" data-history="{{ key }}">
-  <div id="history-{{ key }}" class="metric-sparkline" role="img" aria-label="{{ label }}: istoric ultimele 24 de ore"></div>
+  <div id="history-{{ key }}" class="metric-sparkline" role="img" aria-label="{{ label }}: istoric ultimele 24 de ore"{% if key == 'grid' %} aria-describedby="grid-history-direction"{% endif %}></div>
   <p class="history-empty" hidden>Fara date istorice</p>
+  {% if key == 'grid' %}
+  <div id="grid-history-direction" class="history-direction">
+    <span>↑ Import (+)</span><span>↓ Export (−)</span>
+    <small>Deasupra / sub linia 0</small>
+  </div>
+  {% endif %}
   <div class="history-caption"><span>Ultimele 24 h</span><span data-history-status>Se incarca...</span></div>
   <button type="button" class="history-retry" hidden>Reincearca istoricul</button>
 </div>

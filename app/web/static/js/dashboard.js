@@ -229,6 +229,12 @@ function emsInitDashboard(stationId, initialSummary = null) {
       if (label) {
         label.textContent = edgeState.label;
         label.setAttribute("opacity", isMissing ? "0.55" : "1");
+        const frame = label.parentElement.querySelector("rect");
+        if (frame) {
+          const labelWidth = Math.max(84, label.getComputedTextLength() + 16);
+          frame.setAttribute("x", -labelWidth / 2);
+          frame.setAttribute("width", labelWidth);
+        }
       }
     }
 
@@ -433,13 +439,16 @@ function emsInitDashboard(stationId, initialSummary = null) {
       status.textContent = known.length ? ["medii 15 min", known.length < expected ? "partial" : "", ...qualities].filter(Boolean).join(" · ") : "fara date";
       root.title = `${known.length} din ${expected} intervale cu valori. Golurile reprezinta date lipsa.`;
       if (!known.length) continue;
+      // Keep zero centered so import/export always occupy the labelled halves,
+      // including windows containing only one direction or measured zeros.
+      const gridExtent = metric.id === "grid" ? Math.max(0.1, ...known.map(point => Math.abs(Number(point[metric.key])))) : null;
       const chart = emsCreateChart(chartEl);
       chart.setOption({
         animation: false,
         grid: {left: 2, right: 2, top: 7, bottom: 3},
         legend: {show: false},
         xAxis: {type: "time", show: false, min: startBucket, max: end},
-        yAxis: {type: "value", show: false, min: metric.id === "grid" ? undefined : 0, max: metric.id === "soc" ? 100 : undefined},
+        yAxis: {type: "value", show: false, min: metric.id === "grid" ? -gridExtent : 0, max: metric.id === "soc" ? 100 : metric.id === "grid" ? gridExtent : undefined},
         tooltip: {
           trigger: "axis", confine: true,
           formatter: rows => {
@@ -456,6 +465,12 @@ function emsInitDashboard(stationId, initialSummary = null) {
           showSymbol: known.length <= EMS_CHART_SYMBOL_THRESHOLD, symbolSize: 4,
           lineStyle: {color: metric.color, width: 2}, itemStyle: {color: metric.color},
           areaStyle: {color: metric.color, opacity: 0.16},
+          markLine: metric.id === "grid" ? {
+            silent: true, symbol: "none",
+            lineStyle: {color: "#f0f3e6", width: 1, type: "dashed", opacity: 0.65},
+            label: {show: true, position: "insideEndTop", formatter: "0", color: "#f0f3e6", fontSize: 9},
+            data: [{yAxis: 0}],
+          } : undefined,
           data: samples.map(point => ({
             value: [point.t, valid(point) ? Number(point[metric.key]) : null],
             quality: historyQuality(point).join(" · "),

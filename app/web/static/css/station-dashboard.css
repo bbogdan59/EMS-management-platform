@@ -18,12 +18,16 @@
 .metric-sparkline { height:66px; width:100%; }
 .history-caption { display:flex; justify-content:space-between; flex-wrap:wrap; gap:4px 8px; font-size:9px; color:#e1e6d5; margin-top:8px; }
 .history-caption [data-history-status] { text-align:right; }
+.history-direction { display:flex; justify-content:space-between; flex-wrap:wrap; gap:3px 8px; margin-top:8px; color:#fff2bd; font-size:10px; font-weight:600; }
+.history-direction small { flex-basis:100%; color:#e1e6d5; font-size:9px; font-weight:400; }
 .history-empty { display:flex; align-items:center; height:66px; color:#e1e6d5; font-size:11px; border-bottom:1px dashed #e1e6d555; }
 .history-retry { color:#faf2b7; text-decoration:underline; font-size:11px; padding-top:6px; }
 .energy-dashboard .dashboard-hero { grid-template-columns:repeat(2,minmax(0,1fr)); gap:18px; align-items:stretch; }
 .energy-dashboard .flow-panel { display:flex; flex-direction:column; background:linear-gradient(145deg,var(--surface-soft),var(--surface)); border-color:var(--line); }
 .energy-dashboard .energy-flow-scene { flex:1; min-height:245px; max-height:350px; }
 .energy-dashboard .flow-scene-ground { fill:#c6cfb6; }
+.energy-dashboard .flow-value rect { fill:#ffdf7e; stroke:#ba791e; stroke-width:1.2; }
+.energy-dashboard .energy-flow-scene [data-flow-label] { fill:#422506; stroke:none; font-size:12px; font-weight:750; }
 .energy-dashboard .flow-footer { margin-top:auto; }
 .energy-dashboard .sun-card { margin:0; min-width:0; display:flex; flex-direction:column; }
 .energy-dashboard .sun-layout { display:block; }
