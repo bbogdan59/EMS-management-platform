@@ -105,7 +105,10 @@ TELEMETRY_CONTRACT_V1 = {
         "mppt": {
             "max_items": 8,
             "fields": {
-                "index": {"unit": None, "min_value": 1},
+                "index": {"unit": None, "min_value": 1, "max_value": 2147483647},
+                "label": {"nullable": True, "max_length": 80},
+                "kind": {"values": ["mppt", "pv_input"], "default": "mppt"},
+                "supported_metrics": {"nullable": True, "values": ["voltage_v", "current_a", "power_w"], "description": "Optional explicit capability list; NULL readings stay unknown. Omit for legacy observed capabilities."},
                 "voltage_v": {"unit": "V", "nullable": True, "min_value": 0},
                 "current_a": {"unit": "A", "nullable": True, "min_value": 0},
                 "power_w": {"unit": "W", "nullable": True, "min_value": 0},
@@ -124,7 +127,7 @@ TELEMETRY_CONTRACT_V1 = {
             },
         },
         "agent_flat_compatibility": "EMS-device-code v0.1 MPPT, grid/load phases, battery/inverter temperatures and cumulative kWh fields are normalized into typed groups. Do not mix flat and grouped forms for one group. Raw inverter_status_code is inventory, never an interpreted fault.",
-        "inverter": {"fields": {"dc_temperature_c": {"unit": "degC", "nullable": True}, "ac_temperature_c": {"unit": "degC", "nullable": True}, "status_code": {"unit": None, "nullable": True, "min_value": 0, "max_value": 65535}}},
+        "inverter": {"fields": {"dc_temperature_c": {"unit": "degC", "nullable": True}, "ac_temperature_c": {"unit": "degC", "nullable": True}, "ac_output_power_w": {"unit": "W", "nullable": True, "sign": "positive output; negative inverter draw; independent of DC PV total"}, "status_code": {"unit": None, "nullable": True, "min_value": 0, "max_value": 65535}}},
         "battery": {
             "fields": {
                 "voltage_v": {"unit": "V", "nullable": True, "min_value": 0},

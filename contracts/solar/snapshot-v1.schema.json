@@ -1,0 +1,350 @@
+{
+  "$defs": {
+    "ACObservation": {
+      "properties": {
+        "value": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Value"
+        },
+        "unit": {
+          "const": "W",
+          "default": "W",
+          "title": "Unit",
+          "type": "string"
+        },
+        "measured_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Measured At"
+        },
+        "received_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Received At"
+        },
+        "flags": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Flags",
+          "type": "array"
+        },
+        "quality": {
+          "enum": [
+            "measured",
+            "derived",
+            "simulated",
+            "stale",
+            "missing"
+          ],
+          "title": "Quality",
+          "type": "string"
+        }
+      },
+      "required": [
+        "flags",
+        "quality"
+      ],
+      "title": "ACObservation",
+      "type": "object"
+    },
+    "Metric": {
+      "properties": {
+        "value": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Value"
+        },
+        "unit": {
+          "enum": [
+            "V",
+            "A",
+            "W"
+          ],
+          "title": "Unit",
+          "type": "string"
+        },
+        "supported": {
+          "title": "Supported",
+          "type": "boolean"
+        },
+        "quality": {
+          "enum": [
+            "measured",
+            "derived",
+            "simulated",
+            "stale",
+            "missing"
+          ],
+          "title": "Quality",
+          "type": "string"
+        }
+      },
+      "required": [
+        "value",
+        "unit",
+        "supported",
+        "quality"
+      ],
+      "title": "Metric",
+      "type": "object"
+    },
+    "SolarInput": {
+      "properties": {
+        "id": {
+          "format": "uuid",
+          "title": "Id",
+          "type": "string"
+        },
+        "index": {
+          "title": "Index",
+          "type": "integer"
+        },
+        "label": {
+          "title": "Label",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "mppt",
+            "pv_input"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "source": {
+          "title": "Source",
+          "type": "string"
+        },
+        "capability": {
+          "const": "reported",
+          "title": "Capability",
+          "type": "string"
+        },
+        "metrics": {
+          "additionalProperties": {
+            "$ref": "#/$defs/Metric"
+          },
+          "title": "Metrics",
+          "type": "object"
+        },
+        "flags": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Flags",
+          "type": "array"
+        },
+        "measured_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Measured At"
+        },
+        "received_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Received At"
+        },
+        "freshness": {
+          "enum": [
+            "missing",
+            "stale",
+            "fresh"
+          ],
+          "title": "Freshness",
+          "type": "string"
+        },
+        "revision": {
+          "title": "Revision",
+          "type": "integer"
+        },
+        "configuration": {
+          "additionalProperties": true,
+          "title": "Configuration",
+          "type": "object"
+        }
+      },
+      "required": [
+        "id",
+        "index",
+        "label",
+        "kind",
+        "source",
+        "capability",
+        "metrics",
+        "flags",
+        "measured_at",
+        "received_at",
+        "freshness",
+        "revision",
+        "configuration"
+      ],
+      "title": "SolarInput",
+      "type": "object"
+    },
+    "SolarInverterSnapshot": {
+      "properties": {
+        "id": {
+          "format": "uuid",
+          "title": "Id",
+          "type": "string"
+        },
+        "label": {
+          "title": "Label",
+          "type": "string"
+        },
+        "model": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Model"
+        },
+        "source": {
+          "title": "Source",
+          "type": "string"
+        },
+        "inputs": {
+          "items": {
+            "$ref": "#/$defs/SolarInput"
+          },
+          "title": "Inputs",
+          "type": "array"
+        },
+        "dc_total_w": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Dc Total W"
+        },
+        "dc_quality": {
+          "enum": [
+            "measured",
+            "derived",
+            "simulated",
+            "stale",
+            "missing"
+          ],
+          "title": "Dc Quality",
+          "type": "string"
+        },
+        "ac_output": {
+          "$ref": "#/$defs/ACObservation"
+        },
+        "warnings": {
+          "items": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "title": "Warnings",
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "label",
+        "model",
+        "source",
+        "inputs",
+        "dc_total_w",
+        "dc_quality",
+        "ac_output",
+        "warnings"
+      ],
+      "title": "SolarInverterSnapshot",
+      "type": "object"
+    }
+  },
+  "properties": {
+    "schema_version": {
+      "const": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "station_id": {
+      "format": "uuid",
+      "title": "Station Id",
+      "type": "string"
+    },
+    "timezone": {
+      "title": "Timezone",
+      "type": "string"
+    },
+    "generated_at": {
+      "title": "Generated At",
+      "type": "string"
+    },
+    "inverters": {
+      "items": {
+        "$ref": "#/$defs/SolarInverterSnapshot"
+      },
+      "title": "Inverters",
+      "type": "array"
+    },
+    "dc_ac_note": {
+      "title": "Dc Ac Note",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "station_id",
+    "timezone",
+    "generated_at",
+    "inverters",
+    "dc_ac_note"
+  ],
+  "title": "SolarSnapshot",
+  "type": "object"
+}

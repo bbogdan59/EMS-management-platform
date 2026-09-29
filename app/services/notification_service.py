@@ -22,7 +22,7 @@ from app.models.station import Station
 from app.models.user import User
 from app.services.health_service import RULES
 
-CATEGORIES = ("incident", "warning", "opportunity", "info")
+CATEGORIES = ("incident", "warning", "opportunity", "info", "briefing")
 SEVERITIES = ("info", "warning", "error", "critical")
 CHANNELS = ("email", "push")
 MODES = ("off", "immediate", "daily")
@@ -405,7 +405,9 @@ def deliver_one(db, now=None, *, email_adapter=None, push_adapter=None):
     user = db.get(User, delivery.user_id)
     settings = get_settings()
     reason = None
-    if not pref or not member_can_receive(db, delivery.user_id, delivery.organization_id):
+    if delivery.expires_at is not None and now >= delivery.expires_at:
+        reason = "expired"
+    elif not pref or not member_can_receive(db, delivery.user_id, delivery.organization_id):
         reason = "access_revoked"
     elif delivery.kind == "verification":
         if not pref.verification_expires_at or now >= pref.verification_expires_at:
@@ -415,7 +417,12 @@ def deliver_one(db, now=None, *, email_adapter=None, push_adapter=None):
     elif delivery.channel == "push" and not pref.encrypted_push_subscription:
         reason = "destination_missing"
     notices = []
-    if not reason and delivery.kind != "verification":
+    if not reason and delivery.kind == "briefing":
+        from app.services.morning_briefing_service import eligible_delivery_notices
+        notices = eligible_delivery_notices(db, delivery, now)
+        if not notices:
+            reason = "briefing_revoked_or_expired"
+    elif not reason and delivery.kind != "verification":
         notices = list(
             db.scalars(
                 select(Notification)
@@ -466,6 +473,12 @@ def deliver_one(db, now=None, *, email_adapter=None, push_adapter=None):
         + "\nDeschide Notificari in aplicatia EMS. Preferintele si dezabonarea sunt disponibile in aceeasi pagina."
     )
     destination = user.email
+    if delivery.kind == "briefing":
+        title = notices[0].title if len(notices) == 1 else f"Briefing matinal: {len(notices)} statii"
+        body = "\n\n".join(f"{n.payload.get('station_name', '')}: {n.payload['body']}" if len(notices) > 1 else n.payload["body"] for n in notices)
+        link = notices[0].link if len(notices) == 1 else "/notifications"
+        if delivery.channel == "email":
+            body += f"\n\nVezi prognoza si planul zilei: {settings.base_url.rstrip('/')}{link}"
     if delivery.kind == "verification":
         try:
             payload = json.loads(decrypt_secret(delivery.encrypted_payload))
@@ -490,7 +503,7 @@ def deliver_one(db, now=None, *, email_adapter=None, push_adapter=None):
         else:
             (push_adapter or PushAdapter()).send(
                 json.loads(decrypt_secret(pref.encrypted_push_subscription)),
-                {"title": title, "body": "Ai notificari noi in EMS.", "url": link},
+                {"title": title, "body": body if delivery.kind == "briefing" and len(notices) == 1 else "Ai notificari noi in EMS.", "url": link},
                 delivery.dedupe_key,
             )
     except Exception:

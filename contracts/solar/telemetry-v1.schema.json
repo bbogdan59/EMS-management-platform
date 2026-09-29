@@ -1,0 +1,1198 @@
+{
+  "$defs": {
+    "BatteryPackTelemetry": {
+      "additionalProperties": false,
+      "properties": {
+        "voltage_v": {
+          "anyOf": [
+            {
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Voltage V"
+        },
+        "current_a": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Current A"
+        },
+        "temperature_c": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Temperature C"
+        },
+        "soh_percent": {
+          "anyOf": [
+            {
+              "maximum": 100.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Soh Percent"
+        },
+        "soh_kind": {
+          "anyOf": [
+            {
+              "enum": [
+                "measured",
+                "estimated",
+                "unavailable"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Soh Kind"
+        },
+        "soh_method": {
+          "anyOf": [
+            {
+              "maxLength": 80,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Soh Method"
+        },
+        "soh_method_version": {
+          "anyOf": [
+            {
+              "maxLength": 40,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Soh Method Version"
+        },
+        "soh_confidence": {
+          "default": "unknown",
+          "enum": [
+            "low",
+            "medium",
+            "high",
+            "unknown"
+          ],
+          "title": "Soh Confidence",
+          "type": "string"
+        },
+        "nominal_capacity_kwh": {
+          "anyOf": [
+            {
+              "maximum": 100000.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Nominal Capacity Kwh"
+        },
+        "usable_capacity_kwh": {
+          "anyOf": [
+            {
+              "maximum": 100000.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Usable Capacity Kwh"
+        },
+        "cycle_count": {
+          "anyOf": [
+            {
+              "maximum": 10000000,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Source-reported lifetime cycles, distinct from EMS throughput EFC.",
+          "title": "Cycle Count"
+        },
+        "state": {
+          "anyOf": [
+            {
+              "enum": [
+                "idle",
+                "charging",
+                "discharging",
+                "fault",
+                "unknown"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "State"
+        },
+        "quality": {
+          "default": "measured",
+          "enum": [
+            "measured",
+            "derived",
+            "simulated",
+            "stale"
+          ],
+          "title": "Quality",
+          "type": "string"
+        },
+        "pack_id": {
+          "description": "Stable within this device; use a new ID for a replacement pack.",
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_.:-]+$",
+          "title": "Pack Id",
+          "type": "string"
+        },
+        "label": {
+          "anyOf": [
+            {
+              "maxLength": 80,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Label"
+        },
+        "power_w": {
+          "anyOf": [
+            {
+              "exclusiveMaximum": 99999999.0,
+              "exclusiveMinimum": -99999999.0,
+              "type": "number"
+            },
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "DC W; positive charge, negative discharge.",
+          "title": "Power W"
+        },
+        "soc_percent": {
+          "anyOf": [
+            {
+              "maximum": 100.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Soc Percent"
+        }
+      },
+      "required": [
+        "pack_id"
+      ],
+      "title": "BatteryPackTelemetry",
+      "type": "object"
+    },
+    "BatteryTelemetry": {
+      "additionalProperties": false,
+      "properties": {
+        "voltage_v": {
+          "anyOf": [
+            {
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Voltage V"
+        },
+        "current_a": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Current A"
+        },
+        "temperature_c": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Temperature C"
+        },
+        "soh_percent": {
+          "anyOf": [
+            {
+              "maximum": 100.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Soh Percent"
+        },
+        "soh_kind": {
+          "anyOf": [
+            {
+              "enum": [
+                "measured",
+                "estimated",
+                "unavailable"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Soh Kind"
+        },
+        "soh_method": {
+          "anyOf": [
+            {
+              "maxLength": 80,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Soh Method"
+        },
+        "soh_method_version": {
+          "anyOf": [
+            {
+              "maxLength": 40,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Soh Method Version"
+        },
+        "soh_confidence": {
+          "default": "unknown",
+          "enum": [
+            "low",
+            "medium",
+            "high",
+            "unknown"
+          ],
+          "title": "Soh Confidence",
+          "type": "string"
+        },
+        "nominal_capacity_kwh": {
+          "anyOf": [
+            {
+              "maximum": 100000.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Nominal Capacity Kwh"
+        },
+        "usable_capacity_kwh": {
+          "anyOf": [
+            {
+              "maximum": 100000.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Usable Capacity Kwh"
+        },
+        "cycle_count": {
+          "anyOf": [
+            {
+              "maximum": 10000000,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Source-reported lifetime cycles, distinct from EMS throughput EFC.",
+          "title": "Cycle Count"
+        },
+        "state": {
+          "anyOf": [
+            {
+              "enum": [
+                "idle",
+                "charging",
+                "discharging",
+                "fault",
+                "unknown"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "State"
+        },
+        "quality": {
+          "default": "measured",
+          "enum": [
+            "measured",
+            "derived",
+            "simulated",
+            "stale"
+          ],
+          "title": "Quality",
+          "type": "string"
+        }
+      },
+      "title": "BatteryTelemetry",
+      "type": "object"
+    },
+    "CumulativeCounterTelemetry": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "enum": [
+            "pv_energy_total",
+            "load_energy_total",
+            "grid_import_energy_total",
+            "grid_export_energy_total",
+            "battery_charge_energy_total",
+            "battery_discharge_energy_total",
+            "ev_energy_total"
+          ],
+          "title": "Name",
+          "type": "string"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            }
+          ],
+          "title": "Value"
+        },
+        "unit": {
+          "const": "kWh",
+          "title": "Unit",
+          "type": "string"
+        },
+        "reset_id": {
+          "anyOf": [
+            {
+              "maxLength": 64,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Schimbat de device cand contorul a fost resetat sau a facut rollover.",
+          "title": "Reset Id"
+        },
+        "quality": {
+          "default": "measured",
+          "enum": [
+            "measured",
+            "derived",
+            "simulated",
+            "stale"
+          ],
+          "title": "Quality",
+          "type": "string"
+        },
+        "rollover_kwh": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0.0,
+              "type": "number"
+            },
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Rollover Kwh"
+        }
+      },
+      "required": [
+        "name",
+        "value",
+        "unit"
+      ],
+      "title": "CumulativeCounterTelemetry",
+      "type": "object"
+    },
+    "DeviceStatusTelemetry": {
+      "additionalProperties": false,
+      "properties": {
+        "inverter_state": {
+          "anyOf": [
+            {
+              "enum": [
+                "offline",
+                "standby",
+                "running",
+                "fault",
+                "unknown"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Inverter State"
+        },
+        "battery_state": {
+          "anyOf": [
+            {
+              "enum": [
+                "idle",
+                "charging",
+                "discharging",
+                "fault",
+                "unknown"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Battery State"
+        },
+        "faults": {
+          "items": {
+            "$ref": "#/$defs/FaultTelemetry"
+          },
+          "maxItems": 32,
+          "title": "Faults",
+          "type": "array"
+        },
+        "quality": {
+          "default": "reported",
+          "enum": [
+            "reported",
+            "measured",
+            "derived",
+            "simulated",
+            "stale"
+          ],
+          "title": "Quality",
+          "type": "string"
+        }
+      },
+      "title": "DeviceStatusTelemetry",
+      "type": "object"
+    },
+    "FaultTelemetry": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "maxLength": 64,
+          "minLength": 1,
+          "title": "Code",
+          "type": "string"
+        },
+        "severity": {
+          "enum": [
+            "info",
+            "warning",
+            "error",
+            "critical"
+          ],
+          "title": "Severity",
+          "type": "string"
+        },
+        "message": {
+          "anyOf": [
+            {
+              "maxLength": 200,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Message"
+        }
+      },
+      "required": [
+        "code",
+        "severity"
+      ],
+      "title": "FaultTelemetry",
+      "type": "object"
+    },
+    "InverterTelemetry": {
+      "additionalProperties": false,
+      "properties": {
+        "dc_temperature_c": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Dc Temperature C"
+        },
+        "ac_temperature_c": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Ac Temperature C"
+        },
+        "status_code": {
+          "anyOf": [
+            {
+              "maximum": 65535,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Status Code"
+        },
+        "quality": {
+          "default": "measured",
+          "enum": [
+            "measured",
+            "derived",
+            "simulated",
+            "stale"
+          ],
+          "title": "Quality",
+          "type": "string"
+        },
+        "ac_output_power_w": {
+          "anyOf": [
+            {
+              "exclusiveMaximum": 99999999.0,
+              "exclusiveMinimum": -99999999.0,
+              "type": "number"
+            },
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Ac Output Power W"
+        }
+      },
+      "title": "InverterTelemetry",
+      "type": "object"
+    },
+    "MpptTelemetry": {
+      "additionalProperties": false,
+      "properties": {
+        "index": {
+          "description": "Indexul MPPT raportat de device, 1-based.",
+          "maximum": 2147483647,
+          "minimum": 1,
+          "title": "Index",
+          "type": "integer"
+        },
+        "voltage_v": {
+          "anyOf": [
+            {
+              "exclusiveMaximum": 99999999.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Voltage V"
+        },
+        "current_a": {
+          "anyOf": [
+            {
+              "exclusiveMaximum": 99999999.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Current A"
+        },
+        "power_w": {
+          "anyOf": [
+            {
+              "exclusiveMaximum": 99999999.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Power W"
+        },
+        "quality": {
+          "default": "measured",
+          "enum": [
+            "measured",
+            "derived",
+            "simulated",
+            "stale"
+          ],
+          "title": "Quality",
+          "type": "string"
+        },
+        "label": {
+          "anyOf": [
+            {
+              "maxLength": 80,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Label"
+        },
+        "kind": {
+          "default": "mppt",
+          "enum": [
+            "mppt",
+            "pv_input"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "supported_metrics": {
+          "anyOf": [
+            {
+              "items": {
+                "enum": [
+                  "voltage_v",
+                  "current_a",
+                  "power_w"
+                ],
+                "type": "string"
+              },
+              "maxItems": 3,
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Supported Metrics"
+        }
+      },
+      "required": [
+        "index"
+      ],
+      "title": "MpptTelemetry",
+      "type": "object"
+    },
+    "PhaseTelemetry": {
+      "additionalProperties": false,
+      "properties": {
+        "phase": {
+          "enum": [
+            "L1",
+            "L2",
+            "L3"
+          ],
+          "title": "Phase",
+          "type": "string"
+        },
+        "circuit": {
+          "default": "grid",
+          "enum": [
+            "grid",
+            "load"
+          ],
+          "title": "Circuit",
+          "type": "string"
+        },
+        "voltage_v": {
+          "anyOf": [
+            {
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Voltage V"
+        },
+        "current_a": {
+          "anyOf": [
+            {
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Current A"
+        },
+        "active_power_w": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "W; aceeasi conventie de semn ca metrica pe care o detaliaza, cand este aplicabil.",
+          "title": "Active Power W"
+        },
+        "quality": {
+          "default": "measured",
+          "enum": [
+            "measured",
+            "derived",
+            "simulated",
+            "stale"
+          ],
+          "title": "Quality",
+          "type": "string"
+        }
+      },
+      "required": [
+        "phase"
+      ],
+      "title": "PhaseTelemetry",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Un punct de telemetrie. Conventii de semn documentate in docs/API.md:\nbattery_power_w>0 inseamna incarcare; grid_power_w>0 inseamna import.",
+  "properties": {
+    "boot_id": {
+      "maxLength": 64,
+      "minLength": 1,
+      "title": "Boot Id",
+      "type": "string"
+    },
+    "sequence": {
+      "description": "Contor monoton crescator in cadrul unui boot_id, pentru deduplicare.",
+      "maximum": 9223372036854775807,
+      "minimum": 0,
+      "title": "Sequence",
+      "type": "integer"
+    },
+    "schema_version": {
+      "default": 1,
+      "minimum": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "measured_at": {
+      "format": "date-time",
+      "title": "Measured At",
+      "type": "string"
+    },
+    "pv_power_w": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "W, >=0. Respingere semantica per item daca este negativa.",
+      "title": "Pv Power W"
+    },
+    "load_power_w": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "W, >=0. Respingere semantica per item daca este negativa.",
+      "title": "Load Power W"
+    },
+    "battery_power_w": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "W; >0 incarcare, <0 descarcare.",
+      "title": "Battery Power W"
+    },
+    "grid_power_w": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "W; >0 import, <0 export.",
+      "title": "Grid Power W"
+    },
+    "battery_soc_percent": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "%, interval valid 0..100; 0 este valoare masurata valida.",
+      "title": "Battery Soc Percent"
+    },
+    "ev_connected": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Ev Connected"
+    },
+    "ev_power_w": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "W, >=0. Respingere semantica per item daca este negativa.",
+      "title": "Ev Power W"
+    },
+    "mppt": {
+      "items": {
+        "$ref": "#/$defs/MpptTelemetry"
+      },
+      "maxItems": 8,
+      "title": "Mppt",
+      "type": "array"
+    },
+    "phases": {
+      "items": {
+        "$ref": "#/$defs/PhaseTelemetry"
+      },
+      "maxItems": 6,
+      "title": "Phases",
+      "type": "array"
+    },
+    "battery": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/BatteryTelemetry"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "battery_packs": {
+      "items": {
+        "$ref": "#/$defs/BatteryPackTelemetry"
+      },
+      "maxItems": 32,
+      "title": "Battery Packs",
+      "type": "array"
+    },
+    "inverter": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/InverterTelemetry"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "status": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/DeviceStatusTelemetry"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "counters": {
+      "items": {
+        "$ref": "#/$defs/CumulativeCounterTelemetry"
+      },
+      "maxItems": 32,
+      "title": "Counters",
+      "type": "array"
+    },
+    "quality_flags": {
+      "additionalProperties": true,
+      "title": "Quality Flags",
+      "type": "object"
+    },
+    "raw_payload": {
+      "additionalProperties": true,
+      "title": "Raw Payload",
+      "type": "object"
+    }
+  },
+  "required": [
+    "boot_id",
+    "sequence",
+    "measured_at"
+  ],
+  "title": "TelemetryItem",
+  "type": "object"
+}

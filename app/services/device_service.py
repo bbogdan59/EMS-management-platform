@@ -349,11 +349,13 @@ def ingest_telemetry_batch(
         inserted = Counter((row.boot_id, row.sequence) for row in result)
         backfill_hours = set()
         remaining_inserted = inserted.copy()
-        for _, item, _ in rows:
+        for _, item, row_values in rows:
             key = (item.boot_id, item.sequence)
             if not remaining_inserted[key]:
                 continue
             remaining_inserted[key] -= 1
+            from app.services.solar_service import ingest_device
+            ingest_device(db, device, row_values)
             if now - item.measured_at > timedelta(hours=2):
                 hour = item.measured_at.astimezone(UTC).replace(minute=0, second=0, microsecond=0)
                 backfill_hours.update((hour - timedelta(hours=1), hour, hour + timedelta(hours=1)))

@@ -1,0 +1,162 @@
+{
+  "$defs": {
+    "SolarHistoryPoint": {
+      "properties": {
+        "start": {
+          "title": "Start",
+          "type": "string"
+        },
+        "end": {
+          "title": "End",
+          "type": "string"
+        },
+        "voltage_v": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Voltage V"
+        },
+        "current_a": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Current A"
+        },
+        "power_w": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Power W"
+        },
+        "energy_kwh": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Energy Kwh"
+        },
+        "coverage": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "Coverage",
+          "type": "object"
+        },
+        "quality": {
+          "enum": [
+            "measured",
+            "derived",
+            "simulated",
+            "stale",
+            "missing"
+          ],
+          "title": "Quality",
+          "type": "string"
+        },
+        "flags": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Flags",
+          "type": "array"
+        }
+      },
+      "required": [
+        "start",
+        "end",
+        "voltage_v",
+        "current_a",
+        "power_w",
+        "energy_kwh",
+        "coverage",
+        "quality",
+        "flags"
+      ],
+      "title": "SolarHistoryPoint",
+      "type": "object"
+    }
+  },
+  "properties": {
+    "schema_version": {
+      "const": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "tracker_id": {
+      "format": "uuid",
+      "title": "Tracker Id",
+      "type": "string"
+    },
+    "timezone": {
+      "title": "Timezone",
+      "type": "string"
+    },
+    "resolution": {
+      "enum": [
+        "15m",
+        "1h"
+      ],
+      "title": "Resolution",
+      "type": "string"
+    },
+    "start": {
+      "title": "Start",
+      "type": "string"
+    },
+    "end": {
+      "title": "End",
+      "type": "string"
+    },
+    "units": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "title": "Units",
+      "type": "object"
+    },
+    "aggregation": {
+      "const": "time_weighted_mean",
+      "title": "Aggregation",
+      "type": "string"
+    },
+    "points": {
+      "items": {
+        "$ref": "#/$defs/SolarHistoryPoint"
+      },
+      "title": "Points",
+      "type": "array"
+    }
+  },
+  "required": [
+    "schema_version",
+    "tracker_id",
+    "timezone",
+    "resolution",
+    "start",
+    "end",
+    "units",
+    "aggregation",
+    "points"
+  ],
+  "title": "SolarHistory",
+  "type": "object"
+}
