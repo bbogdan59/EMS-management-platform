@@ -40,6 +40,7 @@ from app.models.home_assistant import HomeAssistantConnection, HomeAssistantMapp
 from app.models.home_assistant_bridge import HomeAssistantBridge
 from app.models.inverter_config import InverterDesired, InverterProfile, InverterReport
 from app.models.market import ImportRun, MarketPriceInterval
+from app.models.mobile_auth import MobileRefreshToken, MobileRegistration, MobileSession
 from app.models.notification import Notification, NotificationDelivery, NotificationPreference
 from app.models.optimization import OptimizationRun, Plan, PlanInterval
 from app.models.organization import Membership, Organization
@@ -98,6 +99,9 @@ __all__ = [
     "Invitation",
     "MarketPriceInterval",
     "Membership",
+    "MobileRefreshToken",
+    "MobileRegistration",
+    "MobileSession",
     "Notification",
     "NotificationDelivery",
     "NotificationPreference",

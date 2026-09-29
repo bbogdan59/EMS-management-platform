@@ -98,6 +98,10 @@ celery_app.conf.beat_schedule = {
         "task": "app.workers.tasks.market_revision_retention_task",
         "schedule": crontab(hour=3, minute=30),
     },
+    "mobile-auth-retention-daily": {
+        "task": "app.workers.tasks.mobile_auth_retention_task",
+        "schedule": crontab(hour=4, minute=15),
+    },
     "task-execution-retention-daily": {
         "task": "app.workers.tasks.task_execution_retention_task",
         "schedule": crontab(hour=4, minute=0),

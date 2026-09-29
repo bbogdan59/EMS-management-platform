@@ -72,6 +72,7 @@ def test_published_contract_matches_application_and_initial_release():
             "home-assistant/context",
         )
     } <= contract["paths"].keys()
+    assert not any(path.startswith("/api/v1/mobile/auth/") for path in contract["paths"])
     for operations in contract["paths"].values():
         assert set(operations) == {"get"}
         assert operations["get"]["responses"]["422"]["content"]["application/json"]["schema"][

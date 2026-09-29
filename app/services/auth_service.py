@@ -22,6 +22,7 @@ from app.models.enums import Role
 from app.models.organization import Membership, Organization
 from app.models.user import Invitation, PasswordResetToken, User
 from app.models.user import Session as UserSession
+from app.services.mobile_auth_service import revoke_for_user
 
 settings = get_settings()
 
@@ -97,7 +98,7 @@ def revoke_session(db: Session, session: UserSession) -> None:
 
 def revoke_all_sessions_for_user(db: Session, user_id: uuid.UUID, except_session_id: uuid.UUID | None = None) -> int:
     sessions = db.scalars(select(UserSession).where(UserSession.user_id == user_id)).all()
-    count = 0
+    count = revoke_for_user(db, user_id)
     for s in sessions:
         if s.revoked_at is None and s.id != except_session_id:
             s.revoked_at = utcnow()
@@ -120,6 +121,8 @@ def revoke_all_sessions_for_users_in_organization(db: Session, organization_id: 
         .where(Membership.organization_id == organization_id, UserSession.revoked_at.is_(None))
     ).all()
     count = 0
+    for user_id in db.scalars(select(Membership.user_id).where(Membership.organization_id == organization_id)):
+        count += revoke_for_user(db, user_id)
     for session_id in session_ids:
         sess = db.get(UserSession, session_id)
         if sess is not None and sess.revoked_at is None:
