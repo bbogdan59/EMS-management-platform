@@ -221,7 +221,7 @@ def list_recent_device_logs(db: Session, device: Device, limit: int = 200) -> li
 def telemetry_semantic_rejection(item: TelemetryItem) -> str | None:
     if item.schema_version not in (1, 2):
         return "unsupported_schema_version"
-    for rows, key in ((item.mppt, "index"), (item.counters, "name")):
+    for rows, key in ((item.mppt, "index"), (item.counters, "name"), (item.battery_packs, "pack_id")):
         if len({getattr(row, key) for row in rows}) != len(rows):
             return "duplicate_metric"
     if len({(row.circuit, row.phase) for row in item.phases}) != len(item.phases):
@@ -251,6 +251,8 @@ def _extended_telemetry_payload(item: TelemetryItem) -> dict:
         extended["phases"] = [row.model_dump(mode="json") for row in item.phases]
     if item.battery is not None:
         extended["battery"] = item.battery.model_dump(mode="json", exclude_none=True)
+    if item.battery_packs:
+        extended["battery_packs"] = [row.model_dump(mode="json", exclude_none=True) for row in item.battery_packs]
     if item.inverter is not None:
         extended["inverter"] = item.inverter.model_dump(mode="json", exclude_none=True)
     if item.status is not None:

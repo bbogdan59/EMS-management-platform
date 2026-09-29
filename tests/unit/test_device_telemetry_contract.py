@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pytest
 from pydantic import ValidationError
 
 from app.schemas.device_api import TelemetryItem
@@ -46,3 +47,16 @@ def test_telemetry_item_rejects_unknown_extended_fields_and_non_finite_values():
 
     assert any(error["type"] == "extra_forbidden" for error in errors)
     assert any(error["type"] == "finite_number" for error in errors)
+
+
+@pytest.mark.parametrize("pack", [
+    {"pack_id": "one", "power_w": "NaN"},
+    {"pack_id": "one", "nominal_capacity_kwh": "Infinity"},
+    {"pack_id": "one", "soc_percent": 101},
+    {"pack_id": "../bad"},
+    {"pack_id": "one", "soh_percent": 90, "soh_kind": "unavailable"},
+    {"pack_id": "one", "soh_percent": 90, "soh_kind": "estimated"},
+])
+def test_pack_invalid_values_and_unattributed_soh_are_rejected(pack):
+    with pytest.raises(ValidationError):
+        TelemetryItem(boot_id="battery", sequence=1, measured_at="2026-09-18T10:00:00Z", battery_packs=[pack])

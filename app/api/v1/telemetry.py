@@ -131,9 +131,28 @@ TELEMETRY_CONTRACT_V1 = {
                 "current_a": {"unit": "A", "nullable": True},
                 "temperature_c": {"unit": "degC", "nullable": True},
                 "soh_percent": {"unit": "%", "nullable": True, "min_value": 0, "max_value": 100},
+                "soh_kind": {"values": ["measured", "estimated", "unavailable"], "nullable": True},
+                "soh_method": {"nullable": True, "required_for": "estimated SOH"},
+                "soh_method_version": {"nullable": True, "required_for": "estimated SOH"},
+                "soh_confidence": {"values": ["low", "medium", "high", "unknown"], "default": "unknown"},
+                "nominal_capacity_kwh": {"unit": "kWh", "nullable": True, "min_value": 0},
+                "usable_capacity_kwh": {"unit": "kWh", "nullable": True, "min_value": 0},
+                "cycle_count": {"unit": "cycles", "nullable": True, "min_value": 0, "description": "Source-reported lifetime cycles, not EMS observed throughput EFC."},
                 "state": {"values": ["idle", "charging", "discharging", "fault", "unknown"], "nullable": True},
                 "quality": {"unit": None, "default": "measured"},
             },
+        },
+        "battery_packs": {
+            "max_items": 32,
+            "inherits": "battery fields",
+            "identity": "pack_id is unique within device; assign a new ID for a physical replacement",
+            "fields": {
+                "pack_id": {"required": True, "max_length": 64, "pattern": "^[A-Za-z0-9_.:-]+$"},
+                "label": {"nullable": True, "max_length": 80},
+                "power_w": {"unit": "W", "nullable": True, "sign": "positive_charge_negative_discharge"},
+                "soc_percent": {"unit": "%", "nullable": True, "min_value": 0, "max_value": 100},
+            },
+            "aggregation": "Independent source-scoped diagnostics; never add packs to inverter bank totals.",
         },
         "status": {
             "fields": {

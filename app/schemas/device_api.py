@@ -86,6 +86,7 @@ class TelemetryItem(BaseModel):
     mppt: list[MpptTelemetry] = Field(default_factory=list, max_length=8)
     phases: list[PhaseTelemetry] = Field(default_factory=list, max_length=6)
     battery: BatteryTelemetry | None = None
+    battery_packs: list[BatteryPackTelemetry] = Field(default_factory=list, max_length=32)
     inverter: InverterTelemetry | None = None
     status: DeviceStatusTelemetry | None = None
     counters: list[CumulativeCounterTelemetry] = Field(default_factory=list, max_length=32)
@@ -173,8 +174,30 @@ class BatteryTelemetry(BaseModel):
     current_a: Decimal | None = Field(default=None)
     temperature_c: Decimal | None = None
     soh_percent: Decimal | None = Field(default=None, ge=0, le=100)
+    soh_kind: Literal["measured", "estimated", "unavailable"] | None = None
+    soh_method: str | None = Field(default=None, min_length=1, max_length=80)
+    soh_method_version: str | None = Field(default=None, min_length=1, max_length=40)
+    soh_confidence: Literal["low", "medium", "high", "unknown"] = "unknown"
+    nominal_capacity_kwh: Decimal | None = Field(default=None, ge=0, le=100000)
+    usable_capacity_kwh: Decimal | None = Field(default=None, ge=0, le=100000)
+    cycle_count: int | None = Field(default=None, ge=0, le=10000000, description="Source-reported lifetime cycles, distinct from EMS throughput EFC.")
     state: Literal["idle", "charging", "discharging", "fault", "unknown"] | None = None
     quality: TelemetryQuality = "measured"
+
+    @model_validator(mode="after")
+    def _soh_provenance(self):
+        if self.soh_kind == "unavailable" and self.soh_percent is not None:
+            raise ValueError("Unavailable SOH must be null.")
+        if self.soh_kind == "estimated" and self.soh_percent is not None and not (self.soh_method and self.soh_method_version):
+            raise ValueError("Estimated SOH requires method and method version.")
+        return self
+
+
+class BatteryPackTelemetry(BatteryTelemetry):
+    pack_id: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_.:-]+$", description="Stable within this device; use a new ID for a replacement pack.")
+    label: str | None = Field(default=None, max_length=80)
+    power_w: Decimal | None = Field(default=None, gt=-99999999, lt=99999999, description="DC W; positive charge, negative discharge.")
+    soc_percent: Decimal | None = Field(default=None, ge=0, le=100)
 
 
 class InverterTelemetry(BaseModel):

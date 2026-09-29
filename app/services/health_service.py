@@ -275,7 +275,7 @@ def findings(db, station, at, *, historical=False):
         {**base, "fault_codes": [f["code"] for f in status.get("faults", [])]},
     )
     temp = Decimal(battery["temperature_c"]) if battery.get("temperature_c") is not None else None
-    soh = Decimal(battery["soh_percent"]) if battery.get("soh_percent") is not None else None
+    soh = Decimal(battery["soh_percent"]) if battery.get("soh_percent") is not None and battery.get("soh_kind") not in ("estimated", "unavailable") else None
     yield _numeric(
         "battery_temperature",
         temp,

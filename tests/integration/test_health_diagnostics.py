@@ -156,6 +156,21 @@ def test_untrusted_data_never_raises_measurement_incidents(db, context, flags, d
     assert alert_for(db, station, "data_quality") is not None
 
 
+def test_estimated_soh_does_not_trigger_measured_soh_incident(db, context):
+    user, org, station, device, at = context
+    sample(db, station, device, at, diagnostics={"battery": {
+        "soh_percent": "40", "soh_kind": "estimated", "quality": "measured",
+        "soh_method": "source_estimate", "soh_method_version": "1",
+    }})
+    health.evaluate_station(db, station, at)
+    assert alert_for(db, station, "battery_soh") is None
+    sample(db, station, device, at + timedelta(minutes=5), diagnostics={"battery": {
+        "soh_percent": "40", "soh_kind": "measured", "quality": "measured",
+    }})
+    health.evaluate_station(db, station, at + timedelta(minutes=5))
+    assert alert_for(db, station, "battery_soh") is not None
+
+
 def test_explicit_zero_grid_limit_and_soc_boundary(db, context):
     user, org, station, device, at = context
     config = db.scalar(
