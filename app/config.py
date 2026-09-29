@@ -86,6 +86,11 @@ class Settings(BaseSettings):
     closed_loop_automatic_enabled: bool = False
     closed_loop_verified_profiles: dict = Field(default_factory=dict)
 
+    home_assistant_mqtt_enabled: bool = False
+    # Operator-controlled endpoints prevent tenant-supplied URLs probing internal services.
+    home_assistant_mqtt_brokers: dict[str, str] = Field(default_factory=dict)
+    home_assistant_mqtt_ca_file: str | None = None
+
     # --- Device API ---
     device_claim_code_ttl_minutes: int = 15
     device_telemetry_batch_max_items: int = 500

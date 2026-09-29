@@ -33,6 +33,7 @@
     {{ item('/stations/' ~ current_station.id ~ '/tariffs', 'Tarife', 'wallet', path.endswith('/tariffs')) }}
     {{ item('/stations/' ~ current_station.id ~ '/devices', 'Dispozitive', 'device', '/devices' in path and not path.startswith('/admin')) }}
     {{ item('/stations/' ~ current_station.id ~ '/integrations/deye', 'Deye Cloud', 'cloud', '/integrations/deye' in path) }}
+    {{ item('/stations/' ~ current_station.id ~ '/integrations/home-assistant', 'Home Assistant', 'home', '/integrations/home-assistant' in path) }}
     {% endif %}
     {% if current_user.is_platform_admin %}<p class="sidebar-caption nav-caption">PLATFORMA</p>{{ item('/admin', 'Administrare', 'users', path.startswith('/admin')) }}{% if worker_failure_count %}<a class="sidebar-alert" href="/admin/task-audit">{{ worker_failure_count }} taskuri necesita atentie {{ icon('arrow') }}</a>{% endif %}{% endif %}
   </nav>

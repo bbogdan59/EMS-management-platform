@@ -36,6 +36,10 @@ celery_app.conf.update(
 )
 
 celery_app.conf.beat_schedule = {
+    "home-assistant-context-every-30-sec": {
+        "task": "app.workers.tasks.home_assistant_schedule_task",
+        "schedule": 30.0,
+    },
     "aggregate-telemetry-every-15-min": {
         "task": "app.workers.tasks.run_aggregation_task",
         "schedule": crontab(minute="*/15"),
