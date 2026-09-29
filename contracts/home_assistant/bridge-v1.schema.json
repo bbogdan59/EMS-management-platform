@@ -1,0 +1,297 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "EMS Home Assistant HTTPS bridge requests v1",
+  "$defs": {
+    "Ingest": {
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": 1,
+          "default": 1,
+          "title": "Schema Version",
+          "type": "integer"
+        },
+        "mapping_version": {
+          "minimum": 1,
+          "title": "Mapping Version",
+          "type": "integer"
+        },
+        "samples": {
+          "items": {
+            "$ref": "#/$defs/Sample"
+          },
+          "maxItems": 20,
+          "title": "Samples",
+          "type": "array"
+        }
+      },
+      "required": [
+        "mapping_version",
+        "samples"
+      ],
+      "title": "Ingest",
+      "type": "object"
+    },
+    "Mapping": {
+      "additionalProperties": false,
+      "properties": {
+        "entity_id": {
+          "maxLength": 160,
+          "pattern": "^[a-z_]+\\.[a-z0-9_]+$",
+          "title": "Entity Id",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "power",
+            "energy",
+            "temperature",
+            "occupancy",
+            "boiler_status",
+            "hvac_status",
+            "evse_status",
+            "flexibility"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "unit": {
+          "title": "Unit",
+          "type": "string"
+        },
+        "device_class": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Device Class"
+        },
+        "state_class": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "State Class"
+        },
+        "max_age_seconds": {
+          "default": 180,
+          "maximum": 3600,
+          "minimum": 30,
+          "title": "Max Age Seconds",
+          "type": "integer"
+        },
+        "source_validated": {
+          "default": false,
+          "title": "Source Validated",
+          "type": "boolean"
+        },
+        "quality": {
+          "default": "estimated",
+          "enum": [
+            "estimated",
+            "declared",
+            "simulated"
+          ],
+          "title": "Quality",
+          "type": "string"
+        }
+      },
+      "required": [
+        "entity_id",
+        "kind",
+        "unit"
+      ],
+      "title": "Mapping",
+      "type": "object"
+    },
+    "MappingUpdate": {
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": 1,
+          "default": 1,
+          "title": "Schema Version",
+          "type": "integer"
+        },
+        "expected_version": {
+          "minimum": 0,
+          "title": "Expected Version",
+          "type": "integer"
+        },
+        "consent": {
+          "const": true,
+          "title": "Consent",
+          "type": "boolean"
+        },
+        "occupancy_consent": {
+          "default": false,
+          "title": "Occupancy Consent",
+          "type": "boolean"
+        },
+        "insights_consent": {
+          "default": false,
+          "title": "Insights Consent",
+          "type": "boolean"
+        },
+        "mappings": {
+          "items": {
+            "$ref": "#/$defs/Mapping"
+          },
+          "maxItems": 20,
+          "minItems": 1,
+          "title": "Mappings",
+          "type": "array"
+        }
+      },
+      "required": [
+        "expected_version",
+        "consent",
+        "mappings"
+      ],
+      "title": "MappingUpdate",
+      "type": "object"
+    },
+    "PairingRedeem": {
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": 1,
+          "default": 1,
+          "title": "Schema Version",
+          "type": "integer"
+        },
+        "code": {
+          "maxLength": 32,
+          "minLength": 16,
+          "title": "Code",
+          "type": "string"
+        },
+        "instance_id": {
+          "format": "uuid",
+          "title": "Instance Id",
+          "type": "string"
+        },
+        "instance_name": {
+          "maxLength": 80,
+          "minLength": 1,
+          "title": "Instance Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "instance_id",
+        "instance_name"
+      ],
+      "title": "PairingRedeem",
+      "type": "object"
+    },
+    "Sample": {
+      "additionalProperties": false,
+      "properties": {
+        "entity_id": {
+          "maxLength": 160,
+          "title": "Entity Id",
+          "type": "string"
+        },
+        "observed_at": {
+          "format": "date-time",
+          "title": "Observed At",
+          "type": "string"
+        },
+        "sample_id": {
+          "maxLength": 80,
+          "minLength": 1,
+          "pattern": "^[a-zA-Z0-9_.:+-]+$",
+          "title": "Sample Id",
+          "type": "string"
+        },
+        "source": {
+          "const": "home_assistant",
+          "title": "Source",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "power",
+            "energy",
+            "temperature",
+            "occupancy",
+            "boiler_status",
+            "hvac_status",
+            "evse_status",
+            "flexibility"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "unit": {
+          "title": "Unit",
+          "type": "string"
+        },
+        "quality": {
+          "enum": [
+            "estimated",
+            "declared",
+            "simulated",
+            "unknown"
+          ],
+          "title": "Quality",
+          "type": "string"
+        },
+        "available": {
+          "title": "Available",
+          "type": "boolean"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Value"
+        }
+      },
+      "required": [
+        "entity_id",
+        "observed_at",
+        "sample_id",
+        "source",
+        "kind",
+        "unit",
+        "quality",
+        "available",
+        "value"
+      ],
+      "title": "Sample",
+      "type": "object"
+    }
+  },
+  "anyOf": [
+    {
+      "$ref": "#/$defs/PairingRedeem"
+    },
+    {
+      "$ref": "#/$defs/MappingUpdate"
+    },
+    {
+      "$ref": "#/$defs/Ingest"
+    }
+  ]
+}

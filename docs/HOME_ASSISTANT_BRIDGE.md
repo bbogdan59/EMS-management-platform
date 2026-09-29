@@ -17,7 +17,7 @@ confirmed tokens expire in 90 days and are renewed by re-pairing. Codes and toke
 are hashed at rest, never echoed by status/diagnostics. HA stores its own token.
 
 API contract and HA install/development instructions:
-[HTTPS bridge v1](https://github.com/bbogdan59/EMS-home-assistant/blob/b6a6d53ca5ba4697fb8d053d050fc7339226452e/docs/CONTRACT.md).
+[canonical HTTPS bridge v1](../contracts/home_assistant/README.md).
 
 | Endpoint under `/api/v1` | Auth / effect |
 | --- | --- |

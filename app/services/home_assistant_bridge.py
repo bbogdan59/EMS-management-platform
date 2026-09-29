@@ -238,7 +238,8 @@ def snapshot(bridge, *, enabled=True):
                     "value": sample["value"] if available else None,
                     "is_stale": stale,
                     "source": "home_assistant",
-                    "source_quality": sample["quality"] if sample else "unknown",
+                    "source_quality": mapping["quality"],
+                    "is_simulated": mapping["quality"] == "simulated",
                     "quality": "stale" if stale else sample["quality"],
                 }
             )
