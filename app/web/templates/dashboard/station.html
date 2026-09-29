@@ -6,6 +6,7 @@
 {% include "partials/_map_assets.html" %}
 <link rel="stylesheet" href="/static/css/station-dashboard.css">
 <link rel="stylesheet" href="/static/css/battery.css">
+<link rel="stylesheet" href="/static/css/solar.css">
 {% endblock %}
 {% macro metric_history(key, label) %}
 <div class="metric-history" data-history="{{ key }}">
@@ -126,6 +127,7 @@
     <article class="card finance-card"><div class="panel-heading"><h2>Beneficiu incremental EMS</h2>{{ icon('leaf') }}</div><p>Ultimele 30 de zile · contributia optimizarii</p><p id="kpi-ems-benefit" class="finance-stat is-missing">Se incarca...</p><details><summary>Reper si metoda de calcul</summary><p id="kpi-ems-benefit-note"></p><p>Acelasi sistem PV/baterie, comparat cu operarea fara optimizare activa. Estimare, nu factura.</p></details></article>
   </section>
   <div class="automation-strip"><span class="metric-icon">{{ icon('shield') }}</span><div><h2>Control energetic</h2><p id="kpi-automation">Se incarca...</p></div><div><h2>Uzura baterie</h2><p id="kpi-efc">Se incarca...</p></div><a class="btn-secondary" href="/stations/{{ station.id }}/control">Vezi controlul {{ icon('arrow') }}</a></div>
+  {% include "solar/_card.html" %}
   <div class="month-section">{{ period_card('month', 'Luna curenta') }}</div>
   <div class="card mt-4">
     <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
@@ -238,5 +240,6 @@
 </div>
 <script src="/static/js/dashboard.js"></script>
 <script src="/static/js/battery.js" defer></script>
+<script src="/static/js/solar.js" defer></script>
 <script>document.addEventListener("DOMContentLoaded", () => emsInitDashboard("{{ station.id }}", {{ summary | tojson }}));</script>
 {% endblock %}

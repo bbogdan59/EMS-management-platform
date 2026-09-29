@@ -810,9 +810,12 @@ def poll_connection(db: Session, connection: DeyeCloudConnection) -> dict:
         connection.last_sync_status = "succeeded"
         connection.last_sync_message = None
     db.add(connection)
+    from app.services.deye_solar_service import poll as poll_solar
+    solar_inputs = poll_solar(db, connection, access_token, now)
     return {
         "status": "succeeded",
         "telemetry_created": created,
+        "solar_inputs": solar_inputs,
         "measured_at": measured_at.isoformat(),
         "implausible_power_fields": offenders,
     }

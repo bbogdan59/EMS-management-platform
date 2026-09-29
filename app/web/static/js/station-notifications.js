@@ -37,10 +37,10 @@
   function render() {
     list.replaceChildren();
     items.forEach(item => {
-      const p = item.payload, summary = p.kind === 'summary';
+      const p = item.payload, summary = p.kind === 'summary', briefing = p.kind === 'briefing';
       const card = el('article', `notification-item ${item.read ? '' : 'is-unread'} ${summary ? 'is-summary' : 'is-alert'} ${item.severity === 'critical' ? 'is-critical' : ''}`);
       const heading = el('div', 'notification-item-heading');
-      const symbol = el('span', 'notification-symbol', summary ? '☀' : p.state === 'resolved' ? '✓' : '!');
+      const symbol = el('span', 'notification-symbol', summary || briefing ? '☀' : p.state === 'resolved' ? '✓' : '!');
       symbol.setAttribute('aria-hidden', 'true');
       heading.append(symbol);
       const titles = el('div');
@@ -48,7 +48,7 @@
       const meta = el('div', 'notification-meta');
       meta.append(el('span', '', dateLabel(p, item.created_at)));
       const qualities = {simulated: 'Date simulate', stale: 'Date intarziate', derived: 'Date derivate', mixed: 'Date mixte', missing: 'Fara date'};
-      const label = summary ? (p.complete ? 'Zi completa' : qualities[p.quality] || 'Date incomplete') : p.state === 'resolved' ? 'Rezolvat' : {critical: 'Critic', error: 'Incident', warning: 'Atentie', info: 'Informare'}[item.severity] || 'Alerta';
+      const label = briefing ? 'Prognoza · estimare' : summary ? (p.complete ? 'Zi completa' : qualities[p.quality] || 'Date incomplete') : p.state === 'resolved' ? 'Rezolvat' : {critical: 'Critic', error: 'Incident', warning: 'Atentie', info: 'Informare'}[item.severity] || 'Alerta';
       meta.append(el('span', `notification-tag ${summary ? p.complete ? '' : 'is-warning' : p.state === 'resolved' ? '' : item.severity === 'critical' ? 'is-danger' : 'is-warning'}`, label));
       titles.append(meta); heading.append(titles);
       if (!item.read) { const dot = el('span', 'notification-unread-dot'); dot.title = 'Necitita'; heading.append(dot); }
@@ -70,7 +70,7 @@
         });
       }
       const footer = el('div', 'notification-item-footer');
-      if (!summary) { const link = el('a', '', 'Vezi diagnosticul →'); link.href = item.link; footer.append(link); }
+      if (!summary) { const link = el('a', '', briefing ? 'Vezi planul zilei →' : 'Vezi diagnosticul →'); link.href = item.link; footer.append(link); }
       else footer.append(el('span', '', p.timezone));
       if (item.read) footer.append(el('span', '', 'Citita'));
       else {

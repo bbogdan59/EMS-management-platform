@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "provenance": "Synthetic protocol fixtures, not captures from certified inverter models",
+  "verified_hardware_models": [],
+  "profiles": [
+    {
+      "name": "reported-single-PV",
+      "available_inputs": [1],
+      "dataList": [
+        {"key": "PV1 Voltage", "unit": "V", "value": "305.2"},
+        {"key": "PV1 Current", "unit": "A", "value": "2.0"},
+        {"key": "PV1 Power", "unit": "kW", "value": "0.61"}
+      ]
+    },
+    {
+      "name": "reported-two-MPPT-partial",
+      "available_inputs": [1, 2],
+      "dataList": [
+        {"key": "MPPT1 Voltage", "unit": "V", "value": "300"},
+        {"key": "MPPT1 Power", "unit": "W", "value": "0"},
+        {"key": "MPPT2 Voltage", "unit": "V", "value": "290"},
+        {"key": "MPPT2 Power", "unit": "W", "value": null}
+      ]
+    },
+    {
+      "name": "model-without-reported-PV-inputs",
+      "available_inputs": [],
+      "dataList": [{"key": "MI Voltage L2", "unit": "V", "value": "230"}]
+    }
+  ]
+}

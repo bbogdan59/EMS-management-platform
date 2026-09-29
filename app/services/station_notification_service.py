@@ -185,7 +185,9 @@ def inbox(db, station, user, kind="all", unread=False, offset=0):
         select(func.count()).select_from(base.where(Notification.read_at.is_(None)).subquery())
     )
     if kind == "summary":
-        base = base.where(Notification.source_key.is_not(None))
+        base = base.where(Notification.source_key.like("day:%"))
+    elif kind == "briefing":
+        base = base.where(Notification.source_key.like("morning:%"))
     elif kind == "alert":
         base = base.where(Notification.event_id.is_not(None))
     if unread:

@@ -215,10 +215,15 @@ def alerts_task() -> dict:
 
 @celery_app.task(name="app.workers.tasks.notifications_task")
 def notifications_task() -> dict:
-    from app.services import notification_service, station_notification_service
+    from app.services import (
+        morning_briefing_service,
+        notification_service,
+        station_notification_service,
+    )
     with session_scope() as db:
         created = notification_service.materialize(db)
         day_cards = station_notification_service.materialize_days(db)
+        briefings = morning_briefing_service.materialize(db)
         routed = notification_service.route_pending(db)
         notification_service.weekly_reports(db)
     processed = 0
@@ -227,7 +232,7 @@ def notifications_task() -> dict:
             if not notification_service.deliver_one(db):
                 break
             processed += 1
-    return {"created": created, "day_cards": day_cards, "routed": routed, "processed": processed}
+    return {"created": created, "day_cards": day_cards, "briefings": briefings, "routed": routed, "processed": processed}
 
 
 @celery_app.task(name="app.workers.tasks.deye_cloud_poll_task")
@@ -510,6 +515,7 @@ def telemetry_backfill_task() -> dict:
 @celery_app.task(name="app.workers.tasks.retention_task")
 def retention_task() -> dict:
     from app.models.audit import AuditLog
+    from app.models.solar import SolarInputAggregate, SolarInputSample
     from app.models.telemetry import TelemetryAggregate, TelemetryRaw
     from app.services.ev_service import retention as ev_retention
 
@@ -527,6 +533,8 @@ def retention_task() -> dict:
         if pending_start is not None:
             raw_cutoff = min(raw_cutoff, pending_start - timedelta(hours=1))
         raw_deleted = db.query(TelemetryRaw).filter(TelemetryRaw.measured_at < raw_cutoff).delete(synchronize_session=False)
+        db.query(SolarInputSample).filter(SolarInputSample.measured_at < raw_cutoff).delete(synchronize_session=False)
+        db.query(SolarInputAggregate).filter(SolarInputAggregate.period_start < agg_cutoff).delete(synchronize_session=False)
         agg_deleted = db.query(TelemetryAggregate).filter(TelemetryAggregate.period_start < agg_cutoff).delete(synchronize_session=False)
         audit_deleted = db.query(AuditLog).filter(AuditLog.occurred_at < audit_cutoff).delete(synchronize_session=False)
 

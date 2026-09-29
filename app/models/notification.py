@@ -23,6 +23,7 @@ class NotificationPreference(Entity):
     __tablename__ = "notification_preferences"
     __table_args__ = (
         UniqueConstraint("user_id", "organization_id", name="uq_notification_preference"),
+        CheckConstraint("briefing_start_hour >= 0 AND briefing_start_hour < briefing_end_hour AND briefing_end_hour <= 24 AND briefing_clock IN ('station', 'user')", name="ck_briefing_window"),
     )
 
     user_id: Mapped[uuid.UUID] = mapped_column(
@@ -36,6 +37,10 @@ class NotificationPreference(Entity):
     quiet_end: Mapped[int] = mapped_column(Integer, default=8)
     matrix: Mapped[dict] = mapped_column(JSON, default=dict)
     weekly_report: Mapped[bool] = mapped_column(Boolean, default=False)
+    morning_briefing: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    briefing_start_hour: Mapped[int] = mapped_column(Integer, default=7, server_default="7")
+    briefing_end_hour: Mapped[int] = mapped_column(Integer, default=11, server_default="11")
+    briefing_clock: Mapped[str] = mapped_column(String(16), default="station", server_default="station")
     escalation_minutes: Mapped[int] = mapped_column(Integer, default=15)
     verified_email: Mapped[str | None] = mapped_column(String(320))
     verification_hash: Mapped[str | None] = mapped_column(String(64))
@@ -90,3 +95,4 @@ class NotificationDelivery(Entity):
     encrypted_payload: Mapped[str | None] = mapped_column(Text)
     failure_code: Mapped[str | None] = mapped_column(String(48))
     delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

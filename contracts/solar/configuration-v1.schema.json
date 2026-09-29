@@ -1,0 +1,152 @@
+{
+  "$defs": {
+    "PVString": {
+      "additionalProperties": false,
+      "properties": {
+        "identifier": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_.:-]+$",
+          "title": "Identifier",
+          "type": "string"
+        },
+        "label": {
+          "maxLength": 80,
+          "minLength": 1,
+          "title": "Label",
+          "type": "string"
+        },
+        "modules": {
+          "anyOf": [
+            {
+              "maximum": 10000,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Modules"
+        }
+      },
+      "required": [
+        "identifier",
+        "label"
+      ],
+      "title": "PVString",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "revision": {
+      "minimum": 0,
+      "title": "Revision",
+      "type": "integer"
+    },
+    "label": {
+      "maxLength": 80,
+      "minLength": 1,
+      "title": "Label",
+      "type": "string"
+    },
+    "comparison_group": {
+      "anyOf": [
+        {
+          "maxLength": 64,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Comparison Group"
+    },
+    "installed_kw": {
+      "anyOf": [
+        {
+          "exclusiveMinimum": 0.0,
+          "maximum": 100000.0,
+          "type": "number"
+        },
+        {
+          "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Installed Kw"
+    },
+    "azimuth_deg": {
+      "anyOf": [
+        {
+          "exclusiveMaximum": 360.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        {
+          "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Azimuth Deg"
+    },
+    "tilt_deg": {
+      "anyOf": [
+        {
+          "maximum": 90.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        {
+          "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Tilt Deg"
+    },
+    "warning_threshold_percent": {
+      "anyOf": [
+        {
+          "maximum": 90.0,
+          "minimum": 10.0,
+          "type": "number"
+        },
+        {
+          "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+          "type": "string"
+        }
+      ],
+      "default": "30",
+      "title": "Warning Threshold Percent"
+    },
+    "strings": {
+      "items": {
+        "$ref": "#/$defs/PVString"
+      },
+      "maxItems": 32,
+      "title": "Strings",
+      "type": "array"
+    }
+  },
+  "required": [
+    "revision",
+    "label"
+  ],
+  "title": "TrackerConfiguration",
+  "type": "object"
+}

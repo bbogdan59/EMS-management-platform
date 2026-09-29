@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block title %}MPPT · {{ station.name }}{% endblock %}
+{% block head %}<link rel="stylesheet" href="/static/css/solar.css">{% endblock %}
+{% block content %}
+<div class="solar-page"><a class="underline" href="/?station_id={{ station.id }}">← {{ station.name }}</a>
+<header class="solar-heading"><div><p class="solar-eyebrow">Productie solara · {{ station.timezone }}</p><h1>MPPT si intrari PV</h1><p>Vezi cum produce fiecare intrare a invertorului.</p></div><span class="solar-sun" aria-hidden="true">☀</span></header>
+{% include "solar/_card.html" %}
+<p class="solar-note">Un tracker MPPT poate avea mai multe siruri fizice. Sirurile de mai jos sunt configurate de utilizator; valorile electrice apartin intrarii raportate de sursa.</p>
+</div>
+<script src="/static/js/solar.js" defer></script>
+{% endblock %}

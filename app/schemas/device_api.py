@@ -146,11 +146,20 @@ class TelemetryItem(BaseModel):
 class MpptTelemetry(BaseModel):
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
 
-    index: int = Field(..., ge=1, description="Indexul MPPT raportat de device, 1-based.")
-    voltage_v: Decimal | None = Field(default=None, ge=0)
-    current_a: Decimal | None = Field(default=None, ge=0)
-    power_w: Decimal | None = Field(default=None, ge=0)
+    index: int = Field(..., ge=1, le=2147483647, description="Indexul MPPT raportat de device, 1-based.")
+    voltage_v: Decimal | None = Field(default=None, ge=0, lt=99999999)
+    current_a: Decimal | None = Field(default=None, ge=0, lt=99999999)
+    power_w: Decimal | None = Field(default=None, ge=0, lt=99999999)
     quality: TelemetryQuality = "measured"
+    label: str | None = Field(None, max_length=80)
+    kind: Literal["mppt", "pv_input"] = "mppt"
+    supported_metrics: list[Literal["voltage_v", "current_a", "power_w"]] | None = Field(None, max_length=3)
+
+    @model_validator(mode="after")
+    def supported_values(self):
+        if self.supported_metrics is not None and any(getattr(self, key) is not None and key not in self.supported_metrics for key in ("voltage_v", "current_a", "power_w")):
+            raise ValueError("A value requires a reported metric capability")
+        return self
 
 
 class PhaseTelemetry(BaseModel):
@@ -207,6 +216,7 @@ class InverterTelemetry(BaseModel):
     ac_temperature_c: Decimal | None = None
     status_code: int | None = Field(default=None, ge=0, le=65535)
     quality: TelemetryQuality = "measured"
+    ac_output_power_w: Decimal | None = Field(None, gt=-99999999, lt=99999999)
 
 
 class FaultTelemetry(BaseModel):

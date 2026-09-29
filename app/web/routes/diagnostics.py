@@ -224,7 +224,7 @@ def runbooks(
 @router.get("/stations/{station_id}/notifications")
 def station_notification_feed(
     station_id: uuid.UUID,
-    kind: Literal["all", "summary", "alert"] = "all",
+    kind: Literal["all", "summary", "alert", "briefing"] = "all",
     unread: bool = False,
     offset: int = Query(0, ge=0, le=10000),
     access=Depends(station_viewer),
@@ -337,6 +337,10 @@ async def notification_preferences(
     quiet_end: int = Form(8, ge=0, le=23),
     escalation_minutes: int = Form(15, ge=0, le=1440),
     weekly_report: bool = Form(False),
+    morning_briefing: bool = Form(False),
+    briefing_start_hour: int = Form(7, ge=0, le=23),
+    briefing_end_hour: int = Form(11, ge=1, le=24),
+    briefing_clock: Literal["station", "user"] = Form("station"),
     unsubscribe: bool = Form(False),
     access=Depends(organization_viewer),
     db: Session = Depends(get_db),
@@ -353,6 +357,10 @@ async def notification_preferences(
     except ValueError as exc:
         _error(exc)
     pref = notifications.preference(db, user, access[0], lock=True)
+    if briefing_start_hour >= briefing_end_hour:
+        raise HTTPException(400, "Fereastra briefingului trebuie sa se incheie dupa ora de inceput.")
+    pref.morning_briefing = morning_briefing
+    pref.briefing_start_hour, pref.briefing_end_hour, pref.briefing_clock = briefing_start_hour, briefing_end_hour, briefing_clock
     pref.timezone, pref.quiet_start, pref.quiet_end = timezone, quiet_start, quiet_end
     pref.escalation_minutes, pref.weekly_report, pref.matrix = (
         escalation_minutes,
@@ -373,6 +381,19 @@ async def notification_preferences(
     )
     db.commit()
     return RedirectResponse("/notifications", 303)
+
+
+@router.get("/stations/{station_id}/briefing/{day}")
+def morning_briefing_page(day: date, request: Request, access=Depends(station_viewer),
+                          db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    notice = db.scalar(select(Notification).where(Notification.station_id == access[0].id,
+        Notification.user_id == user.id, Notification.source_key == f"morning:{day}"))
+    if notice is None:
+        raise HTTPException(404, "Briefing indisponibil.")
+    return templates.TemplateResponse(request, "diagnostics/briefing.html", {
+        **build_nav_context(db, user, access[0].id), "station": access[0], "notice": notice,
+        "expired": utcnow() >= datetime.fromisoformat(notice.payload["expires_at"]),
+    }, headers={"Cache-Control": "no-store"})
 
 
 @router.post(

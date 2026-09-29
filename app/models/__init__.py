@@ -44,6 +44,7 @@ from app.models.notification import Notification, NotificationDelivery, Notifica
 from app.models.optimization import OptimizationRun, Plan, PlanInterval
 from app.models.organization import Membership, Organization
 from app.models.preference import PreferenceVersion, StationPreference
+from app.models.solar import SolarInputAggregate, SolarInputSample, SolarInverter, SolarTracker
 from app.models.station import PanelGroup, Station, StationConfig, StationConfigVersion
 from app.models.tariff import Tariff, TariffVersion
 from app.models.task_execution import TaskExecution
@@ -112,6 +113,10 @@ __all__ = [
     "PreferenceVersion",
     "PvForecast",
     "Recommendation",
+    "SolarInputAggregate",
+    "SolarInputSample",
+    "SolarInverter",
+    "SolarTracker",
     "Station",
     "StationConfig",
     "StationConfigVersion",

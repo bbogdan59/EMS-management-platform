@@ -69,10 +69,12 @@ def create_app() -> FastAPI:
     from app.web.routes import inverter_config as inverter_config_routes
     from app.web.routes import market as market_routes
     from app.web.routes import organizations as organizations_routes
+    from app.web.routes import solar as solar_routes
     from app.web.routes import sse as sse_routes
     from app.web.routes import stations as stations_routes
 
     app.include_router(battery_routes.router, tags=["battery-health"])
+    app.include_router(solar_routes.router, tags=["solar-inputs"])
     app.include_router(mobile_router)
     app.include_router(diagnostics_routes.router, tags=["web-diagnostics"])
     app.include_router(energy_operations_routes.router, tags=["energy-operations"])

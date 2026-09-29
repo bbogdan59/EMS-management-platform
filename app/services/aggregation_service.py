@@ -402,6 +402,8 @@ def reaggregate_range(db: Session, station: Station, start_utc: datetime, end_ut
 
     for year, month in sorted(months_touched):
         aggregate_month(db, station, year, month)
+    from app.services.solar_service import reaggregate
+    reaggregate(db, station, start_utc, end_utc)
 
 
 def get_energy_kwh_for_interval(db: Session, station_id: uuid.UUID, metric: str, start_utc: datetime, end_utc: datetime) -> dict:

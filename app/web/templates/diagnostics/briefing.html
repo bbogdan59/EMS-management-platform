@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block content %}
+<a class="text-sm underline" href="/?station_id={{ station.id }}">← {{ station.name }}</a>
+<article class="card mt-4" style="max-width: 52rem">
+  <p class="text-sm">Briefing matinal · {{ notice.payload.day }} · {{ notice.payload.timezone }}</p>
+  <h1 class="page-title mt-3">{{ notice.title }}</h1>
+  <p class="mt-4" style="font-size: 2.5rem; font-weight: 700; color: #ca9b24">≈ {{ notice.payload.display_kwh }} <small>kWh</small></p>
+  <p>Productie estimata astazi · incredere {{ notice.payload.confidence }}</p>
+  {% if notice.payload.range_kwh %}<p>Scenarii: {{ notice.payload.range_kwh[0] }} – {{ notice.payload.range_kwh[1] }} kWh</p>{% endif %}
+  <p class="mt-4">{{ notice.payload.body }}</p>
+  {% if expired %}<p class="mt-4" role="status">Acest briefing a expirat. Consulta prognoza actualizata inainte de a lua o decizie.</p>{% endif %}
+  <div class="mt-5 flex flex-wrap gap-3"><a class="btn-primary" href="/?station_id={{ station.id }}#chart-forecast-pv">Vezi prognoza</a><a class="btn-secondary" href="/?station_id={{ station.id }}#chart-plan">Vezi planul zilei</a></div>
+  <details class="mt-5"><summary>Despre estimare</summary><p>Prognoza emisa la {{ notice.payload.forecast_issued_at }}. Nu reprezinta productie masurata sau comenzi aplicate invertorului.</p><p>Reper: mediana zilelor complete din ultimii trei ani, aflate la maximum 21 de zile calendaristice de aceeasi perioada a anului. Minimum 7 zile. Fara istoric suficient nu afisam o comparatie.</p><p>Model: {{ notice.payload.source_versions | join(', ') }}.</p></details>
+</article>
+{% endblock %}

@@ -1,0 +1,6 @@
+<section class="solar-panel" data-solar data-station="{{ station.id }}" data-edit="{{ 'true' if role in ['operator', 'organization_admin', 'platform_admin'] else 'false' }}" data-csrf="{{ csrf_token(request) }}" aria-label="Detalii tehnice PV">
+  <div class="solar-toolbar"><h2>Detalii tehnice · MPPT / PV</h2><a href="/stations/{{ station.id }}/solar">Configurare si comparatii →</a></div>
+  <p data-solar-status role="status">Se incarca intrarile raportate...</p><button type="button" class="btn-secondary" data-solar-retry hidden>Reincearca</button>
+  <div data-solar-inverters></div>
+  <p class="solar-note">DC si AC sunt marimi distincte. Bateria, pierderile si momentele de masurare pot explica diferentele.</p>
+</section>

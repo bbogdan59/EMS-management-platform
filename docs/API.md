@@ -395,8 +395,9 @@ POST /api/v1/telemetry/batch
 - `mppt`, `phases`, `battery`, `status` si `counters` sunt extensii tipizate,
   cu unitati explicite si `quality` per segment (`measured`, `derived`,
   `simulated`, `stale`). Serverul le valideaza si le pastreaza sub
-  `raw_payload.extended`, dar nu le foloseste la agregari energetice in schema
-  v1. Contoarele cumulative sunt in `kWh`; daca un contor fizic se reseteaza
+  `raw_payload.extended` si `diagnostics`. MPPT are agregari de diagnostic separate
+  de energia canonica a statiei: [contract solar v1](../contracts/solar/README.md).
+  Contoarele cumulative sunt in `kWh`; daca un contor fizic se reseteaza
   sau face rollover, device-ul trebuie sa schimbe `reset_id`, astfel incat un
   backfill viitor sa nu interpreteze diferenta ca spike de energie.
 
