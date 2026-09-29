@@ -7,6 +7,7 @@
 <link rel="stylesheet" href="/static/css/station-dashboard.css">
 <link rel="stylesheet" href="/static/css/battery.css">
 <link rel="stylesheet" href="/static/css/solar.css">
+<link rel="stylesheet" href="/static/css/grid-voltage.css">
 <link rel="stylesheet" href="/static/css/home-assistant-bridge.css">
 <script src="/static/js/home-assistant-bridge.js" defer></script>
 {% endblock %}
@@ -128,6 +129,7 @@
       <div id="chart-power" style="height:320px"></div>
     </div>
   </div>
+  {% include "dashboard/_grid_voltage.html" %}
   <section class="dashboard-finance" aria-label="Costuri si beneficii">
     <article class="card finance-card"><div class="panel-heading"><h2>Valoarea energiei</h2>{{ icon('wallet') }}</div><p>Tarifele efective ale statiei, in acest moment</p><div class="price-pair"><div><p>Cost efectiv import</p><p id="kpi-price-buy" class="finance-stat is-missing">Se incarca...</p></div><div><p>Venit efectiv export</p><p id="kpi-price-sell" class="finance-stat is-missing">Se incarca...</p></div></div><details><summary>Cum se calculeaza?</summary><p>Tarif fix sau OPCOM + marja, componente de retea si TVA configurat. Pretul spot si costul efectiv sunt distincte.</p><a class="underline text-xs" href="/stations/{{ station.id }}/tariffs">Vezi tarifele statiei</a></details></article>
     <article class="card finance-card"><div class="panel-heading"><h2>Beneficiu sistem PV/baterie</h2>{{ icon('sun') }}</div><p>Ultimele 30 de zile · estimare fata de reper</p><p id="kpi-savings" class="finance-stat is-missing">Se incarca...</p><p id="kpi-savings-coverage"></p><details><summary>Reper si metoda de calcul</summary><p id="kpi-savings-note"></p><p>Compara costul real cu energia cumparata integral din retea, fara panouri sau baterie. Nu este o economie masurata separat.</p></details></article>
@@ -248,5 +250,6 @@
 <script src="/static/js/dashboard.js"></script>
 <script src="/static/js/battery.js" defer></script>
 <script src="/static/js/solar.js" defer></script>
+<script src="/static/js/grid-voltage.js" defer></script>
 <script>document.addEventListener("DOMContentLoaded", () => emsInitDashboard("{{ station.id }}", {{ summary | tojson }}));</script>
 {% endblock %}
