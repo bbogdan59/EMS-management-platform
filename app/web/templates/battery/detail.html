@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% from "partials/_icons.html" import icon %}
+{% block title %}Baterie · {{ station.name }} - {{ app_name }}{% endblock %}
+{% block head %}<link rel="stylesheet" href="/static/css/battery.css">{% endblock %}
+{% block content %}
+<div class="battery-page" data-battery-page data-station="{{ station.id }}">
+  <header class="battery-heading">
+    <div><a class="battery-back" href="/?station_id={{ station.id }}">← {{ station.name }}</a><h1>Baterie</h1><p>Energia ta, pastrata pentru mai tarziu.</p></div>
+    <span class="battery-icon">{{ icon('battery') }}</span>
+  </header>
+  <form class="battery-controls" aria-label="Selectie baterie si perioada">
+    <label>Sursa / baterie<select id="battery-target" name="battery_id"><option value="">Se incarca...</option></select></label>
+    <label>Perioada<select id="battery-days" name="days"><option value="7">7 zile</option><option value="14" selected>14 zile</option><option value="30">30 de zile</option></select></label>
+    <label>Pana la<input id="battery-end" type="date" name="end"></label>
+  </form>
+  <p class="battery-loading" role="status" id="battery-loading">Se incarca diagnosticul bateriei...</p>
+  <div class="battery-notice" id="battery-error" role="alert" hidden><p>Nu am putut incarca datele bateriei.</p><button type="button" class="btn-secondary" id="battery-retry">Reincearca</button></div>
+  <div id="battery-content" hidden>
+    <section class="battery-live" aria-labelledby="battery-live-title">
+      <div class="battery-fill" aria-hidden="true"></div>
+      <div class="battery-live-top"><div><p id="battery-live-title">Nivel baterie · acum</p><p class="battery-soc" id="battery-soc">—</p></div><span class="battery-state" id="battery-state">Fara date</span></div>
+      <div class="battery-live-bottom"><div><strong id="battery-stored">—</strong><p>Energie estimata din SOC · capacitate nominala</p></div><span class="battery-temperature" id="battery-temperature">— °C</span></div>
+      <p class="battery-live-meta" id="battery-live-meta"></p>
+    </section>
+    <div id="battery-notices" aria-live="polite"></div>
+    <p class="battery-alert-link"><a href="/stations/{{ station.id }}/health">Vezi istoricul alertelor si diagnosticul statiei →</a></p>
+    <div class="battery-columns">
+      <section class="battery-panel battery-day" aria-labelledby="battery-day-title">
+        <div class="battery-panel-heading"><h2 id="battery-day-title">Ziua selectata</h2><label class="battery-day-picker">Ziua<input id="battery-day" type="date"></label></div>
+        <p class="battery-caption" id="battery-day-context"></p>
+        <div class="battery-totals"><div><p>Incarcata</p><strong class="battery-in" id="battery-day-charge">—</strong></div><div><p>Descarcata</p><strong class="battery-out" id="battery-day-discharge">—</strong></div></div>
+        <div class="battery-chart" id="battery-hourly-chart" role="img" aria-label="SOC mediu orar si energia incarcata, deasupra axei, si descarcata, sub axa"></div>
+        <p class="battery-caption">SOC mediu (%) sus · incarcare ↑ / descarcare ↓ (kWh) jos. Atinge graficul pentru detalii.</p>
+        <details class="battery-table"><summary>Valorile pe ore, acoperire si calitate</summary><div id="battery-hourly-table"></div></details>
+      </section>
+      <section class="battery-panel battery-period" aria-labelledby="battery-period-title">
+        <div class="battery-panel-heading"><h2 id="battery-period-title">Ultimele 14 zile</h2><span class="battery-mini-icon">{{ icon('calendar') }}</span></div>
+        <p class="battery-caption" id="battery-period-context"></p>
+        <div class="battery-totals"><div><p>Incarcata</p><strong class="battery-in" id="battery-period-charge">—</strong></div><div><p>Descarcata</p><strong class="battery-out" id="battery-period-discharge">—</strong></div></div>
+        <div class="battery-chart" id="battery-daily-chart" role="img" aria-label="Energie zilnica: incarcare deasupra axei, descarcare sub axa, in kWh"></div>
+        <p class="battery-caption">Verde ↑ incarcare · portocaliu ↓ descarcare. Selecteaza o bara pentru orele acelei zile.</p>
+        <details class="battery-table"><summary>Valorile pe zile, acoperire si calitate</summary><div id="battery-daily-table"></div></details>
+      </section>
+      <section class="battery-panel" aria-labelledby="battery-temp-title">
+        <div class="battery-panel-heading"><h2 id="battery-temp-title">Temperatura bateriei</h2><span class="battery-mini-icon">°C</span></div>
+        <p class="battery-caption">Minim – maxim · ziua selectata</p><p class="battery-large" id="battery-temp-range">—</p>
+        <div class="battery-temp-chart" id="battery-temp-chart" role="img" aria-label="Intervalele zilnice de temperatura pentru ultimele sapte zile"></div>
+        <p class="battery-caption" id="battery-temp-context"></p>
+        <div class="battery-extremes" id="battery-extremes"></div>
+        <details class="battery-table"><summary>Temperaturi si acoperire pe zile</summary><div id="battery-temp-table"></div></details>
+      </section>
+      <section class="battery-panel" aria-labelledby="battery-health-title">
+        <div class="battery-panel-heading"><h2 id="battery-health-title">Sanatate si uzura</h2><span class="battery-mini-icon">{{ icon('battery') }}</span></div>
+        <div class="battery-health-grid"><div><p>SOH · stare de sanatate</p><strong class="battery-large" id="battery-soh">—</strong><p class="battery-caption" id="battery-soh-meta"></p></div><div><p>Cicluri echivalente · perioada</p><strong class="battery-large" id="battery-efc">—</strong><p class="battery-caption" id="battery-efc-meta"></p></div></div>
+        <dl class="battery-facts" id="battery-facts"></dl>
+        <details class="battery-method"><summary>Cum interpretam aceste valori?</summary><p>SOC este nivelul de incarcare. SOH este starea de sanatate raportata sau estimata de sursa; nu o calculam din SOC sau din capacitatea configurata.</p><p>Cicluri echivalente (EFC) = (kWh incarcati + kWh descarcati) / (2 × capacitatea nominala). Calculul foloseste capacitatea cunoscuta la momentul fiecarei observatii. Este uzura estimata pentru perioada cu date, nu numarul de cicluri din intreaga viata a bateriei.</p><p>Energia este calculata din puterea DC, mentinuta cel mult 5 minute intre observatii. Intervalele lipsa raman necunoscute. Zilele urmeaza fusul orar al statiei, inclusiv schimbarea orei. Istoricul disponibil depinde de retentia telemetriei.</p></details>
+      </section>
+    </div>
+    <p class="battery-footnote">Fiecare sursa si fiecare baterie sunt afisate separat. Bancurile raportate de invertoare pot descrie aceleasi baterii fizice; valorile lor nu se aduna.</p>
+  </div>
+</div>
+<script src="/static/js/battery.js" defer></script>
+{% endblock %}

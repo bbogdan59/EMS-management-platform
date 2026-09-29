@@ -1,0 +1,55 @@
+.battery-page,.battery-widget { --bat-ink:#263a31; --bat-muted:#5f7066; --bat-panel:#f9fbf7; --bat-line:#d5dfd2; --bat-soft:#ecf1e8; --bat-in:#077b58; --bat-out:#a65300; color:var(--bat-ink); }
+.dark .battery-page,.dark .battery-widget { --bat-ink:#f1f4e9; --bat-muted:#b9c8b8; --bat-panel:#263b33; --bat-line:#43594a; --bat-soft:#31483c; --bat-in:#4ddbb1; --bat-out:#ffc264; }
+.battery-page { max-width:1200px; margin:auto; padding-bottom:24px; }
+.battery-heading { display:flex; align-items:center; justify-content:space-between; margin-bottom:26px; }
+.battery-heading h1 { font-size:36px; letter-spacing:-1.3px; font-weight:750; margin:7px 0; }
+.battery-heading p,.battery-caption,.battery-footnote { color:var(--bat-muted); font-size:12px; line-height:1.65; }
+.battery-back { color:var(--bat-muted); font-size:13px; text-decoration:underline; text-underline-offset:3px; }
+.battery-icon { display:grid; place-items:center; border:1px solid var(--bat-line); border-radius:20px; width:64px; height:64px; background:var(--bat-soft); }
+.battery-icon svg { width:30px; height:30px; }
+.battery-controls { display:flex; flex-wrap:wrap; gap:14px; margin-bottom:22px; align-items:end; }
+.battery-controls label { flex:1; min-width:130px; font-size:12px; color:var(--bat-muted); }
+.battery-controls label:first-child { flex:2; }
+.battery-page select,.battery-page input { display:block; width:100%; min-height:42px; margin-top:5px; color:var(--bat-ink); background:var(--bat-panel); border:1px solid var(--bat-line); border-radius:10px; padding:8px 12px; font-size:13px; }
+.battery-page :focus-visible,.battery-widget :focus-visible { outline:3px solid var(--bat-out); outline-offset:3px; }
+.battery-live { position:relative; overflow:hidden; isolation:isolate; min-height:248px; border:1px solid #729a7f; border-radius:24px; background:#203d34; color:#f6f9ee; padding:24px 28px; margin-bottom:22px; }
+.battery-fill { position:absolute; z-index:-1; inset:auto 0 0; height:var(--soc,0%); background:linear-gradient(180deg,#24b48966,#17574488); border-top:2px solid #82dbbb; box-shadow:0 -3px 15px #51d5a944; transition:height .6s ease; }
+.battery-live.is-missing .battery-fill { display:none; }
+.battery-live-top,.battery-live-bottom { display:flex; align-items:center; justify-content:space-between; gap:16px; }
+.battery-live-top>div>p:first-child { font-size:12px; color:#d0dfcc; }
+.battery-soc { font-size:64px; letter-spacing:-2px; line-height:1.25; font-weight:750; }
+.battery-state,.battery-temperature { border-radius:24px; padding:9px 15px; background:#102c2599; font-size:14px; font-weight:650; }
+.battery-state { color:#ffc264; }
+.battery-state.is-charging { color:#8de8c3; }
+.battery-live-bottom { margin-top:25px; }
+.battery-live-bottom strong { font-size:23px; font-weight:650; }
+.battery-live-bottom p,.battery-live-meta { color:#d0dfcc; font-size:11px; }
+.battery-live-meta { margin-top:14px; }
+.battery-columns { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:20px; }
+.battery-panel { min-width:0; padding:24px; border:1px solid var(--bat-line); border-radius:22px; background:var(--bat-panel); }
+.battery-panel-heading { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:18px; }
+.battery-panel h2 { font-size:19px; font-weight:650; letter-spacing:-.35px; }
+.battery-mini-icon { width:34px; height:34px; display:grid; place-items:center; border-radius:11px; background:var(--bat-soft); color:var(--bat-muted); }
+.battery-mini-icon svg { width:19px; height:19px; }
+.battery-day-picker { font-size:10px; color:var(--bat-muted); }
+.battery-page .battery-day-picker input { min-height:32px; padding:4px 8px; font-size:12px; }
+.battery-totals { display:flex; gap:32px; margin-top:16px; }
+.battery-totals p,.battery-health-grid>div>p:first-child { color:var(--bat-muted); font-size:12px; margin-bottom:3px; }
+.battery-totals strong { font-size:30px; font-weight:650; letter-spacing:-1px; }
+.battery-in { color:var(--bat-in); }.battery-out { color:var(--bat-out); }
+.battery-totals small { font-size:13px; font-weight:400; letter-spacing:0; }
+.battery-chart { width:100%; height:310px; margin-top:8px; }
+.battery-temp-chart { height:210px; width:100%; }
+.battery-large { display:block; font-size:30px; line-height:1.5; font-weight:650; letter-spacing:-.7px; }
+.battery-extremes,.battery-health-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; margin:18px 0; }
+.battery-extremes>div { background:var(--bat-soft); border-radius:14px; padding:14px; }
+.battery-extremes strong { display:block; font-size:24px; font-weight:650; }.battery-extremes p { font-size:12px; color:var(--bat-muted); }
+.battery-facts { margin-top:20px; }.battery-facts>div { display:flex; gap:12px; justify-content:space-between; padding:11px 0; border-top:1px solid var(--bat-line); font-size:12px; }.battery-facts dt { color:var(--bat-muted); }.battery-facts dd { text-align:right; overflow-wrap:anywhere; max-width:65%; }
+.battery-method,.battery-table { font-size:12px; margin-top:16px; color:var(--bat-muted); }.battery-method summary,.battery-table summary { cursor:pointer; padding:6px 0; }.battery-method p { margin-top:10px; line-height:1.65; }
+.battery-table>div { overflow:auto; max-height:300px; }.battery-table table { width:100%; border-collapse:collapse; }.battery-table th,.battery-table td { padding:8px; text-align:left; border-bottom:1px solid var(--bat-line); white-space:nowrap; }.battery-table button { text-decoration:underline; min-height:32px; }
+.battery-footnote { margin:20px 4px; }.battery-notice { border:1px solid #b28840; border-radius:14px; padding:14px 18px; margin-bottom:18px; background:var(--bat-soft); font-size:13px; }.battery-notice p { margin:4px 0; line-height:1.6; }.battery-loading { margin-bottom:14px; font-size:12px; color:var(--bat-muted); }
+.battery-alert-link { margin:-4px 4px 20px; color:var(--bat-muted); font-size:12px; text-decoration:underline; text-underline-offset:3px; }
+.battery-widget { margin:18px 0; border:1px solid var(--bat-line); border-radius:18px; padding:20px 24px; background:var(--bat-panel); }.battery-widget-header { display:flex; flex-wrap:wrap; gap:12px; justify-content:space-between; align-items:center; }.battery-widget h2 { font-weight:650; font-size:16px; }.battery-widget a { font-size:13px; text-decoration:underline; }.battery-widget-data { display:flex; flex-wrap:wrap; gap:12px 32px; margin-top:14px; font-size:13px; }.battery-widget-data p { color:var(--bat-muted); }.battery-widget-data strong { display:block; color:var(--bat-ink); font-size:18px; font-weight:600; }
+@media(max-width:900px) { .battery-columns { grid-template-columns:1fr; } .battery-chart { height:280px; } }
+@media(max-width:480px) { .battery-heading { margin-bottom:20px; }.battery-heading h1 { font-size:32px; }.battery-controls { gap:10px; }.battery-controls label:first-child { flex-basis:100%; }.battery-live { padding:20px; border-radius:20px; }.battery-soc { font-size:52px; }.battery-state { max-width:155px; font-size:12px; padding:8px 12px; }.battery-live-bottom { align-items:start; }.battery-live-bottom strong { font-size:19px; }.battery-live-bottom p { max-width:170px; }.battery-temperature { padding:8px 10px; font-size:12px; white-space:nowrap; }.battery-panel { padding:18px; border-radius:20px; }.battery-panel h2 { font-size:17px; }.battery-totals { gap:26px; }.battery-totals strong { font-size:28px; }.battery-health-grid { gap:18px; }.battery-large { font-size:27px; }.battery-widget { padding:18px; } }
+@media(prefers-reduced-motion:reduce) { .battery-fill { transition:none; } }

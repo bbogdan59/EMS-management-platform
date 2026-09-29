@@ -5,6 +5,7 @@
 {% block head %}
 {% include "partials/_map_assets.html" %}
 <link rel="stylesheet" href="/static/css/station-dashboard.css">
+<link rel="stylesheet" href="/static/css/battery.css">
 {% endblock %}
 {% macro metric_history(key, label) %}
 <div class="metric-history" data-history="{{ key }}">
@@ -91,6 +92,10 @@
       <article class="card metric-card battery-card"><div class="metric-heading"><span>Nivel baterie</span><span class="metric-icon">{{ icon('battery') }}</span></div><p id="kpi-soc" class="metric-value is-missing" aria-live="polite">Se incarca...</p><p class="metric-note">Energie stocata · SOC</p>{{ metric_history('soc', 'Nivel baterie') }}</article>
       <article class="card metric-card grid-card"><div class="metric-heading"><span>Schimb cu reteaua</span><span class="metric-icon">{{ icon('grid') }}</span></div><p id="kpi-grid" class="metric-value is-missing" aria-live="polite">Se incarca...</p><p id="grid-direction-note" class="metric-note">Import / export · putere instantanee</p>{{ metric_history('grid', 'Schimb cu reteaua') }}</article>
     </div>
+  </section>
+  <section class="battery-widget" data-battery-widget data-station="{{ station.id }}" aria-labelledby="battery-widget-title">
+    <div class="battery-widget-header"><h2 id="battery-widget-title">Sanatatea bateriei</h2><a href="/stations/{{ station.id }}/battery">Energie, temperatura si uzura →</a></div>
+    <div class="battery-widget-data" data-battery-widget-data><p>Se incarca diagnosticul...</p></div>
   </section>
   <div class="dashboard-hero">
     <section class="card flow-panel"><div class="panel-heading"><div><h2>Flux energetic actual</h2><p class="panel-kicker">Cum circula energia prin statia ta</p></div><span class="badge-muted">kW · acum</span></div>{% include "dashboard/_flow_diagram.html" %}<div class="flow-footer"><div><span class="metric-icon">{{ icon('battery') }}</span><div><p id="battery-direction-note">Actiune baterie</p><p id="kpi-battery" class="metric-value is-missing">Se incarca...</p></div></div><div><span class="metric-icon">{{ icon('car') }}</span><div><p id="ev-state-note">Masina electrica</p><p id="kpi-ev" class="metric-value is-missing">Se incarca...</p></div></div></div></section>
@@ -228,5 +233,6 @@
   </details>
 </div>
 <script src="/static/js/dashboard.js"></script>
+<script src="/static/js/battery.js" defer></script>
 <script>document.addEventListener("DOMContentLoaded", () => emsInitDashboard("{{ station.id }}", {{ summary | tojson }}));</script>
 {% endblock %}

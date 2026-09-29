@@ -58,6 +58,7 @@ def create_app() -> FastAPI:
     from app.web.routes import admin_catalog as admin_catalog_routes
     from app.web.routes import admin_firmware as admin_firmware_routes
     from app.web.routes import auth as auth_routes
+    from app.web.routes import battery as battery_routes
     from app.web.routes import dashboard as dashboard_routes
     from app.web.routes import deye_integration as deye_integration_routes
     from app.web.routes import diagnostics as diagnostics_routes
@@ -69,6 +70,7 @@ def create_app() -> FastAPI:
     from app.web.routes import sse as sse_routes
     from app.web.routes import stations as stations_routes
 
+    app.include_router(battery_routes.router, tags=["battery-health"])
     app.include_router(diagnostics_routes.router, tags=["web-diagnostics"])
     app.include_router(energy_operations_routes.router, tags=["energy-operations"])
     app.include_router(auth_routes.router, tags=["web-auth"])
