@@ -103,7 +103,9 @@ threshold in the group. No inferred orientation or diagnosis of a physical fault
 ## Migration and rollback
 
 Additive migration `b320c221d901` creates isolated diagnostic tables and opt-in
-fields. Existing station energy, raw telemetry and notifications are retained.
+fields. Merge revision `b321c221d902` joins it with the independently released
+mobile authentication migration without changing either branch's data.
+Existing station energy, raw telemetry and notifications are retained.
 New ingestion populates diagnostics from deployment onward; older raw diagnostics
 can be replayed with `python -m scripts.backfill_solar_inputs --station UUID --days 7`.
 Replay is bounded by raw retention and upserts the same diagnostic generation.

@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}Sesiuni mobile · EMS{% endblock %}
+{% block content %}
+<header class="page-header"><div><p class="eyebrow">SECURITATE CONT</p><h1>Sesiuni mobile</h1><p>Revoca accesul unui telefon pierdut. Este necesara parola contului.</p></div></header>
+{% if error %}<p role="alert" class="alert alert-error">{{ error }}</p>{% endif %}
+{% for session in sessions %}
+<section class="card" style="margin-bottom: 1rem; padding: 1.5rem">
+  <h2 class="text-lg font-semibold">{{ session.device_name }}</h2>
+  <p>{{ session.platform }} · Ultima autentificare: {{ session.last_seen_at|local_dt('UTC') }}</p>
+  <p>Expira: {{ session.expires_at|local_dt('UTC') }}</p>
+  <form method="post" action="/settings/mobile-sessions/{{ session.id }}/revoke" class="mt-4 space-y-3" style="max-width: 28rem">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}">
+    <div>
+      <label class="label" for="password-{{ session.id }}">Parola contului</label>
+      <input class="input" id="password-{{ session.id }}" name="password" type="password" required maxlength="128" autocomplete="current-password">
+    </div>
+    <button class="btn-primary" type="submit">Revoca sesiunea</button>
+  </form>
+</section>
+{% else %}<section class="card"><p>Nicio sesiune mobila activa.</p></section>{% endfor %}
+{% endblock %}

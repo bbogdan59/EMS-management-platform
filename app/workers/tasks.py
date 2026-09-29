@@ -81,6 +81,17 @@ def home_assistant_poll_task(connection_id: str) -> dict:
         return poll_connection(db, uuid.UUID(connection_id))
 
 
+@celery_app.task(name="app.workers.tasks.mobile_auth_retention_task")
+def mobile_auth_retention_task() -> dict:
+    from app.services.mobile_auth_service import purge_expired
+
+    with _task_lock("mobile_auth_retention", timeout=300) as acquired:
+        if not acquired:
+            return {"skipped": "already_running"}
+        with session_scope() as db:
+            return purge_expired(db)
+
+
 @celery_app.task(name="app.workers.tasks.task_execution_retention_task")
 def task_execution_retention_task() -> dict:
     with session_scope() as db:

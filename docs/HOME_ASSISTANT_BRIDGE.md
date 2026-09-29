@@ -8,7 +8,13 @@ on web/worker/beat, and serve EMS over HTTPS. No HA URL, long-lived access token
 public HA listener, or MQTT broker is needed. Default is disabled; core EMS works
 without it. The new table holds ephemeral context separately from Deye telemetry.
 
-Station dashboard → Conecteaza Home Assistant opens the native pairing/status UI.
+Station dashboard or sidebar → Home Assistant opens the HACS pairing/status UI.
+Shared sensors appear under **Senzori din locuinta** on that page and, while the
+bridge is active, on the station overview. Each card shows the latest value/unit,
+entity ID, source quality and source timestamp in the station timezone. Both views
+refresh every 30 seconds; missing/stale readings and failed refreshes display
+**Indisponibil**, never zero. History remains in Home Assistant.
+The separate MQTT setup remains accessible from the HACS page.
 Organization administrators can generate a 10-minute, one-time 96-bit opaque code.
 A new code revokes the previous station bridge and deletes its context. HA redeems
 the code outbound, confirms the instance/station, reviews a local allowlist and
@@ -60,7 +66,7 @@ immediately. No time-series or raw HA attributes are retained.
 
 Health: connecting, connected, stale (heartbeat >90 seconds or a missing/stale
 source), offline (>300 seconds), reauth_required, disconnected. The station overview
-shows a compact Casa inteligenta card only while a bridge is active. Contextual
+shows the shared sensor cards only while a bridge is active. Contextual
 insights/notifications require the recorded opt-in; downstream processing and mobile
 overview remain separate #206/#202 deliverables.
 

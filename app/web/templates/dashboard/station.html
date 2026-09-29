@@ -7,6 +7,8 @@
 <link rel="stylesheet" href="/static/css/station-dashboard.css">
 <link rel="stylesheet" href="/static/css/battery.css">
 <link rel="stylesheet" href="/static/css/solar.css">
+<link rel="stylesheet" href="/static/css/home-assistant-bridge.css">
+<script src="/static/js/home-assistant-bridge.js" defer></script>
 {% endblock %}
 {% macro metric_history(key, label) %}
 <div class="metric-history" data-history="{{ key }}">
@@ -80,9 +82,14 @@
 {% endmacro %}
 {% block content %}
 {% if home_assistant_bridge.enabled %}
-<section class="card" aria-label="Casa inteligenta prin HACS"><h2>Casa inteligenta</h2><p>Home Assistant prin HACS · {{ home_assistant_bridge.status }} · sursa separata de contorul invertorului</p><a href="/stations/{{ station.id }}/integrations/home-assistant-bridge">Stare si confidentialitate HACS</a></section>
-{% endif %}
+<section class="card ha-bridge-panel" aria-label="Senzori Home Assistant" data-ha-bridge data-status-url="/stations/{{ station.id }}/integrations/home-assistant-bridge/status">
+  <div data-ha-live>{% with bridge = home_assistant_bridge %}{% include "partials/_home_assistant_bridge_sensors.html" %}{% endwith %}</div>
+  <div class="ha-bridge-actions"><a href="/stations/{{ station.id }}/integrations/home-assistant-bridge">Gestioneaza Home Assistant</a></div>
+  <p class="ha-bridge-refresh" data-ha-refresh role="status">Actualizare automata la fiecare 30 de secunde.</p>
+</section>
+{% else %}
 <a class="btn-secondary" href="/stations/{{ station.id }}/integrations/home-assistant-bridge">Home Assistant prin HACS</a>
+{% endif %}
 <div class="energy-dashboard" data-timezone="{{ station.timezone }}">
   <header class="dashboard-header">
     <div><span class="eyebrow">{{ station.name }} · {{ station.timezone }}</span><h1>Panou energetic</h1><div class="dashboard-subtitle live-meta"><span>Ultima actualizare <span id="kpi-last-update">—</span></span><span id="kpi-quality" class="badge-muted">—</span><span id="kpi-source" class="badge-muted" hidden></span><span id="sse-status" class="badge-muted" title="Stare conexiune actualizare live">conectare...</span></div></div>

@@ -1,4 +1,4 @@
-"""Export only the mobile API and its reachable schemas from the running app."""
+"""Export only the versioned mobile read API and its reachable schemas."""
 
 import argparse
 import json
@@ -13,9 +13,13 @@ def mobile_contract(document=None):
 
         document = app.openapi()
     paths = {
-        path: value
-        for path, value in document["paths"].items()
-        if path.startswith("/api/v1/mobile/")
+        path: operations
+        for path, operations in document["paths"].items()
+        if any(
+            "mobile-v1" in operation.get("tags", [])
+            for operation in operations.values()
+            if isinstance(operation, dict)
+        )
     }
     schemas = {}
 
