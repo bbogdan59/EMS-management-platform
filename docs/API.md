@@ -6,6 +6,10 @@ pana la aprobare. Comenzile manuale fara plan/politica nu sunt livrabile.
 Agentul curent EMS-device-code v0.1 ramane read-only; extensiile de mai jos nu
 reprezinta suport hardware verificat.
 
+Integrarea optionala [Home Assistant / MQTT](HOME_ASSISTANT_MQTT.md) are un
+contract separat de context local, mapare cu consimtamant si publicare de
+recomandari. Nu extinde API-ul de comenzi si nu autorizeaza control fizic.
+
 ### Read-back separat de ACK/aplicare
 
 `POST /api/v1/commands/{command_id}/readback`, cu autentificarea device obisnuita:

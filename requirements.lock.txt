@@ -46,6 +46,7 @@ mypy==1.19.1
 mypy_extensions==1.1.0
 numpy==2.2.6
 orjson==3.11.3
+paho-mqtt==2.1.0
 packaging==26.3
 pandas==2.3.3
 pathspec==1.1.1

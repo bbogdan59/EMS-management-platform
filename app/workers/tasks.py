@@ -40,6 +40,35 @@ logger = structlog.get_logger(__name__)
 settings = get_settings()
 
 
+@celery_app.task(name="app.workers.tasks.home_assistant_schedule_task")
+def home_assistant_schedule_task() -> dict:
+    from app.models.home_assistant import HomeAssistantConnection
+    from app.services.home_assistant_service import purge_context
+
+    with _task_lock("home_assistant_schedule", timeout=25) as acquired:
+        if not acquired:
+            return {"skipped": "already_running"}
+        with session_scope() as db:
+            purged = purge_context(db)
+            if not settings.home_assistant_mqtt_enabled:
+                return {"skipped": "disabled", "purged": purged}
+            ids = db.scalars(select(HomeAssistantConnection.id).where(
+                HomeAssistantConnection.enabled.is_(True),
+                HomeAssistantConnection.next_attempt_at <= utcnow(),
+            )).all()
+        for connection_id in ids:
+            home_assistant_poll_task.delay(str(connection_id))
+        return {"queued": len(ids)}
+
+
+@celery_app.task(name="app.workers.tasks.home_assistant_poll_task", soft_time_limit=20, time_limit=25)
+def home_assistant_poll_task(connection_id: str) -> dict:
+    from app.services.home_assistant_worker import poll_connection
+
+    with session_scope() as db:
+        return poll_connection(db, uuid.UUID(connection_id))
+
+
 @celery_app.task(name="app.workers.tasks.task_execution_retention_task")
 def task_execution_retention_task() -> dict:
     with session_scope() as db:

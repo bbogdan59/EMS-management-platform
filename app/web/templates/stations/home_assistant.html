@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% from "partials/_breadcrumb.html" import trail as breadcrumb %}
+{% block title %}Home Assistant · {{ station.name }}{% endblock %}
+{% block head %}
+<link rel="stylesheet" href="/static/css/home-assistant.css">
+<script src="/static/js/home-assistant.js" defer></script>
+{% endblock %}
+{% macro mapping_row(m=none, key='new') %}
+<div class="ha-mapping" data-ha-mapping>
+  <label for="entity-{{ key }}">Entitate Home Assistant<input id="entity-{{ key }}" class="input" name="entity_id" value="{{ m.entity_id if m else '' }}" placeholder="sensor.boiler_power" pattern="[a-z_]+\.[a-z0-9_]+" maxlength="160" required autocomplete="off"></label>
+  <label for="kind-{{ key }}">Tip<select id="kind-{{ key }}" class="input" name="kind">{% for kind, spec in kinds.items() %}<option value="{{ kind }}" {% if (m and m.kind == kind) or (not m and kind == 'power') %}selected{% endif %}>{{ spec[0] }}</option>{% endfor %}</select></label>
+  <label for="unit-{{ key }}">Unitate<select id="unit-{{ key }}" class="input" name="unit">{% for unit in ['W', 'kW', 'boolean', 'state'] %}<option value="{{ unit }}" {% if m and m.unit == unit %}selected{% endif %}>{{ unit }}</option>{% endfor %}</select></label>
+  <label for="age-{{ key }}">Valabilitate (sec.)<input id="age-{{ key }}" class="input" name="max_age_seconds" type="number" min="30" max="3600" value="{{ m.max_age_seconds if m else 180 }}" required></label>
+  <button class="btn-secondary" type="button" data-ha-remove aria-label="Elimina senzorul">Elimina</button>
+</div>
+{% endmacro %}
+{% block content %}
+<div class="ha-page space-y-6" data-ha-root data-status-url="/stations/{{ station.id }}/integrations/home-assistant/status" data-poll="{{ 'yes' if connection and connection.enabled else 'no' }}">
+  {{ breadcrumb([{"label": station.name, "url": "/?station_id=" ~ station.id}, {"label": "Home Assistant", "url": none}]) }}
+  <header class="ha-intro"><div><p class="ha-eyebrow">CONTEXT LOCAL</p><h1>Home Assistant &amp; MQTT</h1><p>Alege ce informatii din locuinta ajung in statia ta. Integrarea este optionala; functiile EMS raman disponibile independent.</p></div><span class="ha-badge">Senzori &amp; recomandari</span></header>
+  {% if error %}<div role="alert" class="badge-error rounded p-3">{{ error }}</div>{% endif %}
+  {% if request.query_params.get('saved') %}<div role="status" class="badge-ok rounded p-3">Configuratie salvata. Instaleaza pachetul Home Assistant de mai jos; workerul va verifica separat conexiunea.</div>{% endif %}
+  {% if not enabled_globally or not brokers %}<div class="card"><h2>Integrare disponibila la activare</h2><p>Administratorul platformei trebuie sa activeze conectorul si sa configureze un broker MQTT cu TLS accesibil workerului. Nu este necesar pentru monitorizarea statiei.</p></div>{% endif %}
+  {% if connection %}
+  <section class="card ha-status" aria-label="Starea integrarii">
+    <div><span class="ha-eyebrow">CONEXIUNE</span><h2 data-ha-status>{{ status_labels.get(connection.status, connection.status) }}</h2><p data-ha-error>{{ error_labels.get(connection.error_code, '') }}</p><p class="ha-muted">Ultima verificare: <time data-ha-connected>{{ connection.last_connected_at or 'Niciodata' }}</time></p><p class="ha-muted">O conexiune verificata nu confirma ca senzorii au trimis date recente.</p></div>
+    {% if can_edit and connection.enabled %}<form method="post" action="/stations/{{ station.id }}/integrations/home-assistant/manage"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><input type="hidden" name="revision" value="{{ connection.revision }}"><button class="btn-secondary" name="action" value="test">Testeaza conexiunea</button></form>{% endif %}
+  </section>
+  {% endif %}
+  {% if can_edit and enabled_globally and brokers %}
+  <section class="card"><form id="ha-config-form" method="post" action="/stations/{{ station.id }}/integrations/home-assistant/configure" class="space-y-6">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><input type="hidden" name="revision" value="{{ connection.revision if connection else 0 }}">
+    <div><h2>1. Conecteaza brokerul</h2><p class="ha-muted">Foloseste un cont MQTT dedicat acestei statii, cu acces limitat la topicurile ei.</p></div>
+    <div class="ha-credentials">
+      <label for="ha-broker">Broker TLS<select id="ha-broker" name="broker_key" class="input" required>{% for key in brokers %}<option value="{{ key }}" {% if connection and connection.broker_key == key %}selected{% endif %}>{{ key }}</option>{% endfor %}</select></label>
+      <label for="ha-user">Utilizator MQTT<input id="ha-user" name="username" class="input" maxlength="256" autocomplete="off" {% if not connection or not connection.enabled %}required{% endif %}></label>
+      <label for="ha-password">Parola MQTT<input id="ha-password" name="password" type="password" class="input" maxlength="1024" autocomplete="new-password" {% if not connection or not connection.enabled %}required{% endif %}></label>
+    </div>
+    {% if connection and connection.enabled %}<p class="ha-muted">Lasa ambele campuri de autentificare goale pentru a pastra credentialele curente. Pentru rotatie fara schimbarea maparii, foloseste sectiunea de administrare.</p>{% endif %}
+    <div><h2>2. Alege senzorii</h2><p class="ha-muted">Doar entitatile adaugate aici sunt importate. Ocuparea trebuie sa fie un singur senzor agregat pentru locuinta. Pentru boiler/HVAC foloseste un senzor de stare, nu modul dorit al termostatului.</p></div>
+    <div data-ha-mappings>{% for m in mappings %}{{ mapping_row(m, m.id) }}{% else %}{{ mapping_row() }}{% endfor %}</div>
+    <button class="btn-secondary" type="button" data-ha-add>Adauga senzor</button>
+    <div class="ha-consent"><label><input type="checkbox" name="consent" value="yes" required><span>Accept importul exclusiv al senzorilor selectati. Confirm ca ocuparea este agregata si nu transmite identitatea sau prezenta individuala a persoanelor.</span></label>
+      <label><input type="checkbox" name="publish_consent" value="yes" {% if connection and connection.publish_enabled %}checked{% endif %}><span>Accept publicarea starii EMS si a recomandarilor pe brokerul meu. Aplicarea unei recomandari se face separat in EMS.</span></label>
+    </div>
+    <p class="ha-muted">Se pastreaza doar ultima observatie per senzor; valorile mai vechi de 24 de ore sunt sterse periodic. Nu se importa atribute, localizari sau istoricul Home Assistant.</p>
+    <button class="btn-primary" type="submit">Salveaza integrarea</button>
+  </form></section>
+  <template id="ha-mapping-template">{{ mapping_row(none, '__key__') }}</template>
+  {% elif not can_edit %}<p class="ha-muted">Doar un administrator de organizatie poate modifica integrarea.</p>{% endif %}
+  {% if connection and connection.enabled %}
+  <section class="card"><h2>Date primite</h2><p class="ha-muted">Sursa si calitatea sunt pastrate pentru fiecare citire. Valorile lipsa sau expirate apar ca indisponibile.</p>
+    <div class="ha-table-wrap"><table class="ha-table"><thead><tr><th>Senzor</th><th>Valoare</th><th>Provenienta</th><th>Observat la</th></tr></thead><tbody data-ha-observations>{% for o in observations %}<tr><td>{{ o.entity_id }}</td><td>{{ o.value if o.available else 'Indisponibil' }}{% if o.available %} {{ o.unit }}{% endif %}</td><td>{{ o.source or 'Fara date' }} · {{ o.quality }}{% if o.source_quality != o.quality %} · {{ o.source_quality }}{% endif %}</td><td>{{ o.observed_at or '—' }}</td></tr>{% endfor %}</tbody></table></div>
+    <p class="ha-muted" data-ha-refresh role="status" aria-live="polite"></p>
+  </section>
+  {% if can_edit %}
+  <section class="card space-y-3"><h2>3. Configureaza Home Assistant</h2><p>Descarca pachetul si include-l in <code>homeassistant.packages</code>. Dupa schimbarea senzorilor sau a brokerului, inlocuieste pachetul anterior si reincarca automatizarile.</p><a class="btn-secondary" href="/stations/{{ station.id }}/integrations/home-assistant/home-assistant.yaml">Descarca configuratia Home Assistant</a>
+    <details><summary>Topicuri si acces MQTT</summary><p class="ha-muted">Prefixul acestei configuratii:</p><code class="ha-topic">{{ topic_root }}</code><p>Home Assistant publica in <code>/context/+</code>; EMS citeste aceste topicuri si poate publica in <code>/ems/state</code>. Cere administratorului brokerului doua conturi separate, cu aceste permisiuni. Nu sunt acceptate topicuri de comanda.</p><p class="ha-muted">Pachetul marcheaza citirile drept estimate si flexibilitatea drept declarata. Pastreaza timestampul ultimei raportari a senzorului; retransmiterea nu transforma o citire veche intr-una recenta.</p></details>
+  </section>
+  <details class="card"><summary>Credentiale si deconectare</summary><div class="space-y-6 mt-4">
+    <form method="post" action="/stations/{{ station.id }}/integrations/home-assistant/manage" class="space-y-3"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><input type="hidden" name="revision" value="{{ connection.revision }}"><h2>Roteste credentialele</h2><p>Schimba credentialele contului dedicat pe broker, apoi salveaza-le aici. Pachetul si maparea senzorilor raman valabile.</p><div class="ha-credentials"><label for="rotate-user">Utilizator MQTT nou<input id="rotate-user" class="input" name="username" required maxlength="256" autocomplete="off"></label><label for="rotate-password">Parola noua<input id="rotate-password" class="input" type="password" name="password" required maxlength="1024" autocomplete="new-password"></label></div><button class="btn-secondary" name="action" value="rotate">Salveaza credentialele noi</button></form>
+    <form method="post" action="/stations/{{ station.id }}/integrations/home-assistant/manage"><input type="hidden" name="csrf_token" value="{{ csrf_token(request) }}"><input type="hidden" name="revision" value="{{ connection.revision }}"><p>Deconectarea retrage consimtamantul, sterge credentialele si datele de context din EMS. Revoca separat contul pe broker si elimina pachetul din Home Assistant pentru a opri si publicarea locala.</p><button class="btn-secondary mt-3" name="action" value="revoke">Deconecteaza si sterge contextul</button></form>
+  </div></details>
+  {% endif %}
+  {% endif %}
+</div>
+{% endblock %}

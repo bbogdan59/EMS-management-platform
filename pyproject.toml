@@ -38,6 +38,7 @@ dependencies = [
     "cryptography==50.0.1",
     "boto3==1.43.97",
     "sse-starlette==3.4.11",
+    "paho-mqtt==2.1.0",
 ]
 
 [project.optional-dependencies]

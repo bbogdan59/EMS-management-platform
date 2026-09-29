@@ -62,6 +62,7 @@ def create_app() -> FastAPI:
     from app.web.routes import deye_integration as deye_integration_routes
     from app.web.routes import diagnostics as diagnostics_routes
     from app.web.routes import energy_operations as energy_operations_routes
+    from app.web.routes import home_assistant as home_assistant_routes
     from app.web.routes import inverter_config as inverter_config_routes
     from app.web.routes import market as market_routes
     from app.web.routes import organizations as organizations_routes
@@ -77,6 +78,7 @@ def create_app() -> FastAPI:
     app.include_router(market_routes.router, tags=["web-market"])
     app.include_router(inverter_config_routes.router, tags=["inverter-config"])
     app.include_router(deye_integration_routes.router, tags=["deye-cloud-integration"])
+    app.include_router(home_assistant_routes.router, tags=["home-assistant-integration"])
     app.include_router(admin_routes.router, prefix="/admin", tags=["web-admin"])
     app.include_router(admin_catalog_routes.router, prefix="/admin", tags=["web-admin-catalog"])
     app.include_router(admin_firmware_routes.router, prefix="/admin", tags=["web-admin-firmware"])
