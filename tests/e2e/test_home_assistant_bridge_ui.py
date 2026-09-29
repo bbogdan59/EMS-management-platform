@@ -130,7 +130,10 @@ def test_shared_temperatures_polling_navigation_and_mobile(bridge_server):
                 expect(second).to_be_visible()
         panel.screenshot(path="/tmp/ems-ha-sensors-mobile.png")
         page.evaluate("document.documentElement.classList.add('dark')")
-        panel.screenshot(path="/tmp/ems-ha-sensors-dark.png")
+        assert first.locator("span").evaluate("el => getComputedStyle(el).color") == first.evaluate(
+            "el => getComputedStyle(el).color"
+        )
+        panel.screenshot(path="/tmp/ems-ha-sensors-dark.png", animations="disabled")
         page.goto(base + f"/stations/{station_id}/integrations/home-assistant-bridge")
         page.get_by_role("button", name="Deconecteaza si sterge contextul").click()
         expect(panel.locator("[data-ha-empty]")).to_be_visible()

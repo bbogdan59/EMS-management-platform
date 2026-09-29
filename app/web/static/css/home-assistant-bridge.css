@@ -11,7 +11,7 @@
 .ha-bridge-kind { color: var(--ha-muted); font-size: 11px; margin-bottom: 4px; }
 .ha-bridge-sensor h3 { font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
 .ha-bridge-value { font-size: 32px; font-weight: 700; line-height: 1.4; margin: 12px 0; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
-.ha-bridge-value span { font-size: 18px; font-weight: 500; }
+.ha-bridge-value span { font-size: 18px; font-weight: 500; color: var(--ha-ink); }
 .ha-bridge-value.is-missing { font-size: 20px; color: var(--ha-muted); }
 .ha-bridge-entity { font-family: monospace; font-size: 10px; color: var(--ha-muted); overflow-wrap: anywhere; margin-top: 10px; }
 .ha-bridge-empty, .ha-bridge-notice { font-size: 14px; line-height: 1.7; margin: 18px 0; }
