@@ -40,8 +40,15 @@
   <path id="flow-bus-ev" data-flow-edge="bus_ev" d="M310 187 L375 165 Q391 162 404 159 L519 135 Q551 129 557 162" stroke="#6c9691" opacity=".18" marker-end="url(#flow-arrow-sky)"/>
 </g>
 <g filter="url(#scene-shadow)"><rect x="279" y="170" width="31" height="33" rx="5" fill="#f6f8f0" stroke="#cad7bf"/><path d="m296 178-7 10h6l-2 8 10-12h-6z" fill="#6a8c59"/></g>
-<g font-family="Manrope,sans-serif" font-size="10" fill="#647b5d" text-anchor="middle"><text x="90" y="104">RETEA</text><text x="270" y="37">PRODUCTIE SOLARA</text><text x="226" y="249">CONSUM</text><text x="431" y="267">BATERIE</text><text x="515" y="259">INCARCARE EV</text></g>
-<g font-family="Manrope,sans-serif" font-size="11" fill="#486042" text-anchor="middle"><text data-flow-label="pv_bus" x="347" y="151">-</text><text data-flow-label="bus_load" x="250" y="177">-</text><text data-flow-label="battery_bus" x="370" y="254">-</text><text data-flow-label="bus_battery" x="369" y="216">-</text><text data-flow-label="grid_bus" x="137" y="248">-</text><text data-flow-label="bus_grid" x="151" y="193">-</text><text data-flow-label="bus_ev" x="464" y="132">-</text></g>
+<g font-family="Manrope,sans-serif" font-size="10" fill="#647b5d" text-anchor="middle"><text x="90" y="104">RETEA</text><text x="300" y="13">PRODUCTIE SOLARA</text><text x="226" y="249">CONSUM</text><text x="431" y="267">BATERIE</text><text x="515" y="259">INCARCARE EV</text></g>
+<g font-family="Manrope,sans-serif" text-anchor="middle">
+  {% for edge, x, y in [('pv_bus',300,35),('bus_load',235,174),('battery_bus',355,254),('bus_battery',359,211),('grid_bus',129,245),('bus_grid',151,190),('bus_ev',474,124)] %}
+  <g class="flow-value" transform="translate({{ x }} {{ y }})">
+    <rect x="-42" y="-13" width="84" height="26" rx="7"/>
+    <text data-flow-label="{{ edge }}" x="0" y="1" dominant-baseline="middle">-</text>
+  </g>
+  {% endfor %}
+</g>
 </svg>
 <p id="energy-flow-summary" class="flow-caption" aria-live="polite">Se asteapta primul snapshot live.</p>
 <div class="flow-legend"><span><i style="background:#5e8b46"></i>PV</span><span><i style="background:#8fa970"></i>Baterie</span><span><i style="background:#7c9291"></i>Retea / consum</span><span><i style="background:#6c9691"></i>EV</span><span id="energy-flow-provenance" class="badge-muted" hidden></span></div>
