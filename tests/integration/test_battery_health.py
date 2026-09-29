@@ -191,6 +191,17 @@ def test_deye_only_exposes_verified_fields_and_preserves_null(db, setup):
     assert live.nominal_capacity.quality == "declared"
 
 
+def test_legacy_derived_soh_is_estimated_even_without_new_metadata(db, setup):
+    user, station, device, config = setup
+    now = datetime.now(UTC)
+    sample(db, station, device, now, soc=65, quality_flags={"derived": True},
+           diagnostics={"battery": {"soh_percent": "88"}})
+    live = battery.summary(db, station, now=now).batteries[0]
+    assert live.soh.status == "estimated"
+    assert live.soh.quality == "estimated"
+    assert live.soh.method is None  # Unknown legacy estimator is not invented.
+
+
 def test_pack_ingestion_persists_validated_metadata_and_rejects_duplicates(db, setup):
     user, station, device, config = setup
     item = TelemetryItem(boot_id="pack-test", sequence=1, measured_at=datetime.now(UTC), battery_packs=[

@@ -146,7 +146,9 @@ def current(target, row, configs, allow_config, now):
                                   supported=True if value is not None else None, source=basis, flags=flags,
                                   measured_at=at or (row.measured_at if row and basis else None)))
     soh_metric = metric("soh_percent", "%")
-    kind = group.get("soh_kind") or ("estimated" if group.get("quality") == "derived" else "measured")
+    kind = group.get("soh_kind") or "measured"
+    if "derived" in soh_metric.flags:
+        kind = "estimated"
     if soh_metric.value is None or kind == "unavailable":
         kind = "unavailable"
         soh_metric.value = None
