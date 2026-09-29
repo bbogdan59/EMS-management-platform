@@ -2,6 +2,11 @@
 
 Read docs/CODE_STANDARDS.md and the relevant API/schema before changes. Keep changes scoped to the issue; no global reformatting. Use FastAPI services, SQLAlchemy, Alembic and the existing UI.
 
+## Repository map and ownership
+- Read `docs/SOURCE_CODE_ARCHITECTURE.md` before every change that touches or references mobile, device, Home Assistant, integrations, shared contracts or another repository.
+- Implement behavior in the repository that owns it. Do not place mobile/Home Assistant code in this repository and do not duplicate platform business logic in clients.
+- For cross-repository work, define the backward-compatible contract first and coordinate companion issues/releases as described in the repository map.
+
 ## Data and compatibility
 - Unknown is not zero. Preserve NULL and per-metric coverage through API, dashboard, forecast and export. Explicit zero limits/SOC remain valid.
 - Changing column nullability or a service contract requires updating all callers in the same PR, with integration regressions.
