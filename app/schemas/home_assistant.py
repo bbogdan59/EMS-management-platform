@@ -58,6 +58,8 @@ class ConnectionInput(BaseModel):
     def unique_entities(self):
         if len({m.entity_id for m in self.mappings}) != len(self.mappings):
             raise ValueError("O entitate poate fi mapata o singura data.")
+        if sum(m.kind == "occupancy" for m in self.mappings) > 1:
+            raise ValueError("Este permis un singur senzor de ocupare agregata pentru locuinta.")
         if bool(self.username.get_secret_value()) != bool(self.password.get_secret_value()):
             raise ValueError("Completeaza impreuna utilizatorul si parola MQTT.")
         return self

@@ -7,11 +7,27 @@ import pytest
 from pydantic import ValidationError
 
 from app.models.home_assistant import HomeAssistantConnection, HomeAssistantMapping
-from app.schemas.home_assistant import ContextSample, MappingInput
+from app.schemas.home_assistant import ConnectionInput, ContextSample, MappingInput
 from app.services import home_assistant_service as service
 from app.services.home_assistant_config import package_yaml
 
 NOW = datetime(2026, 9, 28, 12, tzinfo=UTC)
+
+
+def test_occupancy_consent_is_limited_to_one_aggregate_sensor():
+    data = {
+        "revision": 0,
+        "broker_key": "home",
+        "consent": True,
+        "mappings": [
+            {"entity_id": "binary_sensor.home", "kind": "occupancy", "unit": "boolean"},
+            {"entity_id": "binary_sensor.room", "kind": "occupancy", "unit": "boolean"},
+        ],
+    }
+    with pytest.raises(ValidationError, match="singur senzor"):
+        ConnectionInput(**data)
+    data["mappings"].pop()
+    assert len(ConnectionInput(**data).mappings) == 1
 
 
 def sample(**overrides):
