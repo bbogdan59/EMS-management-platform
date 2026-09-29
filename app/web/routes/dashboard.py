@@ -99,7 +99,9 @@ def home(
         "wizard_resume_url": _wizard_resume_url(db, user, station),
         **nav,
     }
-    return templates.TemplateResponse(request, "dashboard/station.html", context)
+    return templates.TemplateResponse(
+        request, "dashboard/station.html", context, headers={"Cache-Control": "no-store"}
+    )
 
 
 def _parse_range(range_key: str) -> tuple[datetime, datetime]:

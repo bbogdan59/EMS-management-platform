@@ -12,6 +12,7 @@ from alembic.operations import Operations
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
+from app.core.rate_limit import reset_key
 from app.core.security import hash_token, utcnow
 from app.models.home_assistant_bridge import HomeAssistantBridge
 from app.models.station import Station
@@ -26,6 +27,7 @@ API = "/api/v1/home-assistant"
 
 @pytest.fixture(autouse=True)
 def settings(monkeypatch):
+    reset_key("login_attempts:testclient")
     monkeypatch.setattr(get_settings(), "home_assistant_bridge_enabled", True)
     monkeypatch.setattr("app.api.v1.home_assistant_bridge.check_fixed_window", lambda *a: 1)
 
@@ -354,13 +356,13 @@ def test_ui_and_disabled_feature(db, client, monkeypatch):
     page = f"/stations/{station.id}/integrations/home-assistant-bridge"
     assert client.get(page).status_code == 200
     assert (
-        'aria-label="Casa inteligenta prin HACS"'
+        'aria-label="Senzori Home Assistant"'
         not in client.get(f"/?station_id={station.id}").text
     )
     bridge, token = configured(db, station, user)
     db.flush()
     assert (
-        'aria-label="Casa inteligenta prin HACS"' in client.get(f"/?station_id={station.id}").text
+        'aria-label="Senzori Home Assistant"' in client.get(f"/?station_id={station.id}").text
     )
     monkeypatch.setattr(get_settings(), "home_assistant_bridge_enabled", False)
     assert client.get(f"/api/v1/stations/{station.id}/home-assistant").json()["enabled"] is False
