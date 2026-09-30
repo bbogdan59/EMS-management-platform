@@ -80,9 +80,9 @@ def test_battery_dashboard_mobile_states_and_interactions(diagnostics_server):  
                 expect(page.locator("#battery-state")).to_contain_text("Descarcare")
                 expect(page.locator("#battery-efc-meta")).to_contain_text("Istoric partial")
                 expect(page.locator("#battery-hourly-chart")).to_have_attribute("data-chart-ready", "true")
-                page.locator(".battery-table summary").first.click()
+                page.locator(".battery-day .battery-table summary").click()
                 expect(page.locator("#battery-hourly-table table")).to_be_visible()
-                page.locator(".battery-table summary").first.click()
+                page.locator(".battery-day .battery-table summary").click()
             elif scenario in ("hot", "cold", "stale"):
                 expect(page.locator("#battery-notices")).to_contain_text(payload["notices"][0]["title"])
             elif scenario == "unsupported":

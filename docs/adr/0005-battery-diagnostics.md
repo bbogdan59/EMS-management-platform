@@ -42,3 +42,55 @@ models for future mobile clients. Native session authentication remains #200;
 device credentials do not grant access to human analytics endpoints. Deploy the
 additive platform contract first, then opt-in agent support under the companion
 issue, with deterministic fixtures and separate hardware verification.
+
+## Conditional charging projection
+
+The platform also owns the read-only projection at
+`GET /api/v1/stations/{station_id}/battery-health/projection?battery_id=...`.
+Its additive OpenAPI model is `BatteryChargeProjection`; no telemetry, mobile or
+Home Assistant contract is changed. The dashboard summary and battery detail
+both consume this endpoint. It always projects **now**, independently of the
+historical day selected elsewhere on the battery page, and refreshes each minute.
+
+The constant-rate reference uses fresh SOC, positive measured DC charging power
+and declared usable capacity (nominal only when usable is absent, flagged).
+Energy to the target is `capacity * max(target_SOC - SOC, 0) / 100`. Divide by
+current DC power for an ETA; do not apply AC conversion efficiency a second time.
+References beyond 48 hours are labelled rather than extrapolated indefinitely.
+Zero charging power means no current-rate ETA; zero capacity is unusable and
+must not trigger nominal fallback. The target is the station's configured
+maximum normal SOC for an unambiguous bank, otherwise 100% for the selected pack.
+These declared preferences do not assert that hardware has applied them.
+
+The solar scenario integrates the latest expected PV and consumption forecast
+generations from now until the next station-local midnight in Decimal, in steps
+no longer than 15 minutes and split at forecast boundaries. Subtract base, EV
+and flexible consumption from forecast PV. For positive surplus, apply the
+configured AC charging limit and charging efficiency; for a deficit, apply the
+discharging limit and efficiency. Reported current DC power is blended linearly
+into this forecast over the first 15 minutes (the interval-average weight is
+used). Respect the declared SOC ceiling and reserve without clamping away an
+initial observed SOC outside the band. The first crossing gives a conditional
+ETA; the curve can subsequently fall with evening demand.
+
+Station forecasts cannot be allocated reliably to multiple banks/packs; only
+the current-rate reference is offered for those source-specific targets. No
+scheduled grid charging, optimization dispatch or unverified inverter commands
+are assumed. Taper near full charge is not modelled, so actual completion can be
+later. This is an estimate, not a command, charging guarantee or measured fact.
+
+Freshness is ten minutes for the battery state and six hours for forecasts and
+their linked, same-station weather evidence. Validate the latest issue before
+using it; never stitch older runs into gaps. Synthetic/untrusted forecasts or
+initial battery state cannot produce a solar ETA. Quality validation includes
+the interval carrying into `now` and the underlying weather. Missing or
+overlapping intervals stop the curve and leave the end SOC unknown; a target
+crossing before the gap remains explicitly partial. If no consumption generation
+exists, fresh measured household load can be held constant as a named,
+low-confidence assumption. Missing load is never zero. Cold-start/low-confidence
+forecasts are labelled. All contributing flags are retained.
+
+The API preserves measurement/receipt timestamps and source on input metrics,
+forecast issue timestamps and configuration/preference versions. API reads
+require station viewer access and use `Cache-Control: no-store`. There are no
+provider calls, writes, migrations or changes to historical energy accounting.

@@ -1,0 +1,20 @@
+<section class="charge-projection" data-charge-projection data-station="{{ station.id }}" aria-label="Proiectia incarcarii bateriei">
+  <div class="charge-heading"><div><p class="charge-eyebrow">PRIVESTE INAINTE</p><h2>Proiectia incarcarii</h2></div><span class="charge-badge">Estimare · azi</span></div>
+  <p class="battery-caption" data-charge-context role="status">Se calculeaza proiectia...</p>
+  <div data-charge-error hidden role="alert"><p>Proiectia nu poate fi actualizata momentan.</p><button type="button" class="btn-secondary" data-charge-retry>Reincearca</button></div>
+  <div data-charge-content hidden>
+    <div class="charge-estimates">
+      <article><p>Cu soarele si consumul prognozat</p><strong data-charge-solar>—</strong><p data-charge-solar-note></p></article>
+      <article><p>Daca puterea actuala ramane constanta</p><strong data-charge-rate>—</strong><p data-charge-rate-note></p></article>
+    </div>
+    <p class="charge-energy" data-charge-energy></p>
+    <details class="charge-details" data-charge-details {% if not projection_compact %}open{% endif %}>
+      <summary>Evolutia estimata pana la sfarsitul zilei</summary>
+      <div class="charge-chart" data-charge-chart role="img" aria-label="Nivelul estimat al bateriei pana la sfarsitul zilei"></div>
+      <p class="battery-caption" data-charge-forecast-meta></p>
+      <details class="battery-table"><summary>Proiectia in tabel</summary><div><table><thead><tr><th>Ora</th><th>SOC estimat</th><th>PV</th><th>Consum</th><th>Baterie ±</th></tr></thead><tbody data-charge-rows></tbody></table></div></details>
+    </details>
+    <p class="battery-caption" data-charge-notes></p>
+    <p class="battery-caption charge-assumptions">Puterea actuala influenteaza primele 15 minute; apoi estimam surplusul solar dupa consum. Folosim capacitatea, eficientele si limitele configurate. Incarcarea din retea, programele invertorului si reducerea puterii aproape de plin pot schimba rezultatul.</p>
+  </div>
+</section>
