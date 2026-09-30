@@ -35,23 +35,24 @@
   const time = value => new Date(value).toLocaleString('ro-RO', {timeZone:data.timezone, day:'numeric', month:'short', hour:'2-digit', minute:'2-digit'});
   function estimate(value, prefix) {
     const labels = {already_at_target:'Tinta atinsa', not_charging:'Nu se incarca acum', not_reached:'Nu atinge tinta azi', partial:'Prognoza partiala', unavailable:'Estimare indisponibila', beyond_horizon:'Peste 48 ore'};
-    find(prefix).textContent = value.status === 'estimated' ? `In jurul orei ${time(value.reaches_target_at)}` : labels[value.status];
+    find(prefix).textContent = value.status === 'estimated' ? `≈ ${time(value.reaches_target_at)}` : labels[value.status];
     find(`${prefix}-note`).textContent = value.reason ? reasons[value.reason] || 'Date insuficiente pentru estimare.' :
       value.minutes_to_target > 0 ? `Aproximativ ${Math.ceil(Number(value.minutes_to_target))} minute pana la ${format(data.target_soc_percent)}%.` :
       value.end_soc_percent !== null ? `${format(value.end_soc_percent)}% estimat la sfarsitul zilei · varf ${format(value.peak_soc_percent)}%.` : `Tinta ${format(data.target_soc_percent)}%.`;
+    if (value.status === 'estimated' && value.end_soc_percent !== null) find(`${prefix}-note`).textContent += ` ${format(value.end_soc_percent)}% la sfarsitul zilei.`;
   }
   function draw() {
     if (!data || !find('details').open || find('content').hidden) return;
     chart ||= emsCreateChart(find('chart'));
     const css = getComputedStyle(root), color = css.getPropertyValue('--bat-in').trim();
-    chart.setOption({animation:false, tooltip:{trigger:'axis', confine:true, renderMode:'richText'},
-      grid:{left:42,right:18,top:25,bottom:35},
-      xAxis:{type:'time',min:Date.parse(data.generated_at),max:Date.parse(data.horizon_end),axisLabel:{formatter:value => new Date(value).toLocaleTimeString('ro-RO',{timeZone:data.timezone,hour:'2-digit',minute:'2-digit'})}},
+    chart.setOption({animation:false, legend:{show:false}, tooltip:{trigger:'axis', confine:true, renderMode:'richText'},
+      grid:{left:42,right:18,top:40,bottom:35},
+      xAxis:{type:'time',splitNumber:4,min:Date.parse(data.generated_at),max:Date.parse(data.horizon_end),axisLabel:{hideOverlap:true,formatter:value => new Date(value).toLocaleTimeString('ro-RO',{timeZone:data.timezone,hour:'2-digit',minute:'2-digit'})}},
       yAxis:{type:'value',name:'SOC %',min:0,max:100},
       series:[{name:'SOC estimat (%)',type:'line',smooth:false,connectNulls:false,symbolSize:4,
         lineStyle:{color,width:3,type:'dashed'}, itemStyle:{color},areaStyle:{color,opacity:.08},
         data:data.points.map(p => [p.at,p.soc_percent === null ? null : Number(p.soc_percent)]),
-        markLine:{silent:true,symbol:'none',data:[{yAxis:Number(data.target_soc_percent),label:{formatter:`Tinta ${format(data.target_soc_percent)}%`,position:'insideEndTop'}}]}}],
+        markLine:{silent:true,symbol:'none',data:[{yAxis:Number(data.target_soc_percent),label:{formatter:`Tinta ${format(data.target_soc_percent)}%`,position:'insideEndTop',color:css.getPropertyValue('--bat-muted').trim(),textBorderWidth:0,fontSize:10}}]}}],
     },true);
     emsApplyChartAppearance(chart); chart.resize();
   }

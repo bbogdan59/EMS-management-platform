@@ -298,7 +298,9 @@ def test_route_scope_no_store_and_decimal_contract(db, client, context):
     assert response.status_code == 200, response.text
     assert response.headers["cache-control"] == "no-store"
     assert response.json()["current_rate"]["status"] == "estimated"
-    assert response.json()["power"]["value"] == "2.00"
+    power = response.json()["power"]
+    assert isinstance(power["value"], str)
+    assert Decimal(power["value"]) == Decimal(2) and power["unit"] == "kW"
     assert client.get(path, params={"battery_id": f"{uuid4()}:bank"}).status_code == 404
     other = make_station(db, make_org(db, "Other projection tenant"), user)
     db.commit()
