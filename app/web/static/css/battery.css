@@ -53,3 +53,21 @@
 @media(max-width:900px) { .battery-columns { grid-template-columns:1fr; } .battery-chart { height:280px; } }
 @media(max-width:480px) { .battery-heading { margin-bottom:20px; }.battery-heading h1 { font-size:32px; }.battery-controls { gap:10px; }.battery-controls label:first-child { flex-basis:100%; }.battery-live { padding:20px; border-radius:20px; }.battery-soc { font-size:52px; }.battery-state { max-width:155px; font-size:12px; padding:8px 12px; }.battery-live-bottom { align-items:start; }.battery-live-bottom strong { font-size:19px; }.battery-live-bottom p { max-width:170px; }.battery-temperature { padding:8px 10px; font-size:12px; white-space:nowrap; }.battery-panel { padding:18px; border-radius:20px; }.battery-panel h2 { font-size:17px; }.battery-totals { gap:26px; }.battery-totals strong { font-size:28px; }.battery-health-grid { gap:18px; }.battery-large { font-size:27px; }.battery-widget { padding:18px; } }
 @media(prefers-reduced-motion:reduce) { .battery-fill { transition:none; } }
+.charge-projection { color:var(--bat-ink); border:1px solid var(--bat-line); border-radius:22px; padding:24px; background:var(--bat-panel); margin-bottom:22px; }
+.battery-widget .charge-projection { padding:20px 0 0; margin:18px 0 0; border:0; border-top:1px solid var(--bat-line); border-radius:0; }
+.charge-heading { display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:10px; }
+.charge-heading h2 { color:var(--bat-ink); font-size:19px; font-weight:650; }
+.charge-eyebrow { color:var(--bat-muted); font-size:10px; letter-spacing:.13em; margin-bottom:5px; }
+.charge-badge { color:var(--bat-out); background:var(--bat-soft); padding:6px 10px; border-radius:20px; font-size:11px; white-space:nowrap; }
+.charge-estimates { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; margin:16px 0 12px; }
+.charge-estimates article { background:var(--bat-soft); border:1px solid var(--bat-line); border-radius:16px; padding:16px; min-width:0; }
+.charge-estimates p { color:var(--bat-muted); font-size:12px; line-height:1.65; }
+.charge-estimates strong { display:block; color:var(--bat-ink); font-size:24px; line-height:1.3; margin:8px 0; font-weight:650; }
+.charge-estimates article:first-child strong { color:var(--bat-in); }
+.charge-energy { color:var(--bat-ink); font-size:13px; margin-bottom:12px; }
+.charge-details>summary { color:var(--bat-ink); font-size:12px; cursor:pointer; padding:8px 0; }
+.charge-chart { height:250px; width:100%; }
+.charge-projection .battery-caption { color:var(--bat-muted); }
+.charge-assumptions { margin-top:10px; }
+.charge-projection [data-charge-error] { color:var(--bat-out); padding:12px 0; font-size:13px; }
+@media(max-width:600px) { .charge-projection { padding:18px; }.charge-estimates { grid-template-columns:1fr; }.charge-heading { align-items:start; }.charge-heading h2 { font-size:17px; }.charge-estimates strong { font-size:23px; } }

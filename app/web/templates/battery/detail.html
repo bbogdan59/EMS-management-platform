@@ -22,6 +22,7 @@
       <div class="battery-live-bottom"><div><strong id="battery-stored">—</strong><p>Energie estimata din SOC · capacitate nominala</p></div><span class="battery-temperature" id="battery-temperature">— °C</span></div>
       <p class="battery-live-meta" id="battery-live-meta"></p>
     </section>
+    {% include "battery/_projection.html" %}
     <div id="battery-notices" aria-live="polite"></div>
     <p class="battery-alert-link"><a href="/stations/{{ station.id }}/health">Vezi istoricul alertelor si diagnosticul statiei →</a></p>
     <div class="battery-columns">
@@ -60,4 +61,5 @@
   </div>
 </div>
 <script src="/static/js/battery.js" defer></script>
+<script src="/static/js/battery-projection.js" defer></script>
 {% endblock %}

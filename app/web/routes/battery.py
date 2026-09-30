@@ -1,17 +1,28 @@
 from datetime import date
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from sqlalchemy.orm import Session
 
 from app.api.deps import StationAccess, get_current_user
 from app.database import get_db
 from app.schemas.battery import BatteryDetail, BatterySummary
-from app.services import battery_service
+from app.schemas.battery_projection import BatteryChargeProjection
+from app.services import battery_projection_service, battery_service
 from app.web.context import build_nav_context
 from app.web.templating import templates
 
 router = APIRouter()
 viewer = StationAccess("viewer")
+
+
+@router.get("/api/v1/stations/{station_id}/battery-health/projection", response_model=BatteryChargeProjection)
+def battery_projection(response: Response, battery_id: str | None = Query(None, max_length=128),
+                       access=Depends(viewer), db: Session = Depends(get_db)):
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        return battery_projection_service.calculate(db, access[0], battery_id)
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
 
 
 @router.get("/stations/{station_id}/battery")

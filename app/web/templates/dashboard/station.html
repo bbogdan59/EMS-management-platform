@@ -109,6 +109,7 @@
   <section class="battery-widget" data-battery-widget data-station="{{ station.id }}" aria-labelledby="battery-widget-title">
     <div class="battery-widget-header"><h2 id="battery-widget-title">Sanatatea bateriei</h2><a href="/stations/{{ station.id }}/battery">Energie, temperatura si uzura →</a></div>
     <div class="battery-widget-data" data-battery-widget-data><p>Se incarca diagnosticul...</p></div>
+    {% with projection_compact=true %}{% include "battery/_projection.html" %}{% endwith %}
   </section>
   <div class="dashboard-hero">
     <section class="card flow-panel"><div class="panel-heading"><div><h2>Flux energetic actual</h2><p class="panel-kicker">Cum circula energia prin statia ta</p></div><span class="badge-muted">kW · acum</span></div>{% include "dashboard/_flow_diagram.html" %}<div class="flow-footer"><div><span class="metric-icon">{{ icon('battery') }}</span><div><p id="battery-direction-note">Actiune baterie</p><p id="kpi-battery" class="metric-value is-missing">Se incarca...</p></div></div><div><span class="metric-icon">{{ icon('car') }}</span><div><p id="ev-state-note">Masina electrica</p><p id="kpi-ev" class="metric-value is-missing">Se incarca...</p></div></div></div></section>
@@ -249,6 +250,7 @@
 </div>
 <script src="/static/js/dashboard.js"></script>
 <script src="/static/js/battery.js" defer></script>
+<script src="/static/js/battery-projection.js" defer></script>
 <script src="/static/js/solar.js" defer></script>
 <script src="/static/js/grid-voltage.js" defer></script>
 <script>document.addEventListener("DOMContentLoaded", () => emsInitDashboard("{{ station.id }}", {{ summary | tojson }}));</script>
