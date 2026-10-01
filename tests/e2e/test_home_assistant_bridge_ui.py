@@ -96,12 +96,17 @@ def test_shared_temperatures_polling_navigation_and_mobile(bridge_server):
         expect(first).to_have_text("21,50 °C")
         expect(second).to_have_text("0,00 °C")
         expect(panel.locator("[data-ha-status]")).to_have_text("Conectat")
+        tile = page.locator('[data-sheet-open="sheet-casa"]')
+        expect(tile.locator("[data-ha-tile]")).to_contain_text("21,50 °C")
+        expect(tile.locator("[data-ha-tile-status]")).to_have_text("Conectat")
+        tile.get_by_role("button", name="Detalii senzori Home Assistant").click()
         panel.screenshot(path="/tmp/ems-ha-sensors-desktop.png")
         publish("22.75", None)
         page.clock.fast_forward(30000)
         expect(first).to_have_text("22,75 °C")
         expect(second).to_have_text("Indisponibil")
         expect(panel.locator("[data-ha-status]")).to_have_text("Date partiale sau intarziate")
+        expect(tile.locator("[data-ha-tile] b").nth(1)).to_have_text("Indisponibil")
         status_url = base + f"/stations/{station_id}/integrations/home-assistant-bridge/status"
         page.route(status_url, lambda route: route.fulfill(status=503, body="Unavailable"))
         page.clock.fast_forward(30000)
@@ -112,6 +117,7 @@ def test_shared_temperatures_polling_navigation_and_mobile(bridge_server):
         page.clock.fast_forward(30000)
         expect(first).to_have_text("23,00 °C")
         expect(second).to_have_text("19,25 °C")
+        page.keyboard.press("Escape")
         page.locator("#app-sidebar").get_by_role("link", name="Home Assistant", exact=True).click()
         expect(page).to_have_url(
             base + f"/stations/{station_id}/integrations/home-assistant-bridge"
@@ -120,7 +126,7 @@ def test_shared_temperatures_polling_navigation_and_mobile(bridge_server):
         expect(second).to_have_text("19,25 °C")
         for route in (
             f"/stations/{station_id}/integrations/home-assistant-bridge",
-            f"/?station_id={station_id}",
+            f"/?station_id={station_id}#sheet-casa",
         ):
             page.goto(base + route)
             for width in (390, 320):

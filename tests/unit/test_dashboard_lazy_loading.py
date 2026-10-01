@@ -26,10 +26,9 @@ def test_dashboard_charts_are_registered_for_lazy_visibility_loading():
 def test_technical_dashboard_charts_are_progressively_disclosed():
     template = Path("app/web/templates/dashboard/station.html").read_text()
 
-    assert 'id="advanced-dashboard-details"' in template
-    assert "Plan incarcare/descarcare" in template
-    assert "Prognoza vs. realizat - PV" in template
-    assert template.index('id="advanced-dashboard-details"') < template.index("Plan incarcare/descarcare")
+    first_sheet = template.index("{% call sheet(")
+    assert first_sheet < template.index("Plan incarcare/descarcare")
+    assert first_sheet < template.index("Prognoza vs. realizat - PV")
 
 
 def test_dashboard_timeseries_charts_mark_quality_intervals():

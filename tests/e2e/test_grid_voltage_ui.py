@@ -20,7 +20,7 @@ def test_voltage_daily_chart_mobile_theme_dates_and_retry(diagnostics_server):  
         _login(page, base)
         page.goto(f"{base}/?station_id={station_id}")
         panel = page.locator("[data-grid-voltage]")
-        panel.scroll_into_view_if_needed()
+        page.get_by_role("button", name="Detalii retea").click()
         expect(panel.locator("[data-voltage-chart]")).to_have_attribute("data-chart-ready", "true")
         expect(panel.locator(".voltage-phase").first).to_contain_text("262,1")
         expect(panel.locator(".voltage-phase").nth(1)).to_contain_text("Faza fara citiri")
@@ -35,9 +35,9 @@ def test_voltage_daily_chart_mobile_theme_dates_and_retry(diagnostics_server):  
             assert panel.evaluate("el => el.scrollWidth <= el.clientWidth + 1")
             if width == 320:
                 panel.screenshot(path="/tmp/ems-voltage-mobile.png")
-        page.get_by_role("button", name="Comuta tema").click()
+        page.evaluate("emsToggleTheme()")  # the top bar is inert behind a modal sheet
         panel.screenshot(path="/tmp/ems-voltage-dark.png")
-        page.get_by_role("button", name="Comuta tema").click()
+        page.evaluate("emsToggleTheme()")
         panel.screenshot(path="/tmp/ems-voltage-light.png")
         today = panel.locator("[data-voltage-day]").input_value()
         previous = (date.fromisoformat(today) - timedelta(days=1)).isoformat()

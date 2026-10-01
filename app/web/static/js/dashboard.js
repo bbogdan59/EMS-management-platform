@@ -994,6 +994,7 @@ function emsInitDashboard(stationId, initialSummary = null) {
   async function loadEnergyPeriodKpis() {
     try {
       const data = await fetchJson(`/stations/${stationId}/data/energy-kpis`);
+      document.dispatchEvent(new CustomEvent("ems:energy-kpis", { detail: data }));
       for (const period of ["today", "month"]) {
         const metrics = data[period] ? data[period].metrics : {};
         const comparisonLabel = data[period] ? data[period].comparison_label : "perioada comparabila";
@@ -1047,6 +1048,7 @@ function emsInitDashboard(stationId, initialSummary = null) {
     } catch (e) { console.error(e); }
     try {
       const savings = await fetchJson(`/stations/${stationId}/data/savings?range=30d`);
+      document.dispatchEvent(new CustomEvent("ems:savings", { detail: savings }));
       if (savings.available) {
         emsSetMetric($("kpi-savings"), savings.whole_system_benefit_lei, "lei");
         $("kpi-savings-note").textContent = savings.whole_system_baseline_description;

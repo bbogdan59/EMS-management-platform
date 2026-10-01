@@ -81,6 +81,7 @@ def test_projection_dashboard_detail_refresh_responsive_and_errors(diagnostics_s
         original = page.request.get(base + path).json()
         page.goto(f"{base}/?station_id={station_id}")
         root = page.locator("[data-charge-projection]")
+        page.get_by_role("button", name="Detalii baterie").click()
         expect(root.locator("[data-charge-content]")).to_be_visible()
         expect(root.locator("[data-charge-rate]")).to_have_text("Estimare indisponibila")
         data = projected(original)
@@ -89,7 +90,8 @@ def test_projection_dashboard_detail_refresh_responsive_and_errors(diagnostics_s
             pattern,
             lambda route: route.fulfill(content_type="application/json", body=json.dumps(data)),
         )
-        page.reload()
+        page.reload()  # the #sheet-baterie deep link reopens the sheet
+        expect(page.locator("#sheet-baterie")).to_be_visible()
         expect(root.locator("[data-charge-rate-note]")).to_contain_text("150 minute")
         root.locator("[data-charge-details]>summary").click()
         expect(root.locator("[data-charge-chart]")).to_have_attribute("data-chart-ready", "true")
