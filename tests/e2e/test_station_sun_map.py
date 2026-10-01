@@ -42,7 +42,8 @@ def test_live_sun_map_refresh_night_error_and_responsive_layout(diagnostics_serv
         page.clock.install()
         page.goto(base + f"/?station_id={station_id}")
         card = page.locator("[data-sun-map]")
-        card.scroll_into_view_if_needed()
+        expect(card).to_be_hidden()
+        page.get_by_role("button", name="Detalii productie solara").click()
         expect(card).to_have_attribute("data-sun-ready", "true")
         expect(page.locator("[data-sun-clock]")).to_have_text("10:00")
         expect(page.locator(".sun-day-path")).to_have_attribute("d", re.compile("M.+L"))
@@ -58,9 +59,8 @@ def test_live_sun_map_refresh_night_error_and_responsive_layout(diagnostics_serv
         page.mouse.up()
         canvas.dblclick(position={"x": 60, "y": 100})
         assert page.locator(".house-map-pin").get_attribute("style") == marker_position
-        scroll_before = page.evaluate("scrollY")
         page.mouse.wheel(0, 220)
-        page.wait_for_function("previous => scrollY > previous", arg=scroll_before)
+        page.wait_for_function("document.querySelector('#sheet-solar .ov-sheet-body').scrollTop > 0")
         assert page.locator(".house-map-pin").get_attribute("style") == marker_position
         first_x = page.locator(".sun-current .sun-disc").get_attribute("cx")
         payload = sun_map(44.43, 26.1, "Europe/Bucharest", datetime(2026, 6, 21, 16, tzinfo=UTC))
@@ -68,7 +68,7 @@ def test_live_sun_map_refresh_night_error_and_responsive_layout(diagnostics_serv
         expect(page.locator("[data-sun-clock]")).to_have_text("19:00")
         assert page.locator(".sun-current .sun-disc").get_attribute("cx") != first_x
         card.screenshot(path="/tmp/ems-sun-map-desktop.png")
-        page.get_by_role("button", name="Comuta tema").click()
+        page.evaluate("emsToggleTheme()")  # the top bar is inert behind a modal sheet
         card.screenshot(path="/tmp/ems-sun-map-dark.png")
         for width in (390, 320):
             page.set_viewport_size({"width": width, "height": 844})
@@ -144,14 +144,12 @@ def test_dashboard_history_preserves_gaps_zero_export_and_provenance(diagnostics
         assert -2 in values["grid"] and 0 in values["grid"] and 2 in values["grid"]
         assert values["pv"].count(None) == 3
         flow = page.locator(".flow-panel").bounding_box()
-        sun = page.locator(".sun-card").bounding_box()
-        today = page.locator(".today-section").bounding_box()
-        assert abs(flow["y"] - sun["y"]) < 2
-        assert sun["x"] > flow["x"] + flow["width"]
-        assert today["y"] >= flow["y"] + flow["height"]
-        assert today["y"] >= sun["y"] + sun["height"]
-        metric_rows = page.locator(".today-section .period-value").evaluate_all("els => els.map(el => el.getBoundingClientRect().top)")
-        assert max(metric_rows) - min(metric_rows) < 2
+        live = page.locator(".overview-metrics").bounding_box()
+        tiles = page.locator(".ov-grid").bounding_box()
+        assert abs(flow["y"] - live["y"]) < 2
+        assert live["x"] > flow["x"] + flow["width"]
+        assert tiles["y"] >= max(flow["y"] + flow["height"], live["y"] + live["height"])
+        assert tiles["y"] + tiles["height"] < 1200, "overview must fit one desktop screen"
         page.screenshot(path="/tmp/ems-dashboard-sage-desktop.png", full_page=True)
         page.get_by_role("button", name="Comuta tema").click()
         page.screenshot(path="/tmp/ems-dashboard-sage-dark.png", full_page=True)

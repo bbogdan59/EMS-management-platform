@@ -9,6 +9,7 @@
 <link rel="stylesheet" href="/static/css/solar.css">
 <link rel="stylesheet" href="/static/css/grid-voltage.css">
 <link rel="stylesheet" href="/static/css/home-assistant-bridge.css">
+<script src="/static/js/dashboard-overview.js" defer></script>
 <script src="/static/js/home-assistant-bridge.js" defer></script>
 {% endblock %}
 {% macro metric_history(key, label) %}
@@ -81,64 +82,140 @@
       </details>
     </section>
 {% endmacro %}
+{% macro tile_head(label, icon_name, sheet_key, detail_label) %}
+<div class="metric-heading"><span class="ov-title"><span class="metric-icon">{{ icon(icon_name) }}</span>{{ label }}</span><button type="button" class="ov-more" aria-haspopup="dialog" aria-controls="sheet-{{ sheet_key }}" aria-label="{{ detail_label }}">{{ icon('arrow') }}</button></div>
+{% endmacro %}
+{% macro sheet(key, title, kicker) %}
+<dialog id="sheet-{{ key }}" class="ov-sheet" aria-labelledby="sheet-{{ key }}-title">
+  <header class="ov-sheet-head"><div><p class="eyebrow">{{ kicker }}</p><h2 id="sheet-{{ key }}-title">{{ title }}</h2></div><button type="button" class="icon-button" data-sheet-close aria-label="Inchide detaliile">{{ icon('close') }}</button></header>
+  <div class="ov-sheet-body">{{ caller() }}</div>
+</dialog>
+{% endmacro %}
 {% block content %}
-{% if home_assistant_bridge.enabled %}
-<section class="card ha-bridge-panel" aria-label="Senzori Home Assistant" data-ha-bridge data-status-url="/stations/{{ station.id }}/integrations/home-assistant-bridge/status">
-  <div data-ha-live>{% with bridge = home_assistant_bridge %}{% include "partials/_home_assistant_bridge_sensors.html" %}{% endwith %}</div>
-  <div class="ha-bridge-actions"><a href="/stations/{{ station.id }}/integrations/home-assistant-bridge">Gestioneaza Home Assistant</a></div>
-  <p class="ha-bridge-refresh" data-ha-refresh role="status">Actualizare automata la fiecare 30 de secunde.</p>
-</section>
-{% else %}
-<a class="btn-secondary" href="/stations/{{ station.id }}/integrations/home-assistant-bridge">Home Assistant prin HACS</a>
-{% endif %}
 <div class="energy-dashboard" data-timezone="{{ station.timezone }}">
   <header class="dashboard-header">
-    <div><span class="eyebrow">{{ station.name }} · {{ station.timezone }}</span><h1>Panou energetic</h1><div class="dashboard-subtitle live-meta"><span>Ultima actualizare <span id="kpi-last-update">—</span></span><span id="kpi-quality" class="badge-muted">—</span><span id="kpi-source" class="badge-muted" hidden></span><span id="sse-status" class="badge-muted" title="Stare conexiune actualizare live">conectare...</span></div></div>
-    <div class="dashboard-actions"><label class="sr-only" for="range-select">Interval analiza</label><select id="range-select" class="input w-auto"><option value="24h">Ultimele 24 ore</option><option value="7d">Ultimele 7 zile</option><option value="30d">Ultimele 30 zile</option><option value="1y">Ultimul an</option></select><a id="export-link" class="btn-secondary" href="/stations/{{ station.id }}/export.csv?range=24h">{{ icon('download') }} Export CSV</a></div>
+    <div><span class="eyebrow">Panou energetic · {{ station.timezone }}</span><h1>{{ station.name }}</h1><div class="dashboard-subtitle live-meta"><span>Ultima actualizare <span id="kpi-last-update">—</span></span><span id="kpi-quality" class="badge-muted">—</span><span id="kpi-source" class="badge-muted" hidden></span><span id="sse-status" class="badge-muted" title="Stare conexiune actualizare live">conectare...</span></div></div>
   </header>
   {% if wizard_resume_url %}<div class="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl bg-amber-50 p-3 text-xs text-amber-800 dark:bg-amber-900/30 dark:text-amber-200"><span>Mai ai cativa pasi pentru a finaliza configurarea statiei.</span><a href="{{ wizard_resume_url }}" class="btn-primary">Continua configurarea {{ icon('arrow') }}</a></div>{% endif %}
   {% if station.is_demo %}<p class="badge-warn mb-4">Date simulate · statie demonstrativa</p>{% endif %}
   <section aria-labelledby="client-dashboard-title"><h2 id="client-dashboard-title" class="sr-only">Pe scurt, ce se intampla acum</h2>
-    <div class="overview-metrics">
-      <article class="card metric-card featured"><div class="metric-heading"><span>Produce acum</span><span class="metric-icon">{{ icon('sun') }}</span></div><p id="kpi-pv" class="metric-value is-missing" aria-live="polite">Se incarca...</p><p class="metric-note"><span class="status-dot"></span>Productie solara · putere instantanee</p>{{ metric_history('pv', 'Productie solara') }}</article>
-      <article class="card metric-card consumption-card"><div class="metric-heading"><span>Consuma acum</span><span class="metric-icon">{{ icon('home') }}</span></div><p id="kpi-load" class="metric-value is-missing" aria-live="polite">Se incarca...</p><p class="metric-note"><span class="status-dot"></span>Consumul statiei · acum</p>{{ metric_history('load', 'Consum') }}</article>
-      <article class="card metric-card battery-card"><div class="metric-heading"><span>Nivel baterie</span><span class="metric-icon">{{ icon('battery') }}</span></div><p id="kpi-soc" class="metric-value is-missing" aria-live="polite">Se incarca...</p><p class="metric-note">Energie stocata · SOC</p>{{ metric_history('soc', 'Nivel baterie') }}</article>
-      <article class="card metric-card grid-card"><div class="metric-heading"><span>Schimb cu reteaua</span><span class="metric-icon">{{ icon('grid') }}</span></div><p id="kpi-grid" class="metric-value is-missing" aria-live="polite">Se incarca...</p><p id="grid-direction-note" class="metric-note">Import / export · putere instantanee</p>{{ metric_history('grid', 'Schimb cu reteaua') }}</article>
+    <div class="ov-hero">
+      <section class="card flow-panel"><div class="panel-heading"><div><h2>Flux energetic actual</h2><p class="panel-kicker">Cum circula energia prin statia ta</p></div><span class="badge-muted">kW · acum</span></div>{% include "dashboard/_flow_diagram.html" %}<div class="flow-footer"><div><span class="metric-icon">{{ icon('battery') }}</span><div><p id="battery-direction-note">Actiune baterie</p><p id="kpi-battery" class="metric-value is-missing">Se incarca...</p></div></div><div><span class="metric-icon">{{ icon('car') }}</span><div><p id="ev-state-note">Masina electrica</p><p id="kpi-ev" class="metric-value is-missing">Se incarca...</p></div></div></div></section>
+      <div class="overview-metrics">
+        <article class="card metric-card featured ov-tile" data-sheet-open="sheet-solar">{{ tile_head('Produce acum', 'sun', 'solar', 'Detalii productie solara') }}<p id="kpi-pv" class="metric-value is-missing" aria-live="polite">Se incarca...</p><p class="metric-note"><span class="status-dot"></span>Productie solara · putere instantanee</p>{{ metric_history('pv', 'Productie solara') }}</article>
+        <article class="card metric-card consumption-card ov-tile" data-sheet-open="sheet-consum">{{ tile_head('Consuma acum', 'home', 'consum', 'Detalii consum') }}<p id="kpi-load" class="metric-value is-missing" aria-live="polite">Se incarca...</p><p class="metric-note"><span class="status-dot"></span>Consumul statiei · acum</p>{{ metric_history('load', 'Consum') }}</article>
+        <article class="card metric-card battery-card ov-tile" data-sheet-open="sheet-baterie">{{ tile_head('Nivel baterie', 'battery', 'baterie', 'Detalii baterie') }}<div class="ov-value-row"><p id="kpi-soc" class="metric-value is-missing" aria-live="polite">Se incarca...</p><svg class="battery-gauge ov-gauge" viewBox="0 0 36 36" aria-hidden="true"><circle cx="18" cy="18" r="15.5" pathLength="100"/><circle id="battery-gauge-fill" class="gauge-fill" cx="18" cy="18" r="15.5" pathLength="100"/></svg></div><p class="metric-note">Energie stocata · SOC</p>{{ metric_history('soc', 'Nivel baterie') }}</article>
+        <article class="card metric-card grid-card ov-tile" data-sheet-open="sheet-retea">{{ tile_head('Schimb cu reteaua', 'grid', 'retea', 'Detalii retea') }}<p id="kpi-grid" class="metric-value is-missing" aria-live="polite">Se incarca...</p><p id="grid-direction-note" class="metric-note">Import / export · putere instantanee</p>{{ metric_history('grid', 'Schimb cu reteaua') }}</article>
+      </div>
+    </div>
+    <div class="ov-grid">
+      <article class="card ov-tile" data-sheet-open="sheet-energie">
+        {{ tile_head('Energie astazi', 'chart', 'energie', 'Detalii energie: azi, luna si istoric') }}
+        <div class="ov-bars">
+          {% for metric, dom_key, label in [('pv', 'pv', 'PV'), ('load', 'load', 'Consum'), ('grid_import', 'grid-import', 'Import'), ('grid_export', 'grid-export', 'Export')] %}
+          <div class="ov-bar" data-bar="{{ metric }}"><span class="ov-bar-label">{{ label }}</span><span class="ov-bar-track is-unknown"><i class="ov-bar-fill tone-{{ dom_key }}"></i></span><span class="ov-bar-value is-missing" data-mirror="#kpi-today-{{ dom_key }}">Se incarca...</span></div>
+          {% endfor %}
+        </div>
+        <p class="ov-foot"><span class="badge-muted" data-mirror="#kpi-today-quality" data-mirror-class>fara date</span><span>Totaluri in calendarul local al statiei</span></p>
+      </article>
+      <article class="card ov-tile" data-sheet-open="sheet-bani">
+        {{ tile_head('Bani', 'wallet', 'bani', 'Detalii costuri, beneficii si preturi') }}
+        <p class="ov-kicker">Beneficiu sistem PV/baterie · 30 de zile · estimare</p>
+        <p class="ov-figure is-missing" data-mirror="#kpi-savings">Se incarca...</p>
+        <div class="ov-split" data-money-split hidden>
+          <span class="ov-split-track"><i class="tone-self" data-split="self"></i><i class="tone-grid-export" data-split="export"></i></span>
+          <p class="ov-split-legend"><span><i class="tone-self"></i>Economie autoconsum <b data-split-value="self"></b></span><span><i class="tone-grid-export"></i>Venit export <b data-split-value="export"></b></span></p>
+        </div>
+        <div class="ov-pair"><div><span>Cost import acum</span><b class="is-missing" data-mirror="#kpi-price-buy">Se incarca...</b></div><div><span>Venit export acum</span><b class="is-missing" data-mirror="#kpi-price-sell">Se incarca...</b></div></div>
+        <p class="ov-foot"><span class="badge-muted" data-mirror="#kpi-tariff-provenance" data-mirror-class>-</span></p>
+      </article>
+      <div class="ov-stack">
+        <article class="card ov-tile" data-sheet-open="sheet-control">
+          {{ tile_head('Automatizare', 'shield', 'control', 'Detalii plan si control energetic') }}
+          <p id="kpi-automation" class="ov-status">Se incarca...</p>
+          <p class="ov-kicker">Planul de incarcare/descarcare si executia lui</p>
+        </article>
+        {% if home_assistant_bridge.enabled %}
+        <article class="card ov-tile" data-sheet-open="sheet-casa">
+          {{ tile_head('Locuinta', 'home', 'casa', 'Detalii senzori Home Assistant') }}
+          <div class="ov-sensors" data-ha-tile><p class="ov-kicker">Se incarca senzorii...</p></div>
+          <p class="ov-foot"><span class="badge-muted" data-ha-tile-status>—</span><span>Home Assistant</span></p>
+        </article>
+        {% else %}
+        <a class="card ov-tile" href="/stations/{{ station.id }}/integrations/home-assistant-bridge">
+          <div class="metric-heading"><span class="ov-title"><span class="metric-icon">{{ icon('home') }}</span>Locuinta</span><span class="ov-more">{{ icon('arrow') }}</span></div>
+          <p class="ov-status">Home Assistant prin HACS</p>
+          <p class="ov-kicker">Conecteaza integrarea pentru temperaturi si senzori din casa.</p>
+        </a>
+        {% endif %}
+      </div>
     </div>
   </section>
+
+  {% call sheet('solar', 'Productie solara', 'Soare · intrari PV · prognoza') %}
+    {% include "dashboard/_sun_map.html" %}
+    {% include "solar/_card.html" %}
+    <div class="card">
+      <h2 class="mb-2 font-medium">Prognoza vs. realizat - PV</h2>
+      <p class="mb-1 text-xs text-gray-500 dark:text-gray-400">
+        Ultimele 24 ore plus urmatoarele ~36 ore prognozate (linia punctata "acum" marcheaza granita) -- ca sa vezi din timp, dimineata, la ce ora incepe productia. Treci cu mouse-ul peste procente pentru explicatii.
+      </p>
+      <p id="forecast-pv-accuracy" class="mb-2 flex flex-wrap items-center gap-x-1 gap-y-1 text-xs text-gray-600 dark:text-gray-300" hidden></p>
+      <div class="empty-state text-sm text-gray-500" hidden>Nu exista prognoze PV pentru acest interval.</div>
+      <div class="error-state text-sm text-red-700 dark:text-red-300 bg-red-50 dark:bg-red-900/30 rounded p-3" hidden>
+        <p class="mb-2">Nu am putut incarca acest grafic. Celelalte grafice nu sunt afectate.</p>
+        <button type="button" class="btn-secondary retry-btn">Reincearca</button>
+      </div>
+      <p id="forecast-pv-quality" class="mb-2 text-xs text-gray-500 dark:text-gray-400" hidden></p>
+      <div id="chart-forecast-pv" style="height:260px"></div>
+    </div>
+  {% endcall %}
+
+  {% call sheet('consum', 'Consum', 'Prognoza · tipar saptamanal') %}
+    <div class="card">
+      <h2 class="mb-2 font-medium">Prognoza vs. realizat - consum</h2>
+      <p class="mb-1 text-xs text-gray-500 dark:text-gray-400">
+        Albastru = consum in limita prognozei (+-0.25 kW), verde = ai consumat sub prognoza, rosu = ai consumat peste prognoza. Treci cu mouse-ul peste procente pentru explicatii.
+      </p>
+      <p id="forecast-load-accuracy" class="mb-2 flex flex-wrap items-center gap-x-1 gap-y-1 text-xs text-gray-600 dark:text-gray-300" hidden></p>
+      <div class="empty-state text-sm text-gray-500" hidden>Nu exista prognoze de consum pentru acest interval.</div>
+      <div class="error-state text-sm text-red-700 dark:text-red-300 bg-red-50 dark:bg-red-900/30 rounded p-3" hidden>
+        <p class="mb-2">Nu am putut incarca acest grafic. Celelalte grafice nu sunt afectate.</p>
+        <button type="button" class="btn-secondary retry-btn">Reincearca</button>
+      </div>
+      <p id="forecast-load-quality" class="mb-2 text-xs text-gray-500 dark:text-gray-400" hidden></p>
+      <div id="chart-forecast-load" style="height:260px"></div>
+    </div>
+    <div class="card">
+      <h2 class="mb-2 font-medium">Heatmap consum (15 minute x zi din saptamana)</h2>
+      <div class="empty-state text-sm text-gray-500" hidden>Insuficiente agregate la 15 minute pentru heatmap.</div>
+      <div class="error-state text-sm text-red-700 dark:text-red-300 bg-red-50 dark:bg-red-900/30 rounded p-3" hidden>
+        <p class="mb-2">Nu am putut incarca acest grafic. Celelalte grafice nu sunt afectate.</p>
+        <button type="button" class="btn-secondary retry-btn">Reincearca</button>
+      </div>
+      <div id="chart-heatmap" style="height:320px"></div>
+    </div>
+  {% endcall %}
+
+  {% call sheet('baterie', 'Baterie', 'Sanatate · proiectie · uzura') %}
   <section class="battery-widget" data-battery-widget data-station="{{ station.id }}" aria-labelledby="battery-widget-title">
     <div class="battery-widget-header"><h2 id="battery-widget-title">Sanatatea bateriei</h2><a href="/stations/{{ station.id }}/battery">Energie, temperatura si uzura →</a></div>
     <div class="battery-widget-data" data-battery-widget-data><p>Se incarca diagnosticul...</p></div>
     {% with projection_compact=true %}{% include "battery/_projection.html" %}{% endwith %}
   </section>
-  <div class="dashboard-hero">
-    <section class="card flow-panel"><div class="panel-heading"><div><h2>Flux energetic actual</h2><p class="panel-kicker">Cum circula energia prin statia ta</p></div><span class="badge-muted">kW · acum</span></div>{% include "dashboard/_flow_diagram.html" %}<div class="flow-footer"><div><span class="metric-icon">{{ icon('battery') }}</span><div><p id="battery-direction-note">Actiune baterie</p><p id="kpi-battery" class="metric-value is-missing">Se incarca...</p></div></div><div><span class="metric-icon">{{ icon('car') }}</span><div><p id="ev-state-note">Masina electrica</p><p id="kpi-ev" class="metric-value is-missing">Se incarca...</p></div></div></div></section>
-    {% include "dashboard/_sun_map.html" %}
-  </div>
-  <div class="today-section">{{ period_card('today', 'Astazi') }}</div>
-  <div class="dashboard-chart">
-    <div class="card">
-      <div class="mb-2 flex items-center justify-between gap-2">
-        <h2 class="font-medium">PV, consum, baterie, retea + SOC baterie</h2>
-        <span id="chart-power-resolution" class="text-xs text-gray-400 dark:text-gray-500"></span>
-      </div>
-      <div class="empty-state text-sm text-gray-500" hidden>Fara date de telemetrie in intervalul selectat.</div>
-      <div class="error-state text-sm text-red-700 dark:text-red-300 bg-red-50 dark:bg-red-900/30 rounded p-3" hidden>
-        <p class="mb-2">Nu am putut incarca acest grafic. Celelalte grafice nu sunt afectate.</p>
-        <button type="button" class="btn-secondary retry-btn">Reincearca</button>
-      </div>
-      <div id="chart-power" style="height:320px"></div>
-    </div>
-  </div>
-  {% include "dashboard/_grid_voltage.html" %}
+    <div class="card ov-fact"><span>Uzura baterie · cicluri echivalente</span><b id="kpi-efc">Se incarca...</b></div>
+  {% endcall %}
+
+  {% call sheet('retea', 'Retea', 'Tensiune pe faze') %}
+    {% include "dashboard/_grid_voltage.html" %}
+  {% endcall %}
+
+  {% call sheet('bani', 'Bani', 'Costuri · beneficii · preturi') %}
   <section class="dashboard-finance" aria-label="Costuri si beneficii">
     <article class="card finance-card"><div class="panel-heading"><h2>Valoarea energiei</h2>{{ icon('wallet') }}</div><p>Tarifele efective ale statiei, in acest moment</p><div class="price-pair"><div><p>Cost efectiv import</p><p id="kpi-price-buy" class="finance-stat is-missing">Se incarca...</p></div><div><p>Venit efectiv export</p><p id="kpi-price-sell" class="finance-stat is-missing">Se incarca...</p></div></div><details><summary>Cum se calculeaza?</summary><p>Tarif fix sau OPCOM + marja, componente de retea si TVA configurat. Pretul spot si costul efectiv sunt distincte.</p><a class="underline text-xs" href="/stations/{{ station.id }}/tariffs">Vezi tarifele statiei</a></details></article>
     <article class="card finance-card"><div class="panel-heading"><h2>Beneficiu sistem PV/baterie</h2>{{ icon('sun') }}</div><p>Ultimele 30 de zile · estimare fata de reper</p><p id="kpi-savings" class="finance-stat is-missing">Se incarca...</p><p id="kpi-savings-coverage"></p><details><summary>Reper si metoda de calcul</summary><p id="kpi-savings-note"></p><p>Compara costul real cu energia cumparata integral din retea, fara panouri sau baterie. Nu este o economie masurata separat.</p></details></article>
     <article class="card finance-card"><div class="panel-heading"><h2>Beneficiu incremental EMS</h2>{{ icon('leaf') }}</div><p>Ultimele 30 de zile · contributia optimizarii</p><p id="kpi-ems-benefit" class="finance-stat is-missing">Se incarca...</p><details><summary>Reper si metoda de calcul</summary><p id="kpi-ems-benefit-note"></p><p>Acelasi sistem PV/baterie, comparat cu operarea fara optimizare activa. Estimare, nu factura.</p></details></article>
   </section>
-  <div class="automation-strip"><span class="metric-icon">{{ icon('shield') }}</span><div><h2>Control energetic</h2><p id="kpi-automation">Se incarca...</p></div><div><h2>Uzura baterie</h2><p id="kpi-efc">Se incarca...</p></div><a class="btn-secondary" href="/stations/{{ station.id }}/control">Vezi controlul {{ icon('arrow') }}</a></div>
-  {% include "solar/_card.html" %}
-  <div class="month-section">{{ period_card('month', 'Luna curenta') }}</div>
   <div class="card mt-4">
     <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
       <h2 class="font-medium">Detaliere valoare PV si export (30 zile)</h2>
@@ -163,11 +240,6 @@
       autoconsumul si exportul efectiv conteaza separat (vezi tooltip-urile de mai sus).
     </p>
   </div>
-
-  <details id="advanced-dashboard-details" class="dashboard-disclosure">
-    <summary class="cursor-pointer select-none font-medium text-gray-700 dark:text-gray-200">Analiza avansata: preturi, planuri si prognoze</summary>
-    <p class="mt-2 text-sm text-gray-500 dark:text-gray-400">Detalii tehnice pentru operare si diagnostic. Clientii pot ramane pe primul ecran fara sa interpreteze aceste grafice.</p>
-    <div class="mt-3 grid gap-4 lg:grid-cols-2">
     <div class="card">
       <h2 class="mb-2 font-medium">Pret spot OPCOM PZU (lei/kWh, azi / maine)</h2>
       <p class="mb-1 text-xs text-gray-500 dark:text-gray-400">
@@ -181,52 +253,24 @@
       </div>
       <div id="chart-prices" style="height:280px"></div>
     </div>
+  {% endcall %}
+
+  {% call sheet('energie', 'Energie', 'Astazi · luna curenta · istoric') %}
+    {{ period_card('today', 'Astazi') }}
+    <div class="ov-toolbar"><label class="sr-only" for="range-select">Interval analiza</label><select id="range-select" class="input w-auto"><option value="24h">Ultimele 24 ore</option><option value="7d">Ultimele 7 zile</option><option value="30d">Ultimele 30 zile</option><option value="1y">Ultimul an</option></select><a id="export-link" class="btn-secondary" href="/stations/{{ station.id }}/export.csv?range=24h">{{ icon('download') }} Export CSV</a></div>
     <div class="card">
-      <h2 class="mb-2 font-medium">Plan incarcare/descarcare <span id="plan-status-badge" class="badge-muted"></span></h2>
-      <div class="empty-state text-sm text-gray-500" hidden>Nu exista un plan publicat momentan.</div>
+      <div class="mb-2 flex items-center justify-between gap-2">
+        <h2 class="font-medium">PV, consum, baterie, retea + SOC baterie</h2>
+        <span id="chart-power-resolution" class="text-xs text-gray-400 dark:text-gray-500"></span>
+      </div>
+      <div class="empty-state text-sm text-gray-500" hidden>Fara date de telemetrie in intervalul selectat.</div>
       <div class="error-state text-sm text-red-700 dark:text-red-300 bg-red-50 dark:bg-red-900/30 rounded p-3" hidden>
         <p class="mb-2">Nu am putut incarca acest grafic. Celelalte grafice nu sunt afectate.</p>
         <button type="button" class="btn-secondary retry-btn">Reincearca</button>
       </div>
-      <div id="chart-plan" style="height:280px"></div>
+      <div id="chart-power" style="height:320px"></div>
     </div>
-    <div class="card">
-      <h2 class="mb-2 font-medium">Prognoza vs. realizat - PV</h2>
-      <p class="mb-1 text-xs text-gray-500 dark:text-gray-400">
-        Ultimele 24 ore plus urmatoarele ~36 ore prognozate (linia punctata "acum" marcheaza granita) -- ca sa vezi din timp, dimineata, la ce ora incepe productia. Treci cu mouse-ul peste procente pentru explicatii.
-      </p>
-      <p id="forecast-pv-accuracy" class="mb-2 flex flex-wrap items-center gap-x-1 gap-y-1 text-xs text-gray-600 dark:text-gray-300" hidden></p>
-      <div class="empty-state text-sm text-gray-500" hidden>Nu exista prognoze PV pentru acest interval.</div>
-      <div class="error-state text-sm text-red-700 dark:text-red-300 bg-red-50 dark:bg-red-900/30 rounded p-3" hidden>
-        <p class="mb-2">Nu am putut incarca acest grafic. Celelalte grafice nu sunt afectate.</p>
-        <button type="button" class="btn-secondary retry-btn">Reincearca</button>
-      </div>
-      <p id="forecast-pv-quality" class="mb-2 text-xs text-gray-500 dark:text-gray-400" hidden></p>
-      <div id="chart-forecast-pv" style="height:260px"></div>
-    </div>
-    <div class="card">
-      <h2 class="mb-2 font-medium">Prognoza vs. realizat - consum</h2>
-      <p class="mb-1 text-xs text-gray-500 dark:text-gray-400">
-        Albastru = consum in limita prognozei (+-0.25 kW), verde = ai consumat sub prognoza, rosu = ai consumat peste prognoza. Treci cu mouse-ul peste procente pentru explicatii.
-      </p>
-      <p id="forecast-load-accuracy" class="mb-2 flex flex-wrap items-center gap-x-1 gap-y-1 text-xs text-gray-600 dark:text-gray-300" hidden></p>
-      <div class="empty-state text-sm text-gray-500" hidden>Nu exista prognoze de consum pentru acest interval.</div>
-      <div class="error-state text-sm text-red-700 dark:text-red-300 bg-red-50 dark:bg-red-900/30 rounded p-3" hidden>
-        <p class="mb-2">Nu am putut incarca acest grafic. Celelalte grafice nu sunt afectate.</p>
-        <button type="button" class="btn-secondary retry-btn">Reincearca</button>
-      </div>
-      <p id="forecast-load-quality" class="mb-2 text-xs text-gray-500 dark:text-gray-400" hidden></p>
-      <div id="chart-forecast-load" style="height:260px"></div>
-    </div>
-    <div class="card lg:col-span-2">
-      <h2 class="mb-2 font-medium">Heatmap consum (15 minute x zi din saptamana)</h2>
-      <div class="empty-state text-sm text-gray-500" hidden>Insuficiente agregate la 15 minute pentru heatmap.</div>
-      <div class="error-state text-sm text-red-700 dark:text-red-300 bg-red-50 dark:bg-red-900/30 rounded p-3" hidden>
-        <p class="mb-2">Nu am putut incarca acest grafic. Celelalte grafice nu sunt afectate.</p>
-        <button type="button" class="btn-secondary retry-btn">Reincearca</button>
-      </div>
-      <div id="chart-heatmap" style="height:320px"></div>
-    </div>
+    {{ period_card('month', 'Luna curenta') }}
     <div class="card">
       <h2 class="mb-2 font-medium">Energie zilnica (30 zile)</h2>
       <div class="empty-state text-sm text-gray-500" hidden>Fara agregate zilnice inca.</div>
@@ -245,8 +289,31 @@
       </div>
       <div id="chart-energy-monthly" style="height:280px"></div>
     </div>
+  {% endcall %}
+
+  {% call sheet('control', 'Automatizare', 'Plan · executie') %}
+    <div class="card ov-fact"><span>Control energetic</span><b data-mirror="#kpi-automation">Se incarca...</b></div>
+    <div class="card">
+      <h2 class="mb-2 font-medium">Plan incarcare/descarcare <span id="plan-status-badge" class="badge-muted"></span></h2>
+      <div class="empty-state text-sm text-gray-500" hidden>Nu exista un plan publicat momentan.</div>
+      <div class="error-state text-sm text-red-700 dark:text-red-300 bg-red-50 dark:bg-red-900/30 rounded p-3" hidden>
+        <p class="mb-2">Nu am putut incarca acest grafic. Celelalte grafice nu sunt afectate.</p>
+        <button type="button" class="btn-secondary retry-btn">Reincearca</button>
+      </div>
+      <div id="chart-plan" style="height:280px"></div>
     </div>
-  </details>
+    <a class="btn-secondary" href="/stations/{{ station.id }}/control">Vezi controlul {{ icon('arrow') }}</a>
+  {% endcall %}
+
+  {% if home_assistant_bridge.enabled %}
+  {% call sheet('casa', 'Locuinta', 'Senzori Home Assistant') %}
+    <section class="card ha-bridge-panel" aria-label="Senzori Home Assistant" data-ha-bridge data-status-url="/stations/{{ station.id }}/integrations/home-assistant-bridge/status">
+  <div data-ha-live>{% with bridge = home_assistant_bridge %}{% include "partials/_home_assistant_bridge_sensors.html" %}{% endwith %}</div>
+  <div class="ha-bridge-actions"><a href="/stations/{{ station.id }}/integrations/home-assistant-bridge">Gestioneaza Home Assistant</a></div>
+  <p class="ha-bridge-refresh" data-ha-refresh role="status">Actualizare automata la fiecare 30 de secunde.</p>
+    </section>
+  {% endcall %}
+  {% endif %}
 </div>
 <script src="/static/js/dashboard.js"></script>
 <script src="/static/js/battery.js" defer></script>
